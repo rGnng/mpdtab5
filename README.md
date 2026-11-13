@@ -1,853 +1,104 @@
-# iAP2 Tab5
-
-An iPod / iPhone media controller for the **M5Stack Tab5**, with a shared
-**LVGL 9.6** interface for the ESP32-P4 board and an SDL2 desktop simulator.
-The UI runs at 1280×720 and supports a rotary controller, USB keyboard, Ulanzi
-D100H remote, and optional touch input.
-
-On hardware, **iAP2** controls playback and supplies Now Playing metadata,
-artwork, and live catalog updates. **AFC** copies the device's media
-database and incrementally caches album artwork on SD. An optional host-side
-Python tool imports a `library.bin` snapshot. The simulator uses a bundled
-mock library and needs no Apple device or MFi identity.
-
-## UI overview
-
-These contact sheets use the simulator's mock library and device data. Each
-shows Now Playing, Up Next, Albums, Artists, Songs, Playlists, Settings, and
-Library Sync. Click a sheet to view the screens at full resolution.
-Library Sync uses a compact status row, prominent library counts, and fixed
-**Pair / Trust**, **Sync**, and **Exit** controls along the bottom. Sync uses
-the regular theme button color. Current AFC screenshots:
-[Gray](docs/previews/afc-bottom-gray.png),
-[Aqua](docs/previews/afc-bottom-aqua.png), and
-[Windows 95](docs/previews/afc-bottom-win95.png).
-
-**Gray (default)**
-
-[![Gray theme contact sheet showing eight iAP2 Tab5 views](docs/previews/ui-gray.png)](docs/previews/ui-gray.png)
-
-**Aqua**
-
-[![Aqua theme contact sheet showing eight iAP2 Tab5 views](docs/previews/ui-aqua.png)](docs/previews/ui-aqua.png)
-
-## What it does
-
-- Browse **Now Playing, Albums, Artists, Songs, Playlists, and Settings** with
-  consistent knob/key navigation, virtualized lists, and a mini player.
-- Control playback, shuffle, repeat, and seeking; start playback from library
-  lists and save local stars per library.
-- Show Now Playing artwork, album thumbnails, and an Up Next panel. When the
-  device supplies a queue, its entries are matched against the imported library;
-  otherwise the UI falls back to the list started on the Tab5 or the current track.
-- Configure the device, upload libraries and firmware, inspect logs, inject
-  keys, and capture screenshots through a Wi-Fi web interface.
-- Preview the same UI on a desktop, including mock covers, keyboard/touch input,
-  the optional KCN4M1 boot animation, and headless PNG screenshots.
-
-## Run the desktop simulator
-
-Run these commands from the repository root. On Debian / Ubuntu, install the
-build tools and SDL2 development headers:
-
-```bash
-sudo apt install build-essential cmake ninja-build libsdl2-dev
-cmake -S . -B build -G Ninja
-cmake --build build -j
-./build/tab5_sim
-```
-
-The first configure downloads the pinned **LVGL v9.6.0** release into
-`build/_deps`. To use an existing checkout, configure with
-`-DLVGL_SOURCE_DIR=/path/to/lvgl`. The `run` build target also starts the simulator:
-
-```bash
-cmake --build build --target run
-```
-
-The bundled library contains 24 artists, 100 albums, 562 tracks, and 6 playlists.
-The mouse acts as the touchscreen. The simulator starts directly in the UI
-unless a boot animation is requested.
-
-### Screenshots and command-line options
-
-```bash
-# Open Albums with the menubar on the right.
-./build/tab5_sim --screen 2 --menubar right
-
-# Capture the UI without a display server.
-mkdir -p build/screenshots
-./build/tab5_sim --headless --screen 2 --keys enter \
-    --screenshot build/screenshots/album.png --wait 1500
-
-# Capture a fixed point in the boot animation.
-./build/tab5_sim --headless --boot-freeze 3900 \
-    --screenshot build/screenshots/boot.png --wait 300
-```
-
-| Option | Purpose |
-| --- | --- |
-| `--screen <1-6>` | Start on Now Playing, Albums, Artists, Songs, Playlists, or Settings |
-| `--menubar <left\|right>` | Choose the menubar side |
-| `--zoom <factor>` | Scale the window; default `1.0` |
-| `--keys <list>` | Inject comma-separated keys, such as `2,enter` or `context` |
-| `--afc <state>` | Preview AFC: `disconnected`, `unpaired`, `trust`, `ready`, `nosd`, `preparing`, `syncing`, `done`, `error` |
-| `--theme <0..2>` | Gray, Aqua, or Windows 95 |
-| `--screenshot <path>` | Save a PNG and exit |
-| `--wait <ms>` | Delay before capture; default `1000` |
-| `--headless` | Use SDL's offscreen video driver |
-| `--boot` | Play the KCN4M1 boot animation |
-| `--boot-freeze <ms>` | Show the boot animation at a fixed time offset |
-| `--no-boot` | Skip the boot animation |
-| `--help` | Print command-line help |
-
-On Linux, screenshot mode automatically uses the offscreen driver when neither
-`DISPLAY` nor `WAYLAND_DISPLAY` is set. Explicit screen, menubar, or key options
-skip the normal boot animation; `--boot-freeze` can still select a boot frame.
-
-To regenerate the README contact sheets after changing the UI:
-
-```bash
-python3 -m venv build/contact-sheet-env
-build/contact-sheet-env/bin/pip install cairosvg
-build/contact-sheet-env/bin/python tools/gen_ui_contact_sheets.py --sim build/tab5_sim
-```
-
-## Controls
-
-The simulator and hardware share the same logical actions:
-
-| Input | Action |
-| --- | --- |
-| `Up` / `Down` | Move focus, like turning the knob |
-| `Enter` | Activate; hold for 650 ms to open the context menu |
-| `1`–`5` | Open Now Playing / Albums / Artists / Songs / Playlists |
-| `6` or `Backspace` | Go back |
-| `7` | Play / pause |
-| `Page Up` / `Page Down` | Page the active list; Page Up toggles Up Next on Now Playing |
-| `[` / `]` | Previous / next screen; `[` toggles Up Next on Now Playing |
-| `C` | Open the context menu in the simulator |
-
-On hardware, input can come from a USB HID keyboard or knob, the D100H over USB
-or BLE, the serial console, or the web debug page. The serial equivalents
-include `w` / `s` for knob movement, `b` for Back, and `c` for the context menu;
-see the [full serial key map](firmware/README.md#serial-debug-keys).
-
-Albums, Artists, Songs and Playlists require both an identified iPod and a
-ready SD card. Their tiles are disabled and tab navigation skips them while
-either is unavailable. Disconnecting during browsing returns to Now Playing;
-Settings remains accessible. Reconnect the iPod to resume browsing. After
-removing and reinserting the SD card, reboot to reload the cached library.
-
-Albums and tracks received over iAP2 appear immediately, including music added
-since the last AFC sync. Albums with tracks not yet matched to AFC metadata
-appear first. The selected date, name or year order applies within each group.
-Undated albums use a saved discovery sequence; reconnecting preserves that
-order, and newly discovered tracks make their album recent.
-
-AFC Sync refreshes dates from the device database and its committed WAL changes.
-The newest track date is the album's added date. While playing, iAP2 artwork
-also supplies a 54×54 thumbnail saved under the library UUID and album PID.
-Having a thumbnail does not mark an album as AFC synced; a later AFC sync adds
-its dates and reuses the image. Known changed AFC artwork tokens refresh it.
-The old numeric thumbnail cache migrates without deleting existing images.
-
-**Settings → Sort Order** has separate **Albums: Sort By**, **Albums: Order**,
-**Songs: Sort By**, and **Songs: Order** controls. Each list offers **Date Added**,
-**Name**, or **Year**, with **Ascending** or **Descending** order. Both default
-to **Date Added / Descending**, and their independent choices are saved to SD.
-
-The D100H supports tap-to-skip and hold-to-seek on its previous/next controls.
-Its top-left Back key acts on release. The top-middle Play/Pause key acts on
-short release; holding it for two seconds turns off the screen without toggling
-playback. A press that
-wakes the screen is consumed through release, without navigating or playing.
-Both left-side tab buttons also act once on release, over USB and BLE.
-Its top-right key opens the context menu on a tap and toggles Star on a hold.
-Hold the knob down and turn it to adjust iPod volume: clockwise raises it,
-counter-clockwise lowers it. A plain knob click activates on release;
-releasing after a held turn does not activate the selected item. This works
-over USB and BLE. Same-direction notches pass through immediately. An opposite
-notch is held for 50 ms during normal scrolling, or 120 ms if it arrives within
-80 ms of the preceding accepted notch. Resuming the original direction during
-that window discards the held reverse reports as noise. Otherwise the held
-notches are delivered at the deadline; three consecutive reverse reports
-confirm the change early. Arrival timestamps are preserved before UI dispatch.
-The deadline starts at the first reverse report; a second report does not
-extend it. A following action key flushes pending movement before activation,
-and disconnecting cancels pending input only for that input source. This
-filter runs independently of the UI's Fast Scroll state and hold timer.
-Pair it from **Settings → Bluetooth**, under **Search Devices**.
-Paired-device rows show the reported percentage as `BATT <percent>%`, with
-`CHG` appended while charging, or `Inactive` when disconnected. `BATT --%`
-means connected but awaiting a battery report. The BLE driver reads the D100H
-sleep timer and separate standby timer on every connection, writes zero only
-when needed, and confirms each by readback. Unsupported standby controls do
-not disconnect a responsive dial. It sends an immediate heartbeat and keeps it running once per
-second. Reconnect attempts continue while Bluetooth is on, with delays
-increasing from 3 to 15 seconds. After 10 seconds without vendor notifications,
-the driver checks the GATT connection and refreshes its notification
-subscription. A responsive idle controller stays connected. A probe timeout,
-repeated GATT/write failures, or stalled setup causes a disconnect and retry.
-Turning Bluetooth off or forgetting the device cancels pending work.
-The dashboard and `/debug` web page also provide a **Bluetooth controllers**
-panel with enable/disable, scanning, Pair, Connect and Delete controls. Battery
-percentage, charging and sleep-disable confirmation update automatically.
-
-**Settings → Fast Scroll** starts with an **Enabled / Disabled** control
-(default: Enabled), followed by **Trigger Time** (550 ms, 800 ms, or 1200 ms;
-default: 550 ms), **Start Fast Scrolling After** (1–5 pages within that trigger
-window; default: 2 Pages) and **Hold Time** (150 ms, 300 ms,
-500 ms, or 1.5 s; default: 300 ms). A quick spin switches to one visible page
-per notch, with a short high tone and a gold/yellow left cursor band.
-A short lower tone marks exit. Pausing for the selected hold time or
-reversing direction restores normal single-row precision. Speed uses physical
-notches rather than amplified page jumps; touch scrolling stays unchanged.
-Disabling Fast Scroll preserves the selected trigger time, threshold and hold time.
-Screen off and wake also play a short low and high tone respectively when
-Key Feedback is enabled.
-
-
-**Settings → Screen** groups **Brightness** presets (**Low 45%**, **Mid 55%**, **High 100%**)
-and an **Idle Timer** with **30 min**, **1 hour**, and **Off**
-(the default). Both section labels are inset and non-selectable.
-
-**Settings → About → NP Battery** shows the Tab5's removable NP-F pack in one
-line: `Charging  ~79%  7.87 V`, `Discharging  ~79%  7.87 V`, or
-`Idle  ~79%  7.87 V` when current is near zero. This
-is separate from the iPod and Bluetooth-controller batteries. Values update
-in place once per second. Level is a voltage estimate, displayed as `~79%`;
-an absent pack shows **Not installed**, and failed readings show **Unavailable**.
-
-The clock area briefly shows an icon labeled **NP Battery** on charging,
-switching to battery discharge, estimated full charge, or low battery. These
-events use the existing fades and newest-event priority, then restore the
-clock without waking the screen or resetting its idle timer. Repeated samples
-do not replay the same event. Charge/discharge state changes need three stable
-seconds; low charge warns at 15% and rearms at 25%. Full is inferred only after
-at least 60 seconds near 8.2 V with settled current and charging enabled.
-The API labels that inferred state **Full (est.)**. The INA226 is a voltage/current monitor, not a fuel
-gauge; charger removal is inferred from battery discharge, not a separate
-USB/DC connector sensor. Monitoring never changes the saved charging setting.
-A brightness setting of zero falls back to Low to keep the screen visible.
-The idle timer runs only while playback is paused or stopped; touch, keyboard,
-or keypad input restarts it. Hold the clock area for two seconds to turn off
-the screen immediately, including during playback. The first touch or key
-wakes the screen without activating a control. USB, playback and Wi-Fi keep running.
-
-The clock strip also shows 32 px notification icons with fade transitions.
-A spinning Bootstrap arrow-repeat stays visible throughout an iAP2 library
-transfer. Bluetooth connection changes briefly show
-`andrsrxn:bluetooth-connecting` or `andrsrxn:bluetooth-x`, once per change.
-The newest event takes priority; when it ends, the previous status returns
-if it is still active. For example, Bluetooth connecting during a library
-transfer briefly replaces the spinner, then the spinner returns until sync
-finishes. The time returns when no notifications remain. Turning Bluetooth
-off or deleting the last pairing cancels its notification. The two-second
-screen-off hold works while either the time or an icon is displayed.
-
-**Cover gradient** is the default Now Playing background, configurable in
-**Settings → Now Playing Background**. It uses colors from the
-current iPod artwork, including artwork that arrives after the page opens.
-It selects a dominant hue and two distinct accents, then builds soft ambient
-color lights across the whole screen. Broader overlapping fields spread the
-cover colors evenly, while preserving light and shade. Gray uses deep colors;
-Aqua uses matching pastels. The menu bar, clock area and Up Next panel show
-the gradient through a faint theme tint. The selected menu tile and
-shuffle/repeat backgrounds also use translucent tints. Text and icons stay readable.
-
-A background worker renders at 320×180 and expands once to 1280×720 with the
-ESP32-P4 PPA. Eight-bit color channels survive scaling; the final conversion
-adds fine, stationary blue-noise dithering and packs RGB565 in place. This
-avoids the visible Bayer grid and premature color banding. Matching artwork
-reuses the cached result; page changes cancel obsolete work. The simulator and
-devices without an available PPA use a CPU scaling fallback. The two working
-images use about 1.8 MB more PSRAM in total than the former RGB565-only path.
-
-Now Playing displays the first received cover immediately and upgrades it when
-a larger source arrives. If a track settles for two seconds with no cover or
-only a small source, it refreshes the Now Playing subscription once. This
-recovers stale artwork responses without restarting playback. It waits for
-active artwork transfers and decoding, and rapid track changes restart the
-settling timer. Its track cache records the original dimensions, so
-a later thumbnail cannot replace a sharper saved cover, including after a
-reboot. Older caches remain readable with unknown source dimensions until a
-new image is received.
-
-## Build and set up the Tab5
-
-The Tab5 has two processors with separate firmware and programming connections:
-
-| Processor | Firmware | Programming connection |
-| --- | --- | --- |
-| **ESP32-P4** | This project's display, USB, and media-controller application | Tab5 USB-C port → computer |
-| **ESP32-C6** | ESP-Hosted Wi-Fi/BLE co-processor firmware | Internal `J1 / C6_ISP` header → USB-to-UART adapter → computer |
-
-For a first installation, complete both the [P4 procedure](#flash-the-esp32-p4-application)
-and the [C6 procedure](#flash-the-esp32-c6-wi-fible-firmware), then configure the
-SD card and import a library. Flashing the P4 does not update the C6. The web
-firmware updater also updates only the P4 application.
-
-### Prerequisites
-
-- M5Stack Tab5, a USB-C **data** cable, an SD card, and an iAP2-capable iPod or iPhone.
-- **ESP-IDF 5.5.6**, the version used by the current firmware dependency lock.
-- An MFi P-256 certificate chain and private key for iAP2 authentication.
-- Apple trust for AFC access: use **Pair / Trust** in AFC mode. Existing
-  lockdownd pair records can also be imported.
-- For the C6: a USB-to-UART programming jig set to **3.3 V**, providing both
-  C6 power and 3.3 V UART signals, access to the internal programming header,
-  and the included **ESP-Hosted 2.13.1** images.
-
-The MFi identity and lockdownd pair record serve separate purposes. Neither is
-included in this repository. The identity is required to build the P4 application;
-the AFC pair record is generated on the Tab5 after Apple trust approval (or
-imported from an existing host). The included C6 images need neither.
-
-The commands below use Bash on Linux. Replace `/dev/ttyACM0` and `/dev/ttyUSB0`
-with the actual ports on your computer. On macOS they usually look like
-`/dev/cu.usbmodem…` and `/dev/cu.usbserial…`; on Windows, use the ESP-IDF terminal
-and the corresponding `COM` ports. Espressif's
-[platform setup guide](https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32p4/get-started/index.html)
-covers installing the tools on other operating systems.
-
-### Flash the ESP32-P4 application
-
-#### 1. Install and activate ESP-IDF
-
-If ESP-IDF 5.5.6 is already installed, activate it with its `export.sh` and skip
-the installation commands. For a new Debian / Ubuntu installation:
-
-```bash
-sudo apt install git wget flex bison gperf python3 python3-pip python3-venv \
-    cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
-mkdir -p "$HOME/esp"
-git clone --branch v5.5.6 --recursive https://github.com/espressif/esp-idf.git \
-    "$HOME/esp/esp-idf-v5.5.6"
-cd "$HOME/esp/esp-idf-v5.5.6"
-./install.sh esp32p4,esp32c6
-. ./export.sh
-idf.py --version
-python -m esptool version
-```
-
-`idf.py --version` should report `v5.5.6`. In each new terminal, activate the
-environment again:
-
-```bash
-. "$HOME/esp/esp-idf-v5.5.6/export.sh"
-```
-
-The installer provides the compilers, Python environment, `idf.py`, and
-`esptool`. See the [ESP-IDF 5.5.6 installation instructions](https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32p4/get-started/linux-macos-setup.html)
-for the full host setup.
-
-#### 2. Generate the MFi identity and build
-
-Return to this repository and generate the identity **before configuring the
-firmware**. Replace the three example paths below with your local paths:
-
-```bash
-cd /path/to/iap2tab5
-python3 tools/gen_iap2_identity.py \
-    --cert /path/to/certificate.p7b \
-    --key /path/to/identity.pk8
-
-cd firmware
-idf.py set-target esp32p4  # first configure only
-idf.py build
-```
-
-With no arguments, the identity generator reads `../iap2cert/certificate.p7b`
-and `../iap2cert/identity.pk8`, relative to the repository root. It writes the
-ignored `firmware/main/iap2_identity.c`, which CMake requires.
-
-The first build downloads the managed components. A successful build produces
-these files under `firmware/`:
-
-```text
-build/iap2tab5.bin                       # P4 application; also used for web OTA
-build/bootloader/bootloader.bin          # P4 bootloader
-build/partition_table/partition-table.bin
-build/flash_args                        # generated offsets and images for flashing
-```
-
-Keep the project's `sdkconfig.defaults`: it includes support for the tested
-pre-revision-3 ESP32-P4 hardware. `set-target` resets the project configuration,
-so subsequent builds normally need only `idf.py build`. When changing from IDF
-5.4 to 5.5, run `idf.py fullclean` before rebuilding, then do a full flash.
-
-**Generated firmware contains the MFi private key. Keep the identity and built
-images private.** Lockdownd pair records also contain private keys and are stored
-in the internal SPIFFS partition.
-
-#### 3. Connect the P4 and identify its port
-
-1. Disconnect the iPod and other USB peripherals during the initial flash.
-2. Connect the Tab5's **USB-C** port directly to the computer with a data cable.
-3. List the serial ports in the activated ESP-IDF environment:
-
-   ```bash
-   python -m serial.tools.list_ports -v
-   ```
-
-   On Linux, the P4's native USB Serial/JTAG port is commonly `/dev/ttyACM0`.
-   Comparing the list before and after connecting the cable helps identify it.
-4. Close any serial monitor that has the port open.
-
-If the port is missing or automatic download-mode entry fails, use the Tab5's
-physical procedure: **with USB-C connected, hold the power button until the
-green LED flashes, then release it**. List the ports again, as the port name
-may change. This is the Tab5's single-button download procedure, documented by
-[M5Stack](https://docs.m5stack.com/en/core/Tab5#download-mode).
-
-If this firmware was previously set to `usb_mode: 2`, change the SD card's
-`config.json` to `"usb_mode": 0` before restarting into the application so that
-USB-C remains available for the console. ROM download mode provides the recovery
-path when the running application has taken over USB-C.
-
-#### 4. Flash the complete P4 image and monitor startup
-
-From the repository's `firmware/` directory:
-
-```bash
-idf.py -p /dev/ttyACM0 flash monitor
-```
-
-Use **`flash` for the first installation**. It writes the bootloader, partition
-table, application, and other images listed in the build's generated flash
-arguments. Let `idf.py` select their offsets. Wait for successful write/verify
-messages before disconnecting the cable.
-
-The monitor starts after flashing. If the Tab5 remains in download mode, turn
-it off with a double-click of the power button and turn it on with a single
-click. Reconnect the monitor if the USB port re-enumerates:
-
-```bash
-idf.py -p /dev/ttyACM0 monitor
-```
-
-Exit with **`Ctrl+]`**. Confirm that the application reaches its UI without a
-repeated reset. An empty library is expected before importing one. C6 version
-warnings or Wi-Fi/BLE problems may remain until the C6 procedure below is done.
-
-#### 5. Later updates and recovery
-
-For code-only updates while booting the factory application slot:
-
-```bash
-# Run in firmware/ with the ESP-IDF environment active.
-idf.py build
-idf.py -p /dev/ttyACM0 app-flash monitor
-```
-
-After a web OTA update, the active application is in an OTA slot; `app-flash`
-writes the factory slot and may leave the older OTA application selected. Use
-web OTA again, or return to the complete `flash` procedure when restoring the
-factory application. Use a complete flash after changing the partition table
-or bootloader as well. See [ESP-IDF's OTA boot selection](https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32p4/api-reference/system/ota.html#ota-data-partition).
-
-For a web update, open the Tab5's web page, select **`firmware/build/iap2tab5.bin`**
-in the firmware OTA section, upload it, and wait for the reboot. The bootloader,
-partition table, and C6 `network_adapter.bin` are not P4 OTA application images.
-The equivalent upload from the repository root, using the default AP address, is:
-
-```bash
-curl --fail --data-binary @firmware/build/iap2tab5.bin \
-    http://192.168.4.1/api/ota
-```
-
-If an update cannot boot or reach Wi-Fi, enter P4 download mode with the power
-button and repeat `idf.py flash`. A complete flash is different from
-`erase-flash`: a full-chip erase also deletes NVS settings, BLE bonds, and the
-SPIFFS pair record. It is not required for normal updates.
-
-### Flash the ESP32-C6 Wi-Fi/BLE firmware
-
-This project's P4 host uses **ESP-Hosted 2.13.1**. A Tab5 still running the factory
-1.4.1 C6 firmware needs a wired update to the matching images in
-[`tools/c6_firmware/`](tools/c6_firmware/). You can skip this procedure if the
-P4 log already reports C6 firmware `2.13.1` and the radio works.
-
-The factory 1.4.1 firmware cannot perform the required upgrade through the P4's
-SDIO link. The procedure below uses the C6's UART programming header. Later
-ESP-Hosted versions provide co-processor OTA APIs, but this project's web OTA
-page does not implement a C6 updater.
-
-#### 1. Locate and wire the C6 programming header
-
-Turn off the Tab5, disconnect USB power and the battery module if fitted, and
-disconnect any other Tab5 power source. **Keep all Tab5 power disconnected
-throughout the C6 flash.** Remove the rear cover to reach **`J1 / C6_ISP`**.
-Use the PCB markings to identify pin 1; do not infer numbering from the
-direction in which you hold the tablet.
-[M5Stack's C6 programming guide](https://docs.m5stack.com/en/guide/tab5/c6_wifi_restore)
-shows the connector location; the [Tab5 schematic, page 1](https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/1132/Tab5_Schematics_PDF.pdf)
-shows its signals.
-
-With the TTL programming jig unplugged from the computer, **set its voltage
-selector to 3.3 V**. The jig supplies the C6 through J1 pin 1 and must also use
-3.3 V UART signals. Wire TX and RX crossed:
-
-| J1 pin | Tab5 signal | USB-to-UART adapter connection |
-| --- | --- | --- |
-| 1 | `WLAN_3.3V` | Jig **3.3 V output**; supplies C6 power |
-| 2 | `RF_C6_TXD` | Adapter **RX** |
-| 3 | `RF_C6_RXD` | Adapter **TX** |
-| 4 | `RF_C6_RST` / EN | Adapter **RTS** for automatic reset, or manual reset |
-| 5 | `RF_C6_IO9` / BOOT | Adapter **DTR** for automatic boot selection, or manual boot strap |
-| 6 | GND | Adapter **GND** |
-
-Leave **CTS** and any **5 V output** disconnected. Do not reconnect the Tab5's
-USB-C cable, battery, or other power source while the jig is supplying 3.3 V.
-Check that the jig's voltage selection applies to both its supply output and
-UART signal levels.
-
-If the adapter has no DTR/RTS, connect **3.3 V, TX, RX, and GND** and use the
-manual procedure below for pins 4 and 5. The C6 boot strap is **IO9**.
-
-#### 2. Power the C6 from the jig and check the images
-
-1. Confirm that all Tab5 power sources are disconnected, the jig is set to
-   **3.3 V**, and its 3.3 V output and GND are connected to J1 pins 1 and 6.
-2. Connect the jig to the computer to supply the C6, then run
-   `python -m serial.tools.list_ports -v` again. The **adapter's port**, commonly
-   `/dev/ttyUSB0`, is the C6 programming port. The P4's USB-C cable stays
-   disconnected; there is no P4 download-mode step in this procedure.
-3. In an activated ESP-IDF terminal, return to the repository root and verify
-   the checked-in images:
-
-   ```bash
-   cd /path/to/iap2tab5
-   sha256sum -c tools/c6_firmware/SHA256SUMS
-   ```
-
-   All four files should report `OK`. The checked-in checksum file uses paths
-   relative to the repository root. On macOS, use
-   `shasum -a 256 -c tools/c6_firmware/SHA256SUMS` instead.
-
-The initial C6 installation writes all four images:
-
-| Flash offset | File in `tools/c6_firmware/` |
-| --- | --- |
-| `0x0000` | `bootloader.bin` |
-| `0x8000` | `partition-table.bin` |
-| `0xd000` | `ota_data_initial.bin` |
-| `0x10000` | `network_adapter.bin` |
-
-These images are for the **ESP32-C6 with 4 MB flash**. The P4 application and
-its partition layout belong on the other processor.
-
-#### 3. Write the C6 firmware
-
-**With DTR/RTS automatic reset**, use the helper from the repository root:
-
-```bash
-bash tools/c6_firmware/flash_c6.sh /dev/ttyUSB0
-```
-
-The helper selects `esp32c6`, uses 460800 baud, and writes all four images with
-DIO / 4 MB / 80 MHz flash settings. It tries to enter download mode through
-DTR/RTS, then resets the C6 when finished.
-
-**With manual boot/reset, or if automatic reset fails:**
-
-1. Leave adapter DTR/RTS disconnected so they cannot override the manual straps.
-   Keep the C6 powered by the jig's 3.3 V output, with all Tab5 power disconnected.
-2. Connect **J1 pin 5 (IO9)** to **J1 pin 6 (GND)**.
-3. Momentarily connect **J1 pin 4 (EN)** to GND, then release EN while keeping
-   IO9 grounded. This resets the C6 into its ROM downloader.
-4. Release IO9 after the reset. With no further reset, the C6 stays in download
-   mode. This follows Espressif's [C6 boot-mode procedure](https://docs.espressif.com/projects/esptool/en/latest/esp32c6/advanced-topics/boot-mode-selection.html).
-5. Run this complete command from the repository root:
-
-   ```bash
-   python -m esptool --chip esp32c6 -p /dev/ttyUSB0 -b 115200 \
-       --before no_reset --after no_reset \
-       write_flash --flash_mode dio --flash_size 4MB --flash_freq 40m \
-       0x0     tools/c6_firmware/bootloader.bin \
-       0x8000  tools/c6_firmware/partition-table.bin \
-       0xd000  tools/c6_firmware/ota_data_initial.bin \
-       0x10000 tools/c6_firmware/network_adapter.bin
-   ```
-
-This uses a slower UART rate and 40 MHz flash setting for the manual recovery
-path. `--before no_reset` preserves the boot mode you just selected;
-`--after no_reset` leaves restarting to you. The underscore spellings match the
-helper and remain accepted as legacy aliases by esptool 5.x.
-
-Wait for all writes and verification messages to finish. At 115200 baud, allow
-several minutes. If a transfer fails, repeat the manual boot sequence before
-retrying the command. The helper accepts only a port argument; use the direct
-command above to change reset behavior, baud rate, or flash settings.
-
-#### 4. Disconnect the jig, restore Tab5 power, and verify the radio
-
-1. Unplug the jig from the computer to remove its 3.3 V supply. Remove any
-   IO9-to-GND or EN-to-GND jumper and disconnect all jig wiring from J1,
-   including the 3.3 V connection.
-2. Restore the rear cover, reconnect the battery if used, and connect the Tab5's
-   USB-C cable to the computer. Turn the Tab5 on normally, without holding the
-   power button to enter download mode.
-3. Monitor the P4 USB-C console from `firmware/`:
-
-   ```bash
-   idf.py -p /dev/ttyACM0 monitor
-   ```
-
-4. Look for **`C6 firmware 2.13.1`** in the current application's log, successful
-   SDIO initialization, and no host/co-processor `Version mismatch` warning.
-   `BT controller init RPC failed` should no longer appear.
-5. With no station credentials configured, connect to **IAP2TAB5** and open
-   **http://192.168.4.1**. Open **Settings → Bluetooth** and confirm that scanning
-   finds the D100H when the remote is in pairing mode.
-
-The [C6 firmware guide](tools/c6_firmware/README.md) also describes rebuilding
-the slave images and restoring the factory firmware. Restoring factory 1.4.1
-reintroduces the version mismatch with this project's 2.13.1 host.
-
-### Flashing troubleshooting
-
-| Symptom | What to check |
-| --- | --- |
-| `idf.py` or `esptool` is missing | Source the ESP-IDF 5.5.6 `export.sh` in this terminal. |
-| P4 build cannot find `iap2_identity.c` | Generate the MFi identity before configuring or building. |
-| No P4 serial port | Use a data cable, connect directly to USB-C, and enter download mode with the power button. Re-list ports after each reset. |
-| Serial port is busy | Close other monitors, terminal programs, and flashing tools using that port. |
-| `Permission denied` on Linux | Grant your user access to the serial device. On Debian / Ubuntu, add it to `dialout` with `sudo usermod -aG dialout "$USER"`, then log out and back in. |
-| P4 image rejected because of chip revision | Use this project's pre-revision-3 defaults for the tested v1.3 board and rebuild with IDF 5.5.6. Do not bypass the revision check with a forced flash. |
-| C6 connection times out | Select the adapter's port, confirm the jig is set to 3.3 V and powers J1 pin 1, check crossed TX/RX and common ground, and try the manual IO9/EN sequence. Keep all Tab5 power disconnected. |
-| C6 write stops partway through | Check the jig's 3.3 V supply and stable UART wiring; keep Tab5 USB/battery power disconnected and retry the manual command at 115200 baud. |
-| C6 flash succeeds but the radio stays offline | Remove boot/reset straps and all jig wiring, restore normal Tab5 power, and check the P4 log for the C6 version. |
-| Old application still runs after `app-flash` | An OTA slot may still be selected; use web OTA or the complete P4 flash procedure. |
-
-### SD card and Wi-Fi
-
-The firmware mounts the card at `/sdcard`; FAT32 is recommended. Start with the
-[SD configuration examples](docs/sd/). For station mode, create `wifi.txt` with
-the SSID on the first line and password on the second:
-
-```text
-MyHomeWiFi
-my-password
-```
-
-Valid SD credentials take priority and update a backup in NVS. If the card
-cannot mount, or `wifi.txt` is missing or unusable, station mode uses that backup
-so the web debugger remains reachable. Unchanged credentials cause no NVS writes.
-
-With no usable SD or NVS credentials, the default configuration starts an open
-**IAP2TAB5** access point at **http://192.168.4.1**. Failed station connections
-are retried. AP mode can also be selected explicitly in `config.json`.
-
-Open the Tab5's address in a browser to configure settings, upload a library or
-pair record, sync the library, sync the clock, or install a firmware `.bin`
-over the air. The dashboard shows Tab5 charging current separately from the
-iPod battery, and offers Screen Off settings and iPod volume buttons.
-The `/debug` page adds resumable live logs with filtering, display capture,
-named navigation/media controls, keypad gesture tests, and power/link diagnostics.
-Its display recorder samples backlight PWM and display timing at 10 Hz. Use
-**Mark flicker + save** after a visible pulse to download the preceding trace.
-Enable **Debug log to SD** to retain logs in `/sdcard/debug.log` across resets.
-The web server has no authentication, so use it on a trusted network.
-
-Typical card contents after setup and sync:
-
-```text
-/sdcard/
-  config.json                   # UI, network, power, and USB settings
-  wifi.txt                      # optional station credentials
-  JPFONT.TTF                    # optional Japanese metadata font
-  AFC/MLDB.SQL                   # copied media database
-  AFC/MLDB.WAL                   # database write-ahead log, when present
-  AFC/MLDB.SHM                   # database shared-memory file, when present
-  lib/<short8>/library.bin       # converted media library
-  lib/<short8>/thumbs.bin        # packed album thumbnails
-  lib/<short8>/thumbs.idx        # thumbnail validity bitmap
-  lib/<short8>/stars.csv         # local stars
-  lib/<short8>/np.raw            # cached Now Playing artwork
-  lib/<short8>/np.txt            # metadata identifying the cached artwork
-```
-
-`<short8>` is derived from the device's library identifier. The firmware manages
-these directories and supports the older flat `/sdcard/library.bin` layout.
-The hardware image uses the imported library; mock assets are simulator-only.
-
-### USB ports and modes
-
-Two independent settings control USB: **which ports act as hosts** and **which
-Apple device protocol runs**. Both take effect at boot.
-
-| Host setting | USB-A | USB-C |
-| --- | --- | --- |
-| `usb_mode: 0` — default | High-speed host for the Apple device or HID controller | Serial console and flashing |
-| `usb_mode: 2` — Both A+C | High-speed host | Full-speed host through a powered hub/dock |
-
-Choose the host setting in **Settings → USB Options** and reboot to apply it.
-Dual-host mode needs a hub/dock that supplies 5 V upstream to the Tab5 and uses
-Wi-Fi for debugging because the USB-C console is unavailable. Use mode `0` when
-connecting USB-C to a PC for the serial console. The old mode `1` falls back to
-mode `0`.
-
-For simultaneous iPod and wired D100H use, the documented setup puts the iPod
-on USB-A and the D100H behind a powered USB-C hub. The current USB host stack
-cannot handle full-/low-speed devices behind a high-speed hub on USB-A; see
-[USB modes and hub limitations](docs/usb-modes.md).
-
-| Apple device mode | Purpose |
-| --- | --- |
-| **iAP2**, USB configuration 2 | Normal media UI, playback control, metadata, and Now Playing artwork |
-| **AFC Sync**, USB configuration 4 | Database copying and album thumbnail sync |
-
-These protocol modes are mutually exclusive. Switching between them saves the
-selection in NVS and reboots. **Sync** refreshes the database and incrementally
-caches missing album artwork. Its result stays on screen; choose **Exit** to
-restart in iAP2 mode. See the [AFC screen and sync guide](docs/afc-bringup.md#sync-screen)
-for progress states and button availability.
-
-## Import a library.bin snapshot (optional)
-
-Normal catalog updates arrive over iAP2; AFC Sync refreshes metadata dates and
-artwork separately. The following manual workflow converts a database snapshot
-on a host computer. Sync on the Tab5 does not rewrite `library.bin`.
-
-1. Enter **AFC Sync** mode and choose **Pair / Trust**. Unlock the Apple
-   device and approve Trust on its screen. Existing pair records can also be
-   uploaded. See [AFC pairing and bring-up](docs/afc-bringup.md).
-2. Use **Sync** on the Tab5 or web page to copy the database to
-   `/sdcard/AFC/`. Copy `MLDB.SQL` and, if present, `MLDB.WAL` from the card to a
-   host directory such as `/tmp/ipod-db/`.
-3. From the repository root, convert the snapshot with Python 3:
-
-   ```bash
-   python3 tools/media_db_to_library.py \
-       --db /tmp/ipod-db/MLDB.SQL \
-       --wal /tmp/ipod-db/MLDB.WAL \
-       --bin /tmp/ipod-db/library.bin \
-       --out /tmp/ipod-db/library.json
-   ```
-
-   Omit `--wal` if no WAL was copied. The JSON output is optional.
-4. Upload `library.bin` using the web UI, or send it directly to the Tab5's
-   address (the example uses its default AP):
-
-   ```bash
-   curl --data-binary @/tmp/ipod-db/library.bin \
-       http://192.168.4.1/api/library
-   ```
-
-   The upload replaces the active library file and reboots the device.
-5. Run **Sync** again to cache missing artwork for the imported library, then
-   choose **Exit** to return to iAP2 playback. Album thumbnails are cached on SD;
-   large Now Playing artwork arrives separately over iAP2.
-
-Repeat conversion and upload when replacing the imported snapshot; live iAP2
-catalog updates do not require this step. See the
-[media library import guide](docs/media-library-import.md) for serial transfers,
-the binary format, fonts, and artwork cache details.
-
-## Development
-
-The shared UI calls the backend contract in
-[`app/backend/player.h`](app/backend/player.h). The simulator supplies mock data;
-ESP builds route the same API to the imported library and iAP2 host.
+# MPD Tab5
+
+A Music Player Daemon controller for the M5Stack Tab5 (ESP32-P4 / C6), based on
+[rGnng/iap2tab5](https://github.com/rGnng/iap2tab5) at
+`76c99718d4ed5afa7ff3a3cb9f5cfb4db12dcd91`.
+
+It keeps the original LVGL touch interface, Gray/Aqua/Windows 95 themes, album,
+artist, song and playlist browsers, Up Next, USB input, Ulanzi Bluetooth knob,
+screen/power settings, Wi-Fi configuration, web diagnostics and OTA. Playback
+runs on **your MPD server's audio output**. The Tab5 is a remote control.
+
+## First use
+
+1. Boot with an SD card inserted. Existing Wi-Fi credentials can be imported
+   from the previous firmware's NVS backup. Otherwise put the SSID and password
+   on separate lines in `sdcard://mpd/wifi.txt`.
+2. Open the address shown on the Tab5, or your forwarded
+   [web interface](http://127.0.0.1:10082/).
+3. Under **MPD Server**, enter a hostname/IP, port (normally `6600`), and optional
+   password. Select **Save & connect**. The default hostname is **empty**.
+4. The library loads automatically. Database changes refresh about every
+   30 seconds. Use **Resync library** after editing stored playlists.
+
+Playback controls include play/pause, previous/next, seek, volume, mute,
+shuffle, repeat all/one, local stars, starting albums/artists/songs/playlists,
+and jumping to entries in Up Next. Touch, USB, BLE and web inputs use the same
+player functions. Hold previous/next on the Ulanzi to seek; hold the knob and
+turn it to change MPD volume.
+
+MPD 0.21 or newer is required for paginated database queries. Server permissions
+must allow reading the database/queue/playlists and changing playback. Passwords
+are preserved when the web password field is left blank; **Clear saved password**
+removes one. Passwords are stored in the SD configuration and omitted from API
+responses.
+
+## Storage
+
+All application files are below **`sdcard://mpd/`** (`/sdcard/mpd` in firmware):
 
 | Path | Contents |
 | --- | --- |
-| [`app/ui/`](app/ui/) | Screens, focus navigation, boot animation, and generated fonts |
-| [`app/backend/`](app/backend/) | Player API, mock data/loading, hardware dispatch, and BLE remote state |
-| [`sim/`](sim/) | SDL2 entry point, keyboard input, command-line options, and PNG capture |
-| [`firmware/main/`](firmware/main/) | ESP-IDF app, iAP2, AFC/usbmux/lockdownd, USB input, SD storage, and web server |
-| [`firmware/components/`](firmware/components/) | Local LVGL port and USB HID component fixes |
-| [`assets/`](assets/) | Mock library/covers, source fonts, web page, and UI artwork |
-| [`tools/`](tools/) | Library conversion, asset generators, identity generation, and C6 firmware |
-| [`tests/`](tests/) | Host-side D100H protocol and gesture tests |
+| `config.json` | Display, input, sound, Wi-Fi mode and power settings |
+| `server.json` | MPD hostname, port and password |
+| `wifi.txt` | Wi-Fi SSID and password, one per line |
+| `bluetooth.txt` | Known controllers and reconnect preference |
+| `lib/<server-id>/` | Per-server catalog, stars, thumbnail pack and cover caches |
+| `lib/<server-id>/np/` | Now Playing RGB565 cover cache |
+| `debug.log`, `debug.old.log` | Optional logs |
+| `JPFONT.TTF` | Optional extra font (existing root font imported once) |
 
-### Checks
+Temporary files and backups stay in the same directory. Existing iPod files are
+left in place. Wi-Fi/BLE radio internals still use their ESP-IDF/NimBLE system
+storage; this app imports existing credentials/controller preferences without
+rewriting the old application's configuration.
 
-The D100H tests compile the production codec with the host C compiler and run
-without ESP-IDF:
+## Build and OTA
+
+Use **ESP-IDF 5.5.6**, with the ESP32-P4 tools installed:
 
 ```bash
-python3 -m unittest discover -s tests -v
+source ~/esp/esp-idf-5.5.6/export.sh
+idf.py -C firmware build
+python3 tools/ota_mpd.py --url http://127.0.0.1:10082
 ```
 
-They cover BLE/HID framing, captured protocol vectors, heartbeat encoding,
-top-right tap/hold handling, library transport, trust approval/retry, and pair
-record persistence. Certificate validation additionally uses `libmbedtls-dev`
-and Python `cryptography`; those checks are skipped when unavailable. Simulator screenshots are useful for reviewing UI
-changes; hardware timing, USB behavior, and BLE still need a Tab5.
+The application image is `firmware/build/mpdtab5.bin`. The OTA helper uploads
+only the application and checks the running firmware's ELF SHA-256 after
+reboot. The existing Tab5 partition layout and C6 firmware are reused. A full
+USB flash and hardware details are covered in the inherited
+[firmware guide](firmware/README.md); its Apple playback setup is not used here.
+No MFi identity or Apple authentication material is needed.
 
-The optional LVGL integration tests feed pointer input through the production
-Albums UI. They check dragging over artwork, titles, artists, and row padding
-in both directions, plus tapping to open an album, across all three themes.
-They also check the screen timer, two-second clock hold, wake-only input,
-notification fades and rotation, and status cleanup across theme rebuilds:
+## Development
+
+The background MPD worker owns all network I/O. UI callbacks enqueue commands;
+metadata updates are applied on the UI thread using the inherited catalog.
+Database queries are paginated in batches of 256 songs. URI-derived IDs stay
+stable across imports, and AlbumArtist groups compilation albums. Connections
+retry automatically after network/server failures. Server switches use separate
+SD cache namespaces.
 
 ```bash
-cmake -S . -B build -DIAP2TAB5_BUILD_UI_TESTS=ON
+python3 -m unittest discover -s tests -p 'test_mpd_*.py' -v
+cmake -S . -B build -G Ninja -DIAP2TAB5_BUILD_UI_TESTS=ON
 cmake --build build -j
 ctest --test-dir build --output-on-failure
+./build/tab5_sim --headless --screenshot /tmp/mpd-preview.png
 ```
 
-Optional browser tests in `tests/test_web_ui.py` use Playwright and Chromium.
-They serve the web assets locally and mock every device API, covering battery
-readings, unsaved settings, named controls, mobile layout and log resumption.
-They are skipped when Playwright is unavailable.
+The simulator uses the inherited demo library; firmware always uses MPD.
+Browser tests need `playwright` and its Chromium installation; they are skipped
+when Playwright is unavailable. Existing source assets and their notices are
+retained. MPD framing and command semantics follow the
+[official protocol documentation](https://mpd.readthedocs.io/en/stable/protocol.html).
 
-### Regenerate assets
+Current bounds: 24,000 library/queue entries, 4,096 albums, 2,048 album artists,
+32 stored playlists with up to 1,024 tracks each, and a 3 MiB URI pool. Oversized
+network responses fail with a status message. JPEG embedded/external artwork is
+retrieved on track changes and cached as 360×360 RGB565; other formats currently
+use the UI's fallback artwork. The existing Date Added ordering reflects import
+order when MPD supplies no local date history. Search and playlist editing are
+not implemented.
 
-Generated assets are checked in, so these tools are only needed when changing
-their sources. Run them from the repository root:
-
-| Command | Purpose | Additional dependency |
-| --- | --- | --- |
-| `python3 tools/gen_mock_library.py` | Rebuild the deterministic mock library, covers, and thumbnails | Pillow |
-| `python3 tools/gen_web_ui.py` | Embed `assets/web/index.html` in `firmware/main/web_index.h` | Python 3 |
-| `python3 tools/gen_plug_art.py` | Embed the no-device illustration | Pillow |
-| `python3 tools/gen_notification_icons.py` | Render the notification SVGs as 32 px alpha images | CairoSVG 2.8.2, Pillow 12.0.0 |
-| `./tools/gen_icons.sh` | Generate Bootstrap/custom SVG icon font subsets | Node/npm (`lv_font_conv`), Python `fonttools` |
-| `./tools/gen_inter_fonts.sh` | Generate proportional and tabular Inter fonts | Node/npm and Python `fonttools` |
-| `./tools/gen_boot_font.sh` | Generate the VT323 boot font | Node/npm |
-
-## Current limitations
-
-- The browsable library uses AFC import. Optional iAP2 library notifications
-  populate fallback album discovery order (`-DIAP2TAB5_FULL_LIBRARY_SYNC=ON`).
-  Full notification sync has passed hardware testing; importing a complete
-  catalog from those notifications is not implemented yet.
-- Up Next depends on the queue supplied by the device and matching tracks in the
-  imported library. Its fallback may show only the current track.
-- Stars are stored locally in `stars.csv` and are not written back to the iPod.
-- Unsupported artwork can fall back to a placeholder; the software JPEG decoder
-  supports baseline JPEG only.
-- Hardware display output is not yet tear-free. The simulator also uses a
-  different rendering path and does not predict Tab5 performance.
-
-## Further documentation
-
-| Guide | Topics |
-| --- | --- |
-| [Firmware](firmware/README.md) | Configuration schema, partitions, serial commands, and hardware notes |
-| [UI design](docs/design.md) | Layout, navigation, focus model, and playback behavior |
-| [iAP2 bring-up](docs/iap2-bringup.md) | Link layer, authentication, identification, control, and artwork |
-| [AFC bring-up](docs/afc-bringup.md) | usbmux, lockdownd, TLS, pairing, and file access |
-| [Media library import](docs/media-library-import.md) | Database conversion, binary format, fonts, and artwork |
-| [Star persistence](docs/stars-persistence.md) | Per-library star storage and matching |
-| [USB modes](docs/usb-modes.md) | Port roles, powered hubs, charging, and boot configuration |
-| [D100H driver notes](docs/d100h-ble-handover.md) | BLE protocol analysis and bring-up history |
-| [C6 firmware](tools/c6_firmware/README.md) | ESP-Hosted images and flashing instructions |
-
-Some bring-up documents retain historical experiments and older configurations;
-use the current source and build files when working on the drivers.
-
-## Third-party code and licenses
-
-The project uses LVGL, SDL2, ESP-IDF/esp-bsp/ESP-Hosted, cJSON, stb, Bootstrap
-Icons, Simple Line Icons, Inter, VT323, and optional M PLUS 1p fonts. Each
-retains its own license;
-font licenses are included in [`assets/fonts/`](assets/fonts/) and
-[`tools/fonts/`](tools/fonts/). The Albums icon's attribution and MIT license are
-in [`assets/icons/`](assets/icons/), and cJSON's license is in
-[`third_party/cjson/LICENSE`](third_party/cjson/LICENSE). There is currently no
-project-wide license file.
+Upstream base: `rGnng/iap2tab5@76c99718d4ed5afa7ff3a3cb9f5cfb4db12dcd91`.

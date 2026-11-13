@@ -18,7 +18,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "freertos/idf_additions.h"
-#include "iap2_host.h"
+#include "mpd_client.h"
 static const char * TAG = "player";
 #endif
 
@@ -394,13 +394,13 @@ static void album_seen_save(bool force) { (void)force; }
 #endif
 
 #if defined(ESP_PLATFORM)
-static bool iap2_active(iap2_state_t * state)
+static bool iap2_active(mpd_state_t * state)
 {
-    return iap2_host_is_enabled() && iap2_host_get_state(state) &&
+    return mpd_client_is_enabled() && mpd_client_get_state(state) &&
            state->identified;
 }
 
-static uint64_t iap2_track_id(const iap2_state_t * state)
+static uint64_t iap2_track_id(const mpd_state_t * state)
 {
     if(state->track_key != 0) return state->track_key;
     if(state->title[0] == '\0') return 0;
@@ -417,7 +417,7 @@ static uint64_t iap2_track_id(const iap2_state_t * state)
     return hash ? hash : 1;
 }
 
-static uint64_t iap2_album_id(const iap2_state_t * state)
+static uint64_t iap2_album_id(const mpd_state_t * state)
 {
     if(state->album_pid) return state->album_pid;
     if(state->album[0] == '\0') return 0;
@@ -442,7 +442,7 @@ static uint64_t iap2_album_id(const iap2_state_t * state)
 static int track_index_by_id(uint64_t id);
 static int track_index_by_meta(const char * title, const char * album);
 
-static void iap2_snapshot(player_snapshot_t * out, const iap2_state_t * state)
+static void iap2_snapshot(player_snapshot_t * out, const mpd_state_t * state)
 {
     memset(out, 0, sizeof(*out));
     out->real_device = true;
@@ -479,8 +479,8 @@ static void iap2_snapshot(player_snapshot_t * out, const iap2_state_t * state)
         }
     }
     if(star_idx >= 0) out->starred = track_starred[star_idx];
-    out->volume = volume;
-    out->muted = muted;
+    out->volume = state->volume;
+    out->muted = state->volume==0;
     out->shuffle = state->shuffle;
     out->repeat = state->repeat == 1 ? PLAYER_REPEAT_ONE :
                   (state->repeat == 2 ? PLAYER_REPEAT_ALL :
@@ -769,7 +769,7 @@ uint32_t player_queue_revision(void)
 {
 #if defined(ESP_PLATFORM)
     uint32_t rev = queue_rev;
-    if(iap2_host_is_enabled()) rev += iap2_host_queue_list_revision();
+    if(mpd_client_is_enabled()) rev += mpd_client_queue_list_revision();
     return rev;
 #else
     return queue_rev;
@@ -781,8 +781,8 @@ static void play_ids_start(int count, bool shuffle_on)
     if(count <= 0) return;
     if(count > PLAY_IDS_MAX) count = PLAY_IDS_MAX;
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
-        iap2_host_play_track_keys(play_ids, count, 0);
+    if(mpd_client_is_enabled()) {
+        mpd_client_play_track_keys(play_ids, count, 0);
         memcpy(device_queue, play_ids, (size_t)count * sizeof(uint64_t));
         device_queue_count = count;
         queue_rev++;
@@ -1089,7 +1089,7 @@ fail:
 static void load_library(void)
 {
     char path[512];
-    const char * base = "/sdcard";
+    const char * base = "/sdcard/mpd";
     char * data = NULL;
     size_t size = 0;
 
@@ -1098,12 +1098,12 @@ static void load_library(void)
         const char * lib_path = app_config_library_bin_path();
         if(load_library_bin(lib_path)) return;
         /* Legacy layout: /sdcard/library.bin. */
-        if(strcmp(lib_path, "/sdcard/library.bin") != 0 &&
-           load_library_bin("/sdcard/library.bin")) {
+        if(strcmp(lib_path, "/sdcard/mpd/library.bin") != 0 &&
+           load_library_bin("/sdcard/mpd/library.bin")) {
             return;
         }
 
-        snprintf(path, sizeof(path), "/sdcard/library.json");
+        snprintf(path, sizeof(path), "/sdcard/mpd/library.json");
         data = read_file(path, &size);
         if(data != NULL) real_library = true;
     }
@@ -1373,10 +1373,10 @@ void player_get_snapshot(player_snapshot_t * out)
     out->muted = muted;
     out->battery = -1;
     out->revision = revision;
-    out->real_device = iap2_host_is_enabled();
-    if(iap2_host_is_enabled()) {
-        iap2_state_t state;
-        if(iap2_host_get_state(&state)) {
+    out->real_device = mpd_client_is_enabled();
+    if(mpd_client_is_enabled()) {
+        mpd_state_t state;
+        if(mpd_client_get_state(&state)) {
             iap2_snapshot(out, &state);
         }
         return;
@@ -1413,7 +1413,7 @@ void player_get_snapshot(player_snapshot_t * out)
 bool player_device_available(void)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) return iap2_host_is_identified();
+    if(mpd_client_is_enabled()) return mpd_client_is_identified();
     return afc_client_is_ready();
 #else
     return true;
@@ -1464,7 +1464,7 @@ bool player_artwork_remote(uint64_t album_id, char * out, size_t out_len)
 uint32_t player_artwork_revision(void)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) return iap2_host_artwork_revision();
+    if(mpd_client_is_enabled()) return mpd_client_artwork_revision();
 #endif
     return 0;
 }
@@ -1474,7 +1474,7 @@ bool player_artwork_copy(uint8_t * dst, size_t len, artwork_quality_t minimum,
 {
     if(actual) *actual = (artwork_quality_t){0};
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) return iap2_host_artwork_copy(dst, len, minimum, actual);
+    if(mpd_client_is_enabled()) return mpd_client_artwork_copy(dst, len, minimum, actual);
 #else
     (void)dst; (void)len; (void)minimum;
 #endif
@@ -1685,13 +1685,13 @@ void player_play_playlist_shuffled(int index)
 int player_queue_count(void)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled() && iap2_host_queue_list_count() > 0) {
-        return iap2_host_queue_list_count();
+    if(mpd_client_is_enabled() && mpd_client_queue_list_count() > 0) {
+        return mpd_client_queue_list_count();
     }
-    if(device_queue_count > 0) return device_queue_count;
-    if(iap2_host_is_enabled()) {
-        iap2_state_t state;
-        if(iap2_host_get_state(&state)) {
+    if(!mpd_client_is_enabled() && device_queue_count > 0) return device_queue_count;
+    if(mpd_client_is_enabled()) {
+        mpd_state_t state;
+        if(mpd_client_get_state(&state)) {
             return (state.identified && state.title[0]) ? 1 : 0;
         }
     }
@@ -1704,14 +1704,14 @@ int player_queue_count(void)
 int player_queue_index(void)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled() && iap2_host_queue_list_count() > 0) {
-        iap2_state_t state;
-        if(!iap2_host_get_state(&state) || state.queue_index < 0) return -1;
-        int index = state.queue_index - iap2_host_queue_list_base();
-        int count = iap2_host_queue_list_count();
+    if(mpd_client_is_enabled() && mpd_client_queue_list_count() > 0) {
+        mpd_state_t state;
+        if(!mpd_client_get_state(&state) || state.queue_index < 0) return -1;
+        int index = state.queue_index - mpd_client_queue_list_base();
+        int count = mpd_client_queue_list_count();
         return (index >= 0 && index < count) ? index : -1;
     }
-    if(device_queue_count > 0) {
+    if(!mpd_client_is_enabled() && device_queue_count > 0) {
         player_snapshot_t snapshot;
         player_get_snapshot(&snapshot);
         for(int i = 0; i < device_queue_count; i++) {
@@ -1719,9 +1719,9 @@ int player_queue_index(void)
         }
         return -1;
     }
-    if(iap2_host_is_enabled()) {
-        iap2_state_t state;
-        if(iap2_host_get_state(&state) &&
+    if(mpd_client_is_enabled()) {
+        mpd_state_t state;
+        if(mpd_client_get_state(&state) &&
            state.identified && state.title[0]) {
             return 0;
         }
@@ -1735,22 +1735,22 @@ int player_queue_index(void)
 bool player_queue_at(int index, player_track_t * out)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled() && iap2_host_queue_list_count() > 0) {
+    if(mpd_client_is_enabled() && mpd_client_queue_list_count() > 0) {
         uint64_t key = 0;
-        if(out == NULL || !iap2_host_queue_list_get(index, &key)) return false;
+        if(out == NULL || !mpd_client_queue_list_get(index, &key)) return false;
         int track_index = track_index_by_id(key);
         if(track_index < 0) return false;
         *out = tracks[track_index];
         return true;
     }
-    if(device_queue_count > 0) {
+    if(!mpd_client_is_enabled() && device_queue_count > 0) {
         if(index < 0 || index >= device_queue_count || out == NULL) return false;
         int track_index = track_index_by_id(device_queue[index]);
         if(track_index < 0) return false;
         *out = tracks[track_index];
         return true;
     }
-    if(iap2_host_is_enabled()) {
+    if(mpd_client_is_enabled()) {
         if(index != 0 || out == NULL) return false;
         player_snapshot_t snapshot;
         player_get_snapshot(&snapshot);
@@ -1771,10 +1771,10 @@ bool player_queue_at(int index, player_track_t * out)
 void player_play_pause(void)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
-        iap2_state_t state;
+    if(mpd_client_is_enabled()) {
+        mpd_state_t state;
         if(iap2_active(&state)) {
-            iap2_host_hid_command(state.play_status == 1 ? "pause" : "play");
+            mpd_client_hid_command(state.play_status == 1 ? "pause" : "play");
         }
         return;
     }
@@ -1792,8 +1792,8 @@ void player_play_pause(void)
 void player_next(void)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
-        iap2_host_hid_command("next");
+    if(mpd_client_is_enabled()) {
+        mpd_client_hid_command("next");
         return;
     }
     return;
@@ -1816,8 +1816,8 @@ void player_next(void)
 void player_previous(void)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
-        iap2_host_hid_command("previous");
+    if(mpd_client_is_enabled()) {
+        mpd_client_hid_command("previous");
         return;
     }
     return;
@@ -1838,8 +1838,8 @@ void player_previous(void)
 void player_seek_sec(uint32_t sec)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
-        iap2_host_seek_ms(sec * 1000);
+    if(mpd_client_is_enabled()) {
+        mpd_client_seek_ms(sec * 1000);
         return;
     }
     return;
@@ -1856,10 +1856,10 @@ void player_step_volume(int direction)
 {
     if(direction == 0) return;
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
+    if(mpd_client_is_enabled()) {
         /* Send a relative tap for every detent. A local percentage estimate
          * drifts from the iPod and can incorrectly prevent further turns. */
-        iap2_host_hid_command(direction > 0 ? "volume_up" : "volume_down");
+        mpd_client_hid_command(direction > 0 ? "volume_up" : "volume_down");
         return;
     }
 #endif
@@ -1874,8 +1874,8 @@ void player_step_volume(int direction)
 void player_mute_toggle(void)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
-        iap2_host_hid_command("mute");
+    if(mpd_client_is_enabled()) {
+        mpd_client_hid_command("mute");
         muted = !muted;
         return;
     }
@@ -1890,9 +1890,9 @@ void player_toggle_star(void)
     /* In iAP2 mode the displayed track comes from the iPod, not from the
      * local queue. Match its persistent key against library.bin so the star
      * belongs to the song the user is actually looking at. */
-    if(iap2_host_is_enabled()) {
-        iap2_state_t state;
-        if(iap2_host_get_state(&state) && state.title[0] != '\0') {
+    if(mpd_client_is_enabled()) {
+        mpd_state_t state;
+        if(mpd_client_get_state(&state) && state.title[0] != '\0') {
             int idx = state.track_key != 0
                           ? track_index_by_id(state.track_key) : -1;
             if(idx < 0) {
@@ -1942,11 +1942,8 @@ void player_clear_stars(void)
 void player_set_shuffle(bool on)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
-        iap2_state_t state;
-        if(iap2_active(&state) && state.shuffle != on) {
-            iap2_host_hid_command("shuffle");
-        }
+    if(mpd_client_is_enabled()) {
+        mpd_client_set_shuffle(on);
         return;
     }
     return;
@@ -1958,8 +1955,8 @@ void player_set_shuffle(bool on)
 void player_cycle_repeat(void)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
-        iap2_host_hid_command("repeat");
+    if(mpd_client_is_enabled()) {
+        mpd_client_hid_command("repeat");
         return;
     }
     return;
@@ -2013,9 +2010,9 @@ void player_play_artist_shuffled(uint64_t artist_id)
 void player_play_song(uint64_t track_id)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
+    if(mpd_client_is_enabled()) {
         if(track_index_by_id(track_id) >= 0) {
-            iap2_host_play_all_songs(track_id);
+            mpd_client_play_all_songs(track_id);
             device_queue_count = 0;
         }
         return;
@@ -2035,11 +2032,11 @@ void player_play_song(uint64_t track_id)
 void player_play_all_shuffled(void)
 {
 #if defined(ESP_PLATFORM)
-    if(iap2_host_is_enabled()) {
+    if(mpd_client_is_enabled()) {
         if(track_count <= 0) return;
         /* PlayMediaLibrarySpecial from a random track, then iPod shuffle. */
         uint64_t start = tracks[rand() % track_count].id;
-        iap2_host_play_all_songs(start);
+        mpd_client_play_all_songs(start);
         device_queue_count = 0;
         player_set_shuffle(true);
     }
@@ -2053,6 +2050,7 @@ void player_play_all_shuffled(void)
 void player_queue_jump(int index)
 {
 #if defined(ESP_PLATFORM)
+    mpd_client_queue_jump(index);
     return;
 #endif
     if(index < 0 || index >= queue_count) return;

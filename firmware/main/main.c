@@ -31,7 +31,7 @@
 #include "thumb_cache.h"
 #include "jpeg_thumbnail.h"
 #include "usb_host_core.h"
-#include "iap2_host.h"
+#include "mpd_client.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 
@@ -57,7 +57,7 @@
 #include <sys/time.h>
 #include <time.h>
 
-static const char * TAG = "iap2tab5";
+static const char * TAG = "mpdtab5";
 
 static lv_display_t * s_display;
 static int s_applied_flip = -1;
@@ -101,304 +101,6 @@ static void apply_screen_flip(void)
 
 static void publish_system_config(void);
 
-/* ---- Apple File Conduit settings page ---------------------------------- */
-static volatile int s_afc_job_active;
-static volatile int s_afc_job_kind;
-static bool s_afc_job_finished, s_afc_job_failed;
-static char s_afc_job_status[96];
-static int s_afc_cached_albums;
-static int s_afc_thumb_count;
-static int s_afc_cover_count;
-static uint64_t s_afc_thumb_bytes;
-static uint64_t s_afc_cover_bytes;
-static uint64_t s_afc_original_bytes;
-static TickType_t s_afc_cache_tick;
-
-static bool name_has_ext(const char * name, const char * ext)
-{
-    size_t n = strlen(name);
-    size_t e = strlen(ext);
-    return n > e && strcasecmp(name + n - e, ext) == 0;
-}
-
-static void afc_scan_cached_artwork(void)
-{
-    TickType_t now = xTaskGetTickCount();
-    if(s_afc_cache_tick != 0 &&
-       (now - s_afc_cache_tick) < pdMS_TO_TICKS(5000)) {
-        return;
-    }
-    s_afc_cache_tick = now;
-    s_afc_cached_albums = 0;
-    s_afc_thumb_count = 0;
-    s_afc_cover_count = 0;
-    s_afc_thumb_bytes = 0;
-    s_afc_cover_bytes = 0;
-    s_afc_original_bytes = 0;
-
-    const char * art_dir = app_config_artwork_dir();
-    DIR * dir = opendir(art_dir);
-    if(dir == NULL) return;
-    struct dirent * ent;
-    while((ent = readdir(dir)) != NULL) {
-        const char * name = ent->d_name;
-        char path[300];
-        struct stat st;
-        snprintf(path, sizeof(path), "%s/%s", art_dir, name);
-        if(stat(path, &st) != 0 || !S_ISREG(st.st_mode)) continue;
-        if(name_has_ext(name, ".thm")) {
-            s_afc_thumb_count++;
-            s_afc_thumb_bytes += (uint64_t)st.st_size;
-        }
-        else if(name_has_ext(name, ".jpg") || name_has_ext(name, ".png") ||
-                name_has_ext(name, ".wbp") || name_has_ext(name, ".gif")) {
-            s_afc_original_bytes += (uint64_t)st.st_size;
-        }
-    }
-    closedir(dir);
-
-    /* The packed cache is authoritative once it has any valid slot. Legacy
-     * .thm files are still counted until the first index pass packs them. */
-    uint32_t packed = thumb_cache_count();
-    if(packed > 0) {
-        s_afc_thumb_count = (int)packed;
-        s_afc_thumb_bytes = thumb_cache_bytes();
-    }
-    s_afc_cached_albums = s_afc_thumb_count > 0 ? s_afc_thumb_count
-                                                : s_afc_cover_count;
-}
-
-static void ui_afc_status_handler(ui_afc_status_t * out)
-{
-    memset(out, 0, sizeof(*out));
-    out->available = true;
-    out->afc_mode = !app_config_iap2_mode();
-    out->sd_ready = app_config_sd_ready();
-    out->connected = afc_client_is_ready();
-    out->usb_connected = usbmux_host_is_ready();
-    lockdown_pair_status_t pairing;
-    lockdown_client_pair_status(&pairing);
-    out->pair_busy = pairing.busy;
-    out->pair_trusted = pairing.trusted && out->usb_connected;
-    snprintf(out->pair_status, sizeof(out->pair_status), "%s", pairing.message);
-    out->job_finished = s_afc_job_finished;
-    out->job_failed = s_afc_job_failed;
-    lockdown_artwork_progress_t progress;
-    lockdown_client_artwork_progress(&progress);
-    out->job_active = s_afc_job_active != 0 || progress.active;
-    out->job_kind = progress.active ? progress.kind : s_afc_job_kind;
-    out->sync_total = progress.total;
-    out->sync_phase = progress.phase;
-    out->sync_attempted = progress.attempted;
-    out->sync_copied = progress.copied;
-    out->sync_failed = progress.failed;
-    out->sync_current_id = progress.current_id;
-    snprintf(out->sync_album, sizeof(out->sync_album), "%s", progress.album);
-    snprintf(out->sync_artist, sizeof(out->sync_artist), "%s", progress.artist);
-    snprintf(out->status, sizeof(out->status), "%s",
-             s_afc_job_finished ? s_afc_job_status : lockdown_client_status());
-
-    snprintf(out->usb_status, sizeof(out->usb_status), "%s",
-             lockdown_client_status());
-    snprintf(out->usb_mode, sizeof(out->usb_mode), "%s",
-             out->afc_mode ? "AFC (config 4)" : "iAP2 (config 2)");
-    const char * operation = "idle";
-    if(out->job_active) {
-        if(progress.phase == 1) operation = "database sync";
-        else if(progress.phase == 2) operation = "album art cache";
-        else if(progress.phase == 3) operation = "convert thumbnail";
-        else operation = "preparing";
-    }
-    snprintf(out->usb_operation, sizeof(out->usb_operation), "%s", operation);
-    snprintf(out->library_suffix, sizeof(out->library_suffix), "%s",
-             app_config_library_short());
-    out->library_albums = player_library_album_count();
-    out->library_tracks = player_library_track_count();
-    snprintf(out->library_db_item, sizeof(out->library_db_item),
-             "%d albums / %d tracks", out->library_albums,
-             out->library_tracks);
-    struct stat lib_st;
-    if(stat(app_config_library_bin_path(), &lib_st) == 0) {
-        out->library_db_bytes = (uint64_t)lib_st.st_size;
-        struct tm tmv;
-        localtime_r(&lib_st.st_mtime, &tmv);
-        strftime(out->library_updated, sizeof(out->library_updated),
-                 "%Y-%m-%d %H:%M", &tmv);
-    }
-    else {
-        out->library_db_bytes = 0;
-        snprintf(out->library_updated, sizeof(out->library_updated), "—");
-    }
-    char cache_path[160];
-    snprintf(cache_path, sizeof(cache_path), "%s/thumbs.bin",
-             app_config_library_dir());
-    struct stat cache_st;
-    out->cover_cache_bytes = stat(cache_path, &cache_st) == 0
-                                 ? (uint64_t)cache_st.st_size : 0;
-    snprintf(out->iap2_status, sizeof(out->iap2_status), "%s",
-             app_config_iap2_mode() ? iap2_host_status()
-                                    : "Disabled (AFC mode)");
-
-    if(!out->job_active) {
-        app_config_sd_info_refresh_idle();
-    }
-    app_config_sd_info_t sd;
-    if(app_config_sd_info(&sd)) {
-        out->sd_info_ready = true;
-        snprintf(out->sd_vendor, sizeof(out->sd_vendor), "%s", sd.vendor);
-        snprintf(out->sd_type, sizeof(out->sd_type), "%s", sd.type);
-        snprintf(out->sd_fs, sizeof(out->sd_fs), "%s", sd.filesystem);
-        out->sd_used_bytes = sd.used_bytes;
-        out->sd_total_bytes = sd.total_bytes;
-    }
-    else {
-        out->sd_info_ready = false;
-    }
-    /* Walking the covers directory costs a stat() per file. Do it when the
-     * screen is idle, not every 500 ms while a sync is running: the sync
-     * progress fields below are already updated live by the job task. */
-    if(!out->job_active) {
-        afc_scan_cached_artwork();
-    }
-    out->cached_albums = s_afc_cached_albums;
-    out->thumb_count = s_afc_thumb_count;
-    out->cover_count = s_afc_cover_count;
-    out->thumb_bytes = s_afc_thumb_bytes;
-    out->cover_bytes = s_afc_cover_bytes;
-    out->original_bytes = s_afc_original_bytes;
-    out->cache_bytes = out->thumb_bytes + out->original_bytes;
-}
-
-static void afc_job_task(void * arg);
-
-static bool afc_start_job_task(uint8_t job)
-{
-    s_afc_job_finished = s_afc_job_failed = false;
-    s_afc_job_status[0] = 0;
-    if(job != 0) app_config_set_afc_job(job);
-    s_afc_job_active = job ? job : 1;
-    s_afc_job_kind = job;
-    BaseType_t ok = xTaskCreateWithCaps(
-        afc_job_task, "afc_job", 24 * 1024, NULL, 4, NULL,
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if(ok != pdPASS) {
-        s_afc_job_active = 0;
-        s_afc_job_finished = s_afc_job_failed = true;
-        snprintf(s_afc_job_status, sizeof(s_afc_job_status), "Not enough memory to start sync. Try again.");
-        ESP_LOGE(TAG, "failed to create AFC job task");
-        return false;
-    }
-    return true;
-}
-
-static void afc_job_task(void * arg)
-{
-    LV_UNUSED(arg);
-    uint8_t job = app_config_take_afc_job();
-    if(job != 1 && job != 2) {
-        s_afc_job_active = 0;
-        s_afc_job_finished = s_afc_job_failed = true;
-        snprintf(s_afc_job_status, sizeof(s_afc_job_status),
-                 "Could not read the sync request. Try again.");
-        vTaskDelete(NULL);
-        return;
-    }
-
-    s_afc_job_active = job;
-    s_afc_job_kind = job;
-    ESP_LOGW(TAG, "AFC job %u starting sync", job);
-
-    /* The iPod / lockdownd session may still be coming up. */
-    for(int i = 0; i < 240 && !afc_client_is_ready(); i++) {
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-
-    esp_err_t result = ESP_ERR_TIMEOUT;
-    if(afc_client_is_ready()) {
-        esp_err_t err = lockdown_client_sync_artwork();
-        result = err;
-        ESP_LOGW(TAG, "AFC job %u result: %s", job, esp_err_to_name(err));
-    }
-    else {
-        ESP_LOGW(TAG, "AFC job %u: AFC did not become ready", job);
-    }
-
-    lockdown_artwork_progress_t progress;
-    lockdown_client_artwork_progress(&progress);
-    s_afc_job_failed = result != ESP_OK || progress.failed > 0;
-    if(progress.failed > 0 && progress.phase > 1) {
-        snprintf(s_afc_job_status, sizeof(s_afc_job_status),
-            "%d of %d covers ready; %d could not be %s.",
-            progress.copied, progress.total, progress.failed,
-            progress.phase == 3 ? "converted" : "copied");
-    }
-    else {
-        snprintf(s_afc_job_status, sizeof(s_afc_job_status), "%s",
-            result == ESP_ERR_TIMEOUT ? "Could not connect. Check device trust and try again." :
-            s_afc_job_failed ? "Database or artwork sync failed. Check the device and SD card." : "Sync complete");
-    }
-    s_afc_job_finished = true;
-    s_afc_cache_tick = 0;
-    s_afc_job_active = 0;
-    /* Keep the result visible; Return to player performs the explicit reboot. */
-    vTaskDelete(NULL);
-}
-
-static void ui_afc_action_handler(int action)
-{
-    lockdown_pair_status_t pairing;
-    lockdown_client_pair_status(&pairing);
-    if(s_afc_job_active || pairing.busy) return;
-    if(action == UI_AFC_ACTION_PAIR) {
-        if(app_config_iap2_mode()) {
-            app_config_set_iap2_mode(false);
-            app_config_save();
-            ESP_LOGW(TAG, "AFC pair/connect: switching to AFC config 4");
-            vTaskDelay(pdMS_TO_TICKS(350));
-            web_server_reboot();
-        }
-        else {
-            lockdown_client_request_pair();
-        }
-        return;
-    }
-
-    if(action == UI_AFC_ACTION_IPOD_MODE) {
-        if(app_config_iap2_mode()) return;
-        app_config_set_iap2_mode(true);
-        app_config_save();
-        ESP_LOGW(TAG, "switching to iAP2 config 2");
-        vTaskDelay(pdMS_TO_TICKS(350));
-        web_server_reboot();
-        return;
-    }
-
-    if(action != UI_AFC_ACTION_SYNC) return;
-    uint8_t job = 2;
-
-    /* In AFC mode, run the worker and retain its result on screen. */
-    if(!app_config_iap2_mode()) {
-        if(!afc_client_is_ready() || !app_config_sd_ready()) return;
-        afc_start_job_task(job);
-        return;
-    }
-
-    app_config_set_afc_job(job);
-    app_config_set_iap2_mode(false);
-    app_config_save();
-    ESP_LOGW(TAG, "AFC sync queued; rebooting to AFC");
-    vTaskDelay(pdMS_TO_TICKS(350));
-    web_server_reboot();
-}
-
-static bool web_start_sync(void)
-{
-    lockdown_pair_status_t pairing;
-    lockdown_client_pair_status(&pairing);
-    if(app_config_iap2_mode() || s_afc_job_active || pairing.busy ||
-       !afc_client_is_ready() || !app_config_sd_ready()) return false;
-    return afc_start_job_task(2);
-}
 
 static void apply_runtime_config(void)
 {
@@ -657,7 +359,7 @@ void app_main(void)
      * Wi-Fi/USB logs are available from the web debug page. */
     debug_log_init();
 
-    ESP_LOGI(TAG, "IAP2 Tab5 preview firmware starting (build %s %s)",
+    ESP_LOGI(TAG, "MPD Tab5 firmware starting (build %s %s)",
              __DATE__, __TIME__);
     ESP_LOGI(TAG, "reset reason: %d", (int)esp_reset_reason());
 
@@ -669,16 +371,8 @@ void app_main(void)
     }
 
     app_config_init();
-    /* Consume the destructive request durably before doing any deletion.
-     * Run before player/UI/cache handles open, and never repeat on reboot. */
-    if(app_config_peek_afc_job() == 3) {
-        if(app_config_take_afc_job() == 3 && thumb_cache_reset() == ESP_OK) {
-            app_config_set_afc_job(2);
-        }
-        else {
-            ESP_LOGE(TAG, "artwork cache reset failed; automatic sync cancelled");
-        }
-    }
+    g_app_config.iap2_mode=true;
+    mpd_client_init();
     debug_log_set_sd_enabled(g_app_config.debug_log);
 
     setenv("TZ", "CST-8", 1);
@@ -767,9 +461,7 @@ void app_main(void)
     ui_set_feedback_cb(ui_feedback_handler);
     ui_set_screen_power_cb(ui_screen_power_handler);
     ui_set_time_changed_cb(ui_time_changed_handler);
-    ui_set_afc_status_cb(ui_afc_status_handler);
-    ui_set_afc_action_cb(ui_afc_action_handler);
-    ui_set_afc_sync_mode(!g_app_config.iap2_mode);
+    ui_set_afc_sync_mode(false);
     ui_set_artwork_dir(app_config_artwork_dir());
     char np_cache_dir[160];
     snprintf(np_cache_dir, sizeof(np_cache_dir), "%s/np",
@@ -813,15 +505,7 @@ void app_main(void)
         /* The HID class driver runs in both modes. It skips the iPod's own
          * HID interface and only owns the Ulanzi D100H / normal keyboards. */
         usb_hid_input_start();
-        if(g_app_config.iap2_mode) {
-            iap2_host_start();
-        }
-        else {
-            usbmux_host_start();
-            lockdown_client_start();
-            uint8_t pending_job = app_config_peek_afc_job();
-            if(pending_job == 1 || pending_job == 2) afc_start_job_task(pending_job);
-        }
+
     }
 
     ESP_LOGI(TAG, "UI ready, %dx%d", (int)lv_display_get_horizontal_resolution(display),
@@ -835,7 +519,6 @@ void app_main(void)
     }
 
     web_server_set_apply_cb(web_apply_runtime_config);
-    web_server_set_sync_cb(web_start_sync);
     web_server_start();
 
     esp_err_t wifi_err = wifi_manager_start();
@@ -843,6 +526,8 @@ void app_main(void)
         ESP_LOGW(TAG, "WiFi unavailable: %s", esp_err_to_name(wifi_err));
         ui_set_network_status("WiFi unavailable", "--");
     }
+
+    mpd_client_start();
 
     /* Watch the ESP-Hosted/C6 link; a hung C6 otherwise needs a manual
      * power cycle even though the P4 UI keeps running. */
@@ -863,14 +548,23 @@ void app_main(void)
             bool present = false;
             bool library_syncing = false;
             bool library_state_valid = !g_app_config.iap2_mode;
-            iap2_state_t state;
-            if(g_app_config.iap2_mode && iap2_host_get_state(&state)) {
+            mpd_state_t state;
+            if(g_app_config.iap2_mode && mpd_client_get_state(&state)) {
                 present = state.identified;
                 library_syncing = state.library_syncing;
                 library_state_valid = true;
             }
             if(bsp_display_lock(1000)) {
                 ui_set_np_battery_status(&np_battery);
+                ui_set_mpd_status(mpd_client_status());
+                static char active_artwork_dir[96];
+                if(strcmp(active_artwork_dir,app_config_artwork_dir())) {
+                    snprintf(active_artwork_dir,sizeof(active_artwork_dir),"%s",app_config_artwork_dir());
+                    ui_set_artwork_dir(active_artwork_dir);
+                    char cache[160];
+                    snprintf(cache,sizeof(cache),"%s/np",app_config_library_dir());
+                    ui_set_np_cache_dir(cache);
+                }
                 ui_set_device_state(g_app_config.iap2_mode != 0, present,
                                     app_config_sd_ready());
                 /* A busy snapshot lock does not mean an active sync ended. */

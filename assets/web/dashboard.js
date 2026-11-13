@@ -2,7 +2,7 @@
 var T = window.Tab5, S = {}, C = {}, dirty = {}, pending = {};
 var $ = function (id) { return document.getElementById(id); };
 var configFields = ['volume','brightness','screen_off_minutes','theme','sound_mode',
-  'debug_log','iap2_mode','usb_mode','screen_flip','wifi_mode','ap_ssid'];
+  'debug_log','usb_mode','screen_flip','wifi_mode','ap_ssid'];
 function toast(msg, bad) {
   $('toast').textContent = msg; $('toast').className = 'on' + (bad ? ' bad' : '');
   clearTimeout(toast.timer); toast.timer = setTimeout(function () { $('toast').className = ''; }, 4000);
@@ -41,7 +41,7 @@ function key(k) {
 function render(s,c,p) {
   S=s; C=c;
   btPanel.render(s.bluetooth);
-  $('chips').innerHTML = T.chip('Device',s.iap2_mode ? (s.iap2_identified ? 'Linked' : 'Waiting') : 'Library Sync',s.iap2_identified ? 'ok' : '') +
+  $('chips').innerHTML=T.chip('MPD',s.mpd_connected ? 'Connected' : s.mpd_host ? 'Connecting' : 'Setup',s.mpd_connected ? 'ok' : '') +
     T.chip('SD',s.sd_ready ? 'Ready' : 'Missing',s.sd_ready ? 'ok' : 'bad') + T.chip('WiFi',s.ip || '—','ok');
   $('np_title').textContent=s.title || 'No track'; $('np_artist').textContent=s.artist || '—'; $('np_album').textContent=s.album || '';
   $('play_state').textContent=['STOPPED','PLAYING','PAUSED'][s.play_status] || '—';
@@ -50,13 +50,12 @@ function render(s,c,p) {
   [['btn_star',s.starred],['btn_shuffle',s.shuffle],['btn_repeat',s.repeat>0]].forEach(function (a) {
     $(a[0]).classList.toggle('active',!!a[1]); $(a[0]).setAttribute('aria-pressed',!!a[1]);
   });
-  $('btn_repeat').textContent=s.repeat===2 ? 'REP 1' : 'REP';
+  $('btn_repeat').textContent=s.repeat===1 ? 'REP 1' : 'REP';
   var cur=(s.elapsed_ms || 0)/1000, dur=(s.duration_ms || 0)/1000;
   $('np_cur').textContent=T.time(cur); $('np_dur').textContent=T.time(dur);
   $('np_bar').style.width=(dur ? Math.min(100,cur/dur*100) : 0)+'%';
-  var battery=Number.isFinite(s.device_battery) && s.device_battery>=0 && s.device_battery<=100 ? s.device_battery+'%' : 'Unavailable';
-  if (s.device_charging_state===2) battery+=' · Charged'; else if(s.device_charging) battery+=' · Charging';
-  $('device_rows').innerHTML=T.row('Device',s.device_name)+T.row('iPod battery',battery)+T.row('Connection',s.iap2_mode ? s.iap2 : s.usbmux)+
+  $('device_rows').innerHTML=T.row('MPD',s.mpd_status)+T.row('Server',s.mpd_host ? s.mpd_host+':'+s.mpd_port : 'Not configured')+
+    T.row('Playback volume',s.mpd_volume>=0 ? s.mpd_volume+'%' : 'Mixer unavailable')+
     T.row('WiFi',s.wifi)+T.row('IP',s.ip)+T.row('SD card',s.sd_ready ? T.bytes(s.sd_used)+' / '+T.bytes(s.sd_total) : 'Missing')+
     T.row('Uptime',T.time(s.uptime_s))+T.row('Free heap',T.bytes(s.free_heap))+T.row('Free PSRAM',T.bytes(s.free_psram))+T.row('Last reset',T.reset(s.reset_reason));
   var power=T.power(p,c);
@@ -65,14 +64,11 @@ function render(s,c,p) {
     T.row('Charger output',p.chg_en===undefined ? 'Unavailable' : power.enabled ? 'Enabled' : 'Disabled')+
     T.row('USB 5 V output',p.usb5v_en===undefined ? 'Unavailable' : p.usb5v_en ? 'On' : 'Off');
   setVal('charge_en',c.charge_enabled); setVal('qc_high',c.qc_high ? 1 : 0);
-  var sync=s.afc_sync || {}, busy=!!sync.active || !!s.apple_pair_busy;
-  $('btn_sync').disabled=s.iap2_mode || !s.apple_trusted || !s.sd_ready || busy;
-  $('btn_trust').disabled=s.iap2_mode || s.apple_trusted || busy;
-  $('btn_mode').disabled=busy; $('btn_mode').textContent=s.iap2_mode ? 'Enter Library Sync' : 'Exit';
-  $('library_rows').innerHTML=T.row('Mode',s.iap2_mode ? 'Player' : 'Library Sync')+T.row('Device',s.iap2_mode ? s.iap2 : s.lockdown);
-  $('sync_hint').textContent=sync.active ? 'Syncing · '+(sync.cached || 0)+' covers cached · '+(sync.attempted || 0)+' / '+(sync.total || 0)+' checked' :
-    s.iap2_mode ? 'Enter Library Sync to update the library and artwork. The device will restart.' : 'Sync updates the library and caches missing artwork.';
-  $('apple_trust').textContent=s.iap2_mode || s.apple_trusted ? '' : s.apple_pair_status || 'Unlock the device and choose Pair / Trust.';
+  $('mpd_status').textContent=s.mpd_status || 'Not configured';
+  $('btn_sync').disabled=!s.mpd_connected || s.mpd_syncing;
+  var catalog=s.catalog || {};
+  $('library_rows').innerHTML=T.row('Albums',catalog.albums || 0)+T.row('Tracks',catalog.tracks || 0)+T.row('Storage',s.storage_root);
+  $('sync_hint').textContent=s.mpd_syncing ? 'Importing the MPD library…' : s.mpd_connected ? 'Library ready. Resync after changing stored playlists; database changes refresh automatically.' : 'Enter your MPD server address. Music plays on the server’s audio output.';
   $('fw_rows').innerHTML=T.row('Firmware',s.firmware)+T.row('Build',s.build)+T.row('OTA slot',s.ota_partition)+T.row('USB mode',T.usb(s.usb_mode));
   $('clock_hint').textContent=(s.local_time || '—')+(s.rtc ? ' · RTC' : '');
   $('screen_state').textContent=s.screen_on===undefined ? '—' : s.screen_on ? 'Screen on' : 'Screen off';
@@ -102,9 +98,28 @@ function syncTime() {
 function reboot() {
   T.api('/api/reboot',{method:'POST'}).then(function() { toast('Restarting…'); }).catch(function(e) { toast(e.message,true); });
 }
-function switchMode() { postConfig({iap2_mode:!S.iap2_mode}).then(reboot).catch(function(e) { toast(e.message,true); }); }
-function sync_media() { T.api('/api/sync',{method:'POST'}).then(function(t) { toast(t); refresh(); }).catch(function(e) { toast(e.message,true); }); }
-function pairApple() { T.api('/api/trust',{method:'POST'}).then(function(t) { toast(t); refresh(); }).catch(function(e) { toast(e.message,true); }); }
+function sync_media() {
+  T.api('/api/mpd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'rescan'})})
+    .then(function() { toast('MPD resync requested'); refresh(); }).catch(function(e) { toast(e.message,true); });
+}
+var mpdDirty=false;
+['mpd_host','mpd_port','mpd_password','mpd_clear_password'].forEach(function(id) { $(id).addEventListener('input',function() { mpdDirty=true; }); });
+T.json('/api/mpd').then(function(c) {
+  if(!mpdDirty) { $('mpd_host').value=c.host || ''; $('mpd_port').value=c.port || 6600; }
+}).catch(function(e) { toast(e.message,true); });
+$('mpd_form').addEventListener('submit',async function(e) {
+  e.preventDefault();
+  var body={host:$('mpd_host').value.trim(),port:Number($('mpd_port').value)};
+  if($('mpd_clear_password').checked) body.password='';
+  else if($('mpd_password').value) body.password=$('mpd_password').value;
+  $('mpd_save').disabled=true;
+  try {
+    await T.api('/api/mpd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    $('mpd_password').value=''; $('mpd_clear_password').checked=false;
+    toast('MPD settings saved. Connecting…'); refresh();
+  } catch(error) { toast(error.message,true); }
+  finally { $('mpd_save').disabled=false; }
+});
 function upload(path,file,prog) {
   if (!file) { toast('Choose a file first',true); return; }
   var x=new XMLHttpRequest(); x.open('POST',path); x.setRequestHeader('Content-Type','application/octet-stream');
@@ -113,12 +128,7 @@ function upload(path,file,prog) {
   x.onload=function() { toast(x.responseText || 'Upload complete',x.status<200 || x.status>=300); setTimeout(refresh,5000); };
   x.onerror=function() { toast('Upload failed',true); }; x.send(file);
 }
-function uploadLibrary() { upload('/api/library',$('lib_file').files[0],$('lib_prog')); }
 function uploadFirmware() { upload('/api/ota',$('fw_file').files[0],$('fw_prog')); }
-function uploadPair() {
-  var f=$('pair_file').files[0]; if(!f) { toast('Choose a pair record first',true); return; }
-  T.api('/api/pair',{method:'POST',body:f}).then(function(t) { toast(t); }).catch(function(e) { toast(e.message,true); });
-}
 async function loadLog() {
   var cursor=0,text='';
   try {

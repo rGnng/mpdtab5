@@ -98,9 +98,9 @@ function render(s,c,p) {
     lastId=0; lines.push('— Device restarted —'); if(!paused) connectLog();
   }
   uptime=s.uptime_s;
-  $('chips').innerHTML=T.chip('Firmware',s.firmware,'')+T.chip('Device',s.iap2_identified ? 'Linked' : s.iap2_mode ? 'Waiting' : 'Library Sync',s.iap2_identified ? 'ok' : '');
+  $('chips').innerHTML=T.chip('Firmware',s.firmware,'')+T.chip('Device',s.mpd_connected ? 'Connected' : 'Setup',s.mpd_connected ? 'ok' : '');
   $('screen_state').textContent=s.screen_on===undefined ? '—' : s.screen_on ? 'On' : 'Off';
-  var library=s.library_available===undefined ? !!(s.sd_ready && s.iap2_mode && s.iap2_identified) : s.library_available;
+  var library=s.library_available===undefined ? !!(s.sd_ready && s.mpd_connected) : s.library_available;
   ['albums','artists','songs','playlists'].forEach(function(k) {
     document.querySelector('[data-key="'+k+'"]').disabled=!library;
   });
@@ -128,8 +128,8 @@ function render(s,c,p) {
     T.row('Free PSRAM',T.bytes(s.free_psram))+T.row('Screen Off',c.screen_off_minutes ? c.screen_off_minutes+' min' : 'Off')+
     T.row('SD card',s.sd_ready ? T.bytes(s.sd_used)+' / '+T.bytes(s.sd_total) : 'Missing')+T.row('SD log',s.debug_log_sd_open ? 'Open' : 'Closed')+
     T.row('SD log lines',s.debug_log_sd_lines)+T.row('SD log errors',s.debug_log_sd_errors);
-  $('connection_rows').innerHTML=T.row('USB',T.usb(s.usb_mode))+T.row('WiFi',s.wifi)+T.row('IP',s.ip)+T.row('iAP2',s.iap2)+T.row('USB mux',s.usbmux)+T.row('Lockdown',s.lockdown)+T.row('AFC',s.afc);
-  var link=s.iap2_link || {};
+  $('connection_rows').innerHTML=T.row('USB',T.usb(s.usb_mode))+T.row('WiFi',s.wifi)+T.row('IP',s.ip)+T.row('MPD',s.mpd_status)+T.row('Server',s.mpd_host)+T.row('Port',s.mpd_port);
+  var link={status:s.mpd_status,connected:s.mpd_connected,storage:s.storage_root};
   $('link_rows').innerHTML=Object.keys(link).map(function(k) { return T.row(k.replace(/_/g,' '),link[k]); }).join('') || T.row('Status','Unavailable');
 }
 var refresh=T.poll(render,function(e) { $('chips').innerHTML=T.chip('Device',e.message,'bad'); });

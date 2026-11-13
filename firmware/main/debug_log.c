@@ -18,8 +18,8 @@
 #define DEBUG_LOG_TEXT_MAX    224   /* keep one line in one entry */
 #define DEBUG_LOG_RING_BYTES  (DEBUG_LOG_LINES * sizeof(debug_log_entry_t))
 
-#define DEBUG_LOG_SD_PATH       "/sdcard/debug.log"
-#define DEBUG_LOG_SD_OLD_PATH   "/sdcard/debug.old.log"
+#define DEBUG_LOG_SD_PATH       "/sdcard/mpd/debug.log"
+#define DEBUG_LOG_SD_OLD_PATH   "/sdcard/mpd/debug.old.log"
 #define DEBUG_LOG_SD_MAX_BYTES  (4 * 1024 * 1024)
 #define DEBUG_LOG_SD_QUEUE_LEN  64
 

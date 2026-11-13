@@ -13,7 +13,7 @@
 #include "usb_host_core.h"
 
 #include "bsp/esp-bsp.h"
-#include "iap2_host.h"
+#include "mpd_client.h"
 #include "ui.h"
 #include "ulanzi_d100h.h"
 
@@ -658,7 +658,7 @@ static void dispatch_key_event(const key_event_t * evt)
 
         if(!s_hold_pending || s_hold_key != key) return;
         if(s_hold_sent) {
-            iap2_host_hid_release();
+            mpd_client_hid_release();
         }
         else if(bsp_display_lock(1000)) {
             /* Short tap: previous/next track. */
@@ -766,13 +766,13 @@ static void key_dispatch_task(void * arg)
                 ui_play_key_feedback(s_hold_key);
                 bsp_display_unlock();
             }
-            iap2_host_hid_press_bit(hold_bit_for_key(s_hold_key));
+            mpd_client_hid_press_bit(hold_bit_for_key(s_hold_key));
             s_hold_sent = true;
             s_hold_sent_us = esp_timer_get_time();
         }
         else {
             /* Safety release if the controller disappears while held. */
-            iap2_host_hid_release();
+            mpd_client_hid_release();
             s_hold_pending = false;
             s_hold_sent = false;
         }

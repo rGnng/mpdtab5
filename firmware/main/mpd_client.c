@@ -1,0 +1,562 @@
+/* MPD transport for the shared Tab5 player/UI. The worker owns every socket,
+ * URI and outgoing command. UI and HID callbacks only enqueue bounded work. */
+#include "mpd_client.h"
+#include "mpd_wire.h"
+#include "player.h"
+#include "app_config.h"
+#include "jpeg_thumbnail.h"
+#include "thumb_cache.h"
+#include "cJSON.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "freertos/queue.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#define SERVER_FILE "/sdcard/mpd/server.json"
+#define TRACK_LIMIT 24000
+#define QUEUE_LIMIT 24000
+#define URI_BYTES (3*1024*1024)
+#define URI_SLOTS 65536
+#define ART_BYTES (360*360*2)
+static const char *TAG="mpd";
+static SemaphoreHandle_t mutex;
+static QueueHandle_t commands;
+static mpd_config_t config={.port=6600};
+static uint32_t config_revision=1;
+static bool rescan;
+static mpd_state_t state={.battery=-1,.volume=-1,.queue_index=-1};
+static char status_text[192]="Set MPD server in the web interface";
+static uint32_t art_revision=1, queue_revision=1;
+static uint8_t *art;
+static bool art_valid;
+static uint64_t *queue_keys;
+static int queue_size;
+static uint8_t hold_bit;
+static TaskHandle_t worker;
+
+typedef struct { uint64_t id; uint32_t offset; } uri_entry_t;
+static uri_entry_t *uris;
+static uint16_t *uri_slots;
+static char *uri_pool;
+static unsigned uri_count, uri_used;
+static mpd_wire_t wire;
+static int last_playlist=-1;
+static char database_revision[64];
+static int mpd_playlist_version;
+static bool mpd_updating;
+static unsigned reported_queue_size;
+static bool remote_repeat, remote_single;
+static int muted_volume=50;
+static char current_uri[2048];
+static char library_id[64];
+
+typedef enum { CMD_TEXT, CMD_PLAY, CMD_ALL, CMD_JUMP } command_kind_t;
+typedef struct {
+    command_kind_t kind;
+    uint32_t generation;
+    int count, start;
+    uint64_t *keys;
+    char text[80];
+} command_t;
+static void take(void) { xSemaphoreTake(mutex,portMAX_DELAY); }
+static void give(void) { xSemaphoreGive(mutex); }
+static void message(const char *s) { take(); snprintf(status_text,sizeof(status_text),"%s",s); give(); }
+static void publish(const mpd_state_t *s) {
+    take(); uint32_t revision=state.revision+1; state=*s; state.revision=revision; give();
+}
+static void identity(const mpd_config_t *c, char *out, size_t cap) {
+    char address[144]; snprintf(address,sizeof(address),"%s:%u",c->host,c->port);
+    snprintf(out,cap,"MPD-%08lX",(unsigned long)(uint32_t)mpd_id(address));
+}
+void mpd_client_config(mpd_config_t *out) { take(); *out=config; give(); }
+void mpd_client_library_id(char *out,size_t cap) { take(); identity(&config,out,cap); give(); }
+static bool clean_string(const char *s,size_t cap) {
+    size_t n=strnlen(s,cap); if(n==cap) return false;
+    for(size_t i=0;i<n;i++) if((unsigned char)s[i]<32 || (unsigned char)s[i]==127) return false;
+    return true;
+}
+esp_err_t mpd_client_configure(const mpd_config_t *c) {
+    if(!c || !clean_string(c->host,sizeof(c->host)) || !clean_string(c->password,sizeof(c->password)) || !c->port)
+        return ESP_ERR_INVALID_ARG;
+    if(!app_config_sd_ready()) return ESP_ERR_INVALID_STATE;
+    cJSON *json=cJSON_CreateObject(); if(!json) return ESP_ERR_NO_MEM;
+    cJSON_AddStringToObject(json,"host",c->host); cJSON_AddNumberToObject(json,"port",c->port);
+    cJSON_AddStringToObject(json,"password",c->password);
+    char *text=cJSON_PrintUnformatted(json); cJSON_Delete(json);
+    if(!text) return ESP_ERR_NO_MEM;
+    /* Serialize writers and publish only a durably written configuration. */
+    take();
+    FILE *f=fopen(SERVER_FILE ".tmp","wb");
+    bool ok=false;
+    if(f) { ok=fwrite(text,1,strlen(text),f)==strlen(text); ok=fflush(f)==0 && ok; ok=fclose(f)==0 && ok; }
+    free(text);
+    if(ok) {
+        remove(SERVER_FILE ".bak");
+        rename(SERVER_FILE,SERVER_FILE ".bak");
+        ok=rename(SERVER_FILE ".tmp",SERVER_FILE)==0;
+        if(!ok) rename(SERVER_FILE ".bak",SERVER_FILE);
+    }
+    if(ok) { config=*c; config_revision++; state.connected=state.identified=false; state.revision++; }
+    give();
+    return ok ? ESP_OK : ESP_FAIL;
+}
+void mpd_client_init(void) {
+    mutex=xSemaphoreCreateMutex();
+    commands=xQueueCreate(16,sizeof(command_t));
+    FILE *f=fopen(SERVER_FILE,"rb");
+    if(!f) f=fopen(SERVER_FILE ".bak","rb");
+    if(f) {
+        char data[1024]; size_t n=fread(data,1,sizeof(data)-1,f); fclose(f); data[n]=0;
+        cJSON *j=cJSON_Parse(data);
+        const cJSON *host=cJSON_GetObjectItemCaseSensitive(j,"host"), *port=cJSON_GetObjectItemCaseSensitive(j,"port"), *password=cJSON_GetObjectItemCaseSensitive(j,"password");
+        if(cJSON_IsString(host) && strlen(host->valuestring)<sizeof(config.host) && clean_string(host->valuestring,sizeof(config.host))) strcpy(config.host,host->valuestring);
+        if(cJSON_IsNumber(port) && port->valuedouble==port->valueint && port->valueint>0 && port->valueint<=65535) config.port=port->valueint;
+        if(cJSON_IsString(password) && strlen(password->valuestring)<sizeof(config.password) && clean_string(password->valuestring,sizeof(config.password))) strcpy(config.password,password->valuestring);
+        cJSON_Delete(j);
+    }
+    identity(&config,library_id,sizeof(library_id));
+    app_config_set_library_id(library_id);
+    mpd_wire_init(&wire);
+}
+void mpd_client_rescan(void) { take(); rescan=true; give(); }
+const char *mpd_client_status(void) {
+    /* Each caller receives its own task-local copy? ESP tasks don't have C TLS;
+     * return stable storage, writers only replace this bounded display string. */
+    return status_text;
+}
+bool mpd_client_get_state(mpd_state_t *out) { if(!mutex || !out) return false; take(); *out=state; give(); return true; }
+bool mpd_client_is_enabled(void) { return true; }
+bool mpd_client_is_connected(void) { mpd_state_t s={0}; return mpd_client_get_state(&s) && s.connected; }
+bool mpd_client_is_identified(void) { return mpd_client_is_connected(); }
+bool mpd_client_is_playing(void) { mpd_state_t s={0}; return mpd_client_get_state(&s) && s.play_status==1; }
+static esp_err_t enqueue(command_t *c) {
+    take(); c->generation=config_revision; bool online=state.connected; give();
+    if(!online) { free(c->keys); return ESP_ERR_INVALID_STATE; }
+    if(xQueueSend(commands,c,0)!=pdPASS) { free(c->keys); message("MPD command queue full"); return ESP_ERR_NO_MEM; }
+    return ESP_OK;
+}
+static esp_err_t text_command(const char *text) {
+    command_t c={.kind=CMD_TEXT}; snprintf(c.text,sizeof(c.text),"%s",text); return enqueue(&c);
+}
+esp_err_t mpd_client_seek_ms(uint32_t ms) { char cmd[64]; snprintf(cmd,sizeof(cmd),"seekcur %.3f",ms/1000.0); return text_command(cmd); }
+esp_err_t mpd_client_set_shuffle(bool on) { return text_command(on ? "random 1" : "random 0"); }
+esp_err_t mpd_client_queue_jump(int index) { command_t c={.kind=CMD_JUMP,.start=index}; return enqueue(&c); }
+esp_err_t mpd_client_hid_command(const char *name) {
+    if(!strcmp(name,"play")) return text_command("play");
+    if(!strcmp(name,"pause")) return text_command("pause 1");
+    if(!strcmp(name,"next") || !strcmp(name,"previous") || !strcmp(name,"stop")) return text_command(name);
+    if(!strcmp(name,"volume_up")) return text_command("volume 5");
+    if(!strcmp(name,"volume_down")) return text_command("volume -5");
+    /* Evaluate toggles on the worker using its latest authoritative state. */
+    if(!strcmp(name,"shuffle")) return text_command("@shuffle");
+    if(!strcmp(name,"repeat")) return text_command("@repeat");
+    if(!strcmp(name,"mute")) return text_command("@mute");
+    return ESP_ERR_NOT_SUPPORTED;
+}
+esp_err_t mpd_client_hid_raw_bit(uint8_t bit) {
+    static const char *names[]={"play","pause","next","previous","volume_up","volume_down","mute","stop","shuffle","repeat"};
+    return bit<10 ? mpd_client_hid_command(names[bit]) : ESP_ERR_NOT_SUPPORTED;
+}
+esp_err_t mpd_client_hid_press_bit(uint8_t bit) { take(); hold_bit=bit; give(); return ESP_OK; }
+esp_err_t mpd_client_hid_release(void) { take(); hold_bit=0; give(); return ESP_OK; }
+esp_err_t mpd_client_refresh_now_playing(void) { mpd_client_rescan(); return ESP_OK; }
+esp_err_t mpd_client_play_track_keys(const uint64_t *keys,int count,int start) {
+    if(!keys || count<=0 || count>TRACK_LIMIT || start<0 || start>=count) return ESP_ERR_INVALID_ARG;
+    command_t c={.kind=CMD_PLAY,.count=count,.start=start};
+    c.keys=heap_caps_malloc(count*sizeof(*keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!c.keys) return ESP_ERR_NO_MEM;
+    memcpy(c.keys,keys,count*sizeof(*keys)); return enqueue(&c);
+}
+esp_err_t mpd_client_play_all_songs(uint64_t key) {
+    command_t c={.kind=CMD_ALL,.count=1};
+    c.keys=malloc(sizeof(key)); if(!c.keys) return ESP_ERR_NO_MEM;
+    *c.keys=key; return enqueue(&c);
+}
+esp_err_t mpd_client_play_current_key(void) { return text_command("play"); }
+int mpd_client_queue_list_count(void) { take(); int n=queue_size; give(); return n; }
+int mpd_client_queue_list_base(void) { return 0; }
+uint32_t mpd_client_queue_list_revision(void) { take(); uint32_t n=queue_revision; give(); return n; }
+bool mpd_client_queue_list_get(int i,uint64_t *key) {
+    take(); bool ok=i>=0 && i<queue_size; if(ok) *key=queue_keys[i]; give(); return ok;
+}
+uint32_t mpd_client_artwork_revision(void) { take(); uint32_t n=art_revision; give(); return n; }
+bool mpd_client_artwork_copy(uint8_t *dst,size_t len,artwork_quality_t min,artwork_quality_t *actual) {
+    take(); bool ok=art_valid && len>=ART_BYTES;
+    artwork_quality_t q=ok ? (artwork_quality_t){.width=360,.height=360} : (artwork_quality_t){0};
+    if(actual) *actual=q;
+    if(ok && (min.width>360 || min.height>360)) ok=false;
+    if(ok) memcpy(dst,art,ART_BYTES);
+    give(); return ok;
+}
+
+static const char *uri_lookup(uint64_t id) {
+    unsigned h=(unsigned)id&(URI_SLOTS-1);
+    for(unsigned n=0;n<URI_SLOTS;n++,h=(h+1)&(URI_SLOTS-1)) {
+        unsigned slot=uri_slots[h]; if(!slot) return NULL;
+        if(uris[slot-1].id==id) return uri_pool+uris[slot-1].offset;
+    }
+    return NULL;
+}
+static bool uri_insert(const char *uri) {
+    uint64_t id=mpd_id(uri);
+    const char *found=uri_lookup(id);
+    if(found) return !strcmp(found,uri);
+    size_t n=strlen(uri)+1;
+    if(uri_count==TRACK_LIMIT || uri_used+n>URI_BYTES) return false;
+    unsigned h=(unsigned)id&(URI_SLOTS-1); while(uri_slots[h]) h=(h+1)&(URI_SLOTS-1);
+    uris[uri_count]=(uri_entry_t){.id=id,.offset=uri_used};
+    memcpy(uri_pool+uri_used,uri,n); uri_used+=n; uri_slots[h]=++uri_count; return true;
+}
+typedef struct {
+    player_media_item_t item;
+    char uri[2048];
+    bool library, queue, stored;
+    int playlist;
+    int count;
+    uint64_t *keys;
+} song_parser_t;
+static void song_reset(song_parser_t *p) { memset(&p->item,0,sizeof(p->item)); p->uri[0]=0; }
+static bool song_finish(song_parser_t *p) {
+    if(!p->uri[0]) return true;
+    if(!p->item.title[0]) {
+        const char *base=strrchr(p->uri,'/'); snprintf(p->item.title,sizeof(p->item.title),"%.95s",base ? base+1 : p->uri);
+    }
+    if(!p->item.album[0]) snprintf(p->item.album,sizeof(p->item.album),"%s","Singles / Streams");
+    if(!p->item.artist[0]) snprintf(p->item.artist,sizeof(p->item.artist),"%s","Unknown artist");
+    if(!p->item.album_artist[0]) snprintf(p->item.album_artist,sizeof(p->item.album_artist),"%s",p->item.artist);
+    char album[256]; snprintf(album,sizeof(album),"%s\037%s",p->item.album_artist,p->item.album);
+    p->item.pid=mpd_id(p->uri); p->item.album_pid=mpd_id(album);
+    p->item.fields=(1u<<1)|(1u<<4)|(1u<<5)|(1u<<6)|(1u<<7)|(1u<<9)|(1u<<12)|(1u<<14);
+    if(p->library) {
+        if(!uri_insert(p->uri)) return false;
+        player_library_update(&p->item);
+    }
+    if(p->stored && !uri_lookup(p->item.pid)) {
+        if(!uri_insert(p->uri)) return false;
+        player_library_update(&p->item);
+    }
+    if(p->queue) {
+        if(p->count>=QUEUE_LIMIT) return false;
+        p->keys[p->count]=p->item.pid;
+        /* Queue-only streams have real metadata and remain selectable. */
+        if(!uri_lookup(p->item.pid)) {
+            if(!uri_insert(p->uri)) return false;
+            player_library_update(&p->item);
+        }
+    }
+    if(p->stored && p->count<1024) player_library_playlist_item(p->playlist,NULL,p->item.pid);
+    p->count++; return true;
+}
+static bool song_field(const char *key,const char *value,void *ctx) {
+    song_parser_t *p=ctx;
+    if(!strcmp(key,"file")) {
+        if(!song_finish(p)) return false;
+        song_reset(p);
+        if(strlen(value)>=sizeof(p->uri)) return false;
+        strcpy(p->uri,value);
+    }
+    else if(!strcasecmp(key,"Title")) snprintf(p->item.title,sizeof(p->item.title),"%s",value);
+    else if(!strcasecmp(key,"Artist")) snprintf(p->item.artist,sizeof(p->item.artist),"%s",value);
+    else if(!strcasecmp(key,"AlbumArtist")) snprintf(p->item.album_artist,sizeof(p->item.album_artist),"%s",value);
+    else if(!strcasecmp(key,"Album")) snprintf(p->item.album,sizeof(p->item.album),"%s",value);
+    else if(!strcmp(key,"duration")) p->item.duration_ms=(uint32_t)(strtod(value,NULL)*1000);
+    else if(!strcmp(key,"Time") && !p->item.duration_ms) p->item.duration_ms=(uint32_t)strtoul(value,NULL,10)*1000;
+    else if(!strcasecmp(key,"Track")) p->item.track_no=atoi(value);
+    else if(!strcasecmp(key,"Disc")) p->item.disc_no=atoi(value);
+    else if(!strcasecmp(key,"Date")) p->item.year=atoi(value);
+    return true;
+}
+static bool status_field(const char *key,const char *value,void *ctx) {
+    mpd_state_t *s=ctx;
+    if(!strcmp(key,"state")) s->play_status=!strcmp(value,"play") ? 1 : !strcmp(value,"pause") ? 2 : 0;
+    else if(!strcmp(key,"volume")) s->volume=atoi(value);
+    else if(!strcmp(key,"random")) s->shuffle=atoi(value)!=0;
+    else if(!strcmp(key,"repeat")) remote_repeat=atoi(value)!=0;
+    else if(!strcmp(key,"single")) remote_single=atoi(value)!=0;
+    else if(!strcmp(key,"elapsed")) s->elapsed_ms=(uint32_t)(strtod(value,NULL)*1000);
+    else if(!strcmp(key,"duration")) s->duration_ms=(uint32_t)(strtod(value,NULL)*1000);
+    else if(!strcmp(key,"song")) s->queue_index=atoi(value);
+    else if(!strcmp(key,"playlist")) mpd_playlist_version=atoi(value);
+    else if(!strcmp(key,"playlistlength")) { reported_queue_size=strtoul(value,NULL,10); s->queue_count=reported_queue_size; }
+    else if(!strcmp(key,"updating_db")) mpd_updating=true;
+    return true;
+}
+static bool stat_field(const char *key,const char *value,void *ctx) {
+    if(!strcmp(key,"db_update")) snprintf(ctx,64,"%s",value);
+    return true;
+}
+static bool simple(const char *cmd) { return mpd_wire_command(&wire,cmd,NULL,NULL,NULL); }
+static bool sync_library(void) {
+    message("Syncing MPD library...");
+    take(); state.library_syncing=true; state.revision++; give();
+    player_library_reset();
+    memset(uri_slots,0,URI_SLOTS*sizeof(*uri_slots)); uri_count=uri_used=0;
+    song_parser_t *p=calloc(1,sizeof(*p)); if(!p) return false;
+    p->library=true;
+    bool ok=true;
+    /* Bound each server response instead of relying on MPD's output buffer
+     * being large enough for the whole database. Requires MPD 0.21+. */
+    for(unsigned offset=0;ok;offset+=256) {
+        char cmd[96];
+        snprintf(cmd,sizeof(cmd),"find \"(base '')\" window %u:%u",offset,offset+256);
+        song_reset(p); p->count=0;
+        ok=mpd_wire_command(&wire,cmd,song_field,NULL,p) && song_finish(p);
+        if(!ok || p->count<256) break;
+        vTaskDelay(1);
+    }
+    free(p);
+    if(ok) { player_library_complete(); message("MPD connected"); }
+    else message(wire.error[0] ? wire.error : "MPD library exceeds controller capacity");
+    take(); state.library_syncing=false; state.revision++; give();
+    return ok;
+}
+static bool poll_state(void) {
+    mpd_state_t next={.battery=-1,.max_current_ma=-1,.volume=-1,.queue_index=-1,.connected=true,.identified=true};
+    take(); snprintf(next.device_name,sizeof(next.device_name),"MPD · %.48s",config.host); give();
+    mpd_updating=false; remote_repeat=remote_single=false; reported_queue_size=0;
+    if(!mpd_wire_command(&wire,"status",status_field,NULL,&next)) return false;
+    next.repeat=remote_repeat ? (remote_single ? 1 : 2) : 0;
+    song_parser_t *p=calloc(1,sizeof(*p)); if(!p) return false;
+    bool ok=mpd_wire_command(&wire,"currentsong",song_field,NULL,p) && song_finish(p);
+    if(ok && p->uri[0]) {
+        next.track_key=p->item.pid; next.album_pid=p->item.album_pid;
+        snprintf(next.title,sizeof(next.title),"%s",p->item.title);
+        snprintf(next.artist,sizeof(next.artist),"%s",p->item.artist);
+        snprintf(next.album,sizeof(next.album),"%s",p->item.album);
+        if(!next.duration_ms) next.duration_ms=p->item.duration_ms;
+    }
+    if(ok) snprintf(current_uri,sizeof(current_uri),"%s",p->uri);
+    free(p);
+    if(ok) publish(&next);
+    return ok;
+}
+static bool sync_queue(void) {
+    song_parser_t *p=calloc(1,sizeof(*p)); if(!p) return false;
+    p->queue=true;
+    p->keys=heap_caps_malloc(QUEUE_LIMIT*sizeof(uint64_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!p->keys) { free(p); return false; }
+    bool ok=mpd_wire_command(&wire,"playlistinfo",song_field,NULL,p) && song_finish(p);
+    if(ok) player_library_complete();
+    if(ok) { take(); memcpy(queue_keys,p->keys,p->count*sizeof(uint64_t)); queue_size=p->count; queue_revision++; give(); }
+    free(p->keys); free(p); return ok;
+}
+
+typedef struct { char names[32][256]; int count; } playlists_t;
+static bool playlist_field(const char *key,const char *value,void *ctx) {
+    playlists_t *p=ctx;
+    if(!strcmp(key,"playlist") && p->count<32) {
+        if(strlen(value)>=sizeof(p->names[0])) return false;
+        strcpy(p->names[p->count++],value);
+    }
+    return true;
+}
+static bool sync_playlists(void) {
+    playlists_t *lists=calloc(1,sizeof(*lists)); if(!lists) return false;
+    bool ok=mpd_wire_command(&wire,"listplaylists",playlist_field,NULL,lists);
+    if(ok) player_library_playlists_reset();
+    for(int i=0;ok && i<lists->count;i++) {
+        char quoted[520],cmd[560];
+        if(!mpd_quote(quoted,sizeof(quoted),lists->names[i])) { ok=false; break; }
+        snprintf(cmd,sizeof(cmd),"listplaylistinfo %s",quoted);
+        player_library_playlist_item(i,lists->names[i],0);
+        song_parser_t *p=calloc(1,sizeof(*p));
+        if(!p) { ok=false; break; }
+        p->stored=true; p->playlist=i;
+        ok=mpd_wire_command(&wire,cmd,song_field,NULL,p) && song_finish(p);
+        free(p);
+    }
+    free(lists);
+    if(ok) player_library_complete();
+    return ok;
+}
+typedef struct { FILE *file; unsigned total, received, chunk; } art_transfer_t;
+static bool art_field(const char *key,const char *value,void *ctx) {
+    art_transfer_t *t=ctx;
+    if(!strcmp(key,"size")) {
+        unsigned long n=strtoul(value,NULL,10);
+        if(n>2*1024*1024 || !n || (t->total && t->total!=n)) return false;
+        t->total=n;
+    }
+    return true;
+}
+static bool art_binary(const void *data,size_t len,void *ctx) {
+    art_transfer_t *t=ctx;
+    if(!t->total || t->received+len>t->total) return false;
+    if(fwrite(data,1,len,t->file)!=len) return false;
+    t->received+=len; t->chunk+=len; return true;
+}
+static void fetch_art(uint64_t album_pid) {
+    if(!app_config_sd_ready() || !current_uri[0]) return;
+    char path[192],quoted[4100],cmd[4160];
+    snprintf(path,sizeof(path),"%s/current.tmp",app_config_artwork_dir());
+    if(!mpd_quote(quoted,sizeof(quoted),current_uri)) return;
+    bool complete=false;
+    for(int mode=0;mode<2 && wire.fd>=0 && !complete;mode++) {
+        FILE *f=fopen(path,"wb"); if(!f) return;
+        art_transfer_t t={.file=f};
+        do {
+            t.chunk=0;
+            snprintf(cmd,sizeof(cmd),"%s %s %u",mode ? "albumart" : "readpicture",quoted,t.received);
+            if(!mpd_wire_command(&wire,cmd,art_field,art_binary,&t)) break;
+            if(t.total && t.received==t.total) { complete=true; break; }
+        } while(t.chunk);
+        if(fclose(f)!=0) complete=false;
+    }
+    if(complete) {
+        uint8_t *pixels=heap_caps_malloc(ART_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(pixels && jpeg_thumbnail_decode(path,pixels,360)) {
+            take(); memcpy(art,pixels,ART_BYTES); art_valid=true; art_revision++; give();
+            thumb_cache_capture(app_config_library_id(),album_pid,pixels);
+        }
+        free(pixels);
+    }
+    remove(path);
+}
+static bool play_selection(const uint64_t *keys,int count,int start) {
+    /* Validate before touching the existing server queue. */
+    for(int i=0;i<count;i++) if(!uri_lookup(keys[i])) { message("Selection is stale; resync the library"); return true; }
+    if(!simple("command_list_begin\nclear\nrandom 0\nsingle 0\ncommand_list_end")) return false;
+    char *batch=malloc(32768); if(!batch) return false;
+    int index=0;
+    bool ok=true;
+    while(index<count && ok) {
+        size_t used=strlen("command_list_begin\n"); strcpy(batch,"command_list_begin\n");
+        for(int n=0;index<count && n<100;n++) {
+            const char *uri=uri_lookup(keys[index]); char quoted[4100];
+            if(!mpd_quote(quoted,sizeof(quoted),uri)) { ok=false; break; }
+            size_t needed=strlen(quoted)+5;
+            if(used+needed+32>=32768) break;
+            used+=snprintf(batch+used,32768-used,"add %s\n",quoted); index++;
+        }
+        if(ok) { snprintf(batch+used,32768-used,"command_list_end"); ok=simple(batch); }
+        vTaskDelay(1);
+    }
+    free(batch);
+    if(!ok) return false;
+    char cmd[40]; snprintf(cmd,sizeof(cmd),"play %d",start);
+    return simple(cmd);
+}
+static bool run_command(command_t *c) {
+    if(c->kind==CMD_PLAY) return play_selection(c->keys,c->count,c->start);
+    if(c->kind==CMD_ALL) {
+        uint64_t *keys=heap_caps_malloc(uri_count*sizeof(*keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(!keys || !uri_count) { free(keys); return false; }
+        int start=0;
+        for(unsigned i=0;i<uri_count;i++) { keys[i]=uris[i].id; if(keys[i]==c->keys[0]) start=i; }
+        bool ok=play_selection(keys,uri_count,start); free(keys); return ok;
+    }
+    if(c->kind==CMD_JUMP) {
+        char cmd[40]; snprintf(cmd,sizeof(cmd),"play %d",c->start); return simple(cmd);
+    }
+    mpd_state_t s={0}; mpd_client_get_state(&s);
+    char cmd[128];
+    if(!strcmp(c->text,"@shuffle")) snprintf(cmd,sizeof(cmd),"random %d",!s.shuffle);
+    else if(!strcmp(c->text,"@repeat")) {
+        unsigned repeat=(s.repeat==0 ? 2 : s.repeat==2 ? 1 : 0);
+        snprintf(cmd,sizeof(cmd),"command_list_begin\nrepeat %u\nsingle %u\ncommand_list_end",repeat>0,repeat==1);
+    }
+    else if(!strcmp(c->text,"@mute")) {
+        if(s.volume<0) { message("MPD mixer is unavailable"); return true; }
+        if(s.volume>0) muted_volume=s.volume;
+        snprintf(cmd,sizeof(cmd),"setvol %d",s.volume ? 0 : muted_volume);
+    }
+    else snprintf(cmd,sizeof(cmd),"%s",c->text);
+    return simple(cmd);
+}
+static bool generation_changed(uint32_t generation) { take(); bool changed=generation!=config_revision; give(); return changed; }
+static void disconnected(void) {
+    mpd_wire_close(&wire);
+    take(); state.connected=state.identified=false; state.library_syncing=false; state.play_status=0; state.revision++;
+    queue_size=0; queue_revision++; art_valid=false; art_revision++; give();
+    command_t c; while(xQueueReceive(commands,&c,0)==pdPASS) free(c.keys);
+}
+static void worker_task(void *arg) {
+    (void)arg;
+    for(;;) {
+        mpd_config_t cfg; mpd_client_config(&cfg);
+        take(); uint32_t generation=config_revision; give();
+        if(!cfg.host[0]) { message("Set MPD server in the web interface"); vTaskDelay(pdMS_TO_TICKS(500)); continue; }
+        message("Connecting to MPD...");
+        if(!mpd_wire_connect(&wire,cfg.host,cfg.port,3000)) {
+            message(wire.error); vTaskDelay(pdMS_TO_TICKS(2000)); continue;
+        }
+        if(cfg.password[0]) {
+            char quoted[260],cmd[280];
+            if(!mpd_quote(quoted,sizeof(quoted),cfg.password)) { disconnected(); continue; }
+            snprintf(cmd,sizeof(cmd),"password %s",quoted);
+            if(!simple(cmd)) { message("MPD authentication failed; check web settings"); disconnected(); vTaskDelay(pdMS_TO_TICKS(3000)); continue; }
+        }
+        identity(&cfg,library_id,sizeof(library_id));
+        player_library_select(library_id);
+        /* UI processes the namespace switch before queued database records. */
+        bool ok=poll_state() && sync_library() && sync_playlists();
+        uint64_t art_key=0;
+        int loops=0; last_playlist=-1; database_revision[0]=0;
+        while(ok && !generation_changed(generation)) {
+            command_t c;
+            for(int n=0;n<8 && xQueueReceive(commands,&c,0)==pdPASS;n++) {
+                if(c.generation==generation) {
+                    if(!run_command(&c)) { message(wire.error[0] ? wire.error : "MPD command failed"); if(wire.fd<0) ok=false; }
+                    /* Poll after each action so successive toggles use live state. */
+                    if(ok) ok=poll_state();
+                }
+                free(c.keys);
+                if(!ok) break;
+            }
+            if(!ok || !poll_state()) { ok=false; break; }
+            if(mpd_playlist_version!=last_playlist) {
+                if(reported_queue_size>QUEUE_LIMIT) {
+                    message("Queue exceeds 24000 entries; showing current track");
+                    take(); queue_size=0; queue_revision++; give();
+                }
+                else if(!sync_queue()) { ok=false; break; }
+                last_playlist=mpd_playlist_version;
+            }
+            mpd_state_t s={0}; mpd_client_get_state(&s);
+            if(s.track_key!=art_key) {
+                take(); art_valid=false; art_revision++; give();
+                art_key=s.track_key;
+                fetch_art(s.album_pid);
+            }
+            take(); bool requested=rescan; rescan=false; uint8_t held=hold_bit; give();
+            if(held) simple(held==11 ? "seekcur -5" : "seekcur +5");
+            if(requested || loops++%30==0) {
+                char db[64]={0};
+                if(!mpd_wire_command(&wire,"stats",stat_field,NULL,db)) { ok=false; break; }
+                if(requested || (database_revision[0] && strcmp(database_revision,db))) {
+                    ok=sync_library() && sync_playlists(); last_playlist=-1;
+                }
+                snprintf(database_revision,sizeof(database_revision),"%s",db);
+                if(mpd_updating) message("MPD is updating its database");
+                else if(ok) message("MPD connected");
+            }
+            for(int n=0;n<10 && !generation_changed(generation);n++) {
+                if(uxQueueMessagesWaiting(commands)) break;
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+        }
+        if(!ok) { message(wire.error[0] ? wire.error : "MPD sync failed; retrying"); ESP_LOGW(TAG,"%s",status_text); }
+        disconnected();
+        if(!generation_changed(generation)) vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+esp_err_t mpd_client_start(void) {
+    if(worker) return ESP_OK;
+    uris=heap_caps_calloc(TRACK_LIMIT,sizeof(*uris),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    uri_slots=heap_caps_calloc(URI_SLOTS,sizeof(*uri_slots),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    uri_pool=heap_caps_malloc(URI_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    queue_keys=heap_caps_calloc(QUEUE_LIMIT,sizeof(*queue_keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    art=heap_caps_malloc(ART_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!uris || !uri_slots || !uri_pool || !queue_keys || !art) { message("Not enough memory for MPD"); return ESP_ERR_NO_MEM; }
+    if(xTaskCreateWithCaps(worker_task,"mpd",32768,NULL,3,&worker,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS) return ESP_ERR_NO_MEM;
+    return ESP_OK;
+}

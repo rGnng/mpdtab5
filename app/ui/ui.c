@@ -1,3 +1,6 @@
+#ifdef ESP_PLATFORM
+#include "mpd_client.h"
+#endif
 #include "ui.h"
 #include "theme.h"
 
@@ -158,7 +161,7 @@ static uint8_t * jp_font_data;
 static void fonts_init(void)
 {
     static const char * paths[] = {
-        "/sdcard/JPFONT.TTF",
+        "/sdcard/mpd/JPFONT.TTF",
         "JPFONT.TTF",
     };
     FILE * f = NULL;
@@ -1429,7 +1432,7 @@ void ui_set_thumb_pack_path(const char * path, int album_count)
 #endif
 }
 
-static char s_artwork_dir[64] = "/sdcard/covers";
+static char s_artwork_dir[64] = "/sdcard/mpd/covers";
 
 static bool real_thumb_read(uint16_t id, uint8_t * dst)
 {
@@ -1478,10 +1481,13 @@ typedef struct {
 
 static cover_cache_slot_t cover_cache[COVER_CACHE_SLOTS];
 
+static void artwork_cache_reset(void);
+
 void ui_set_artwork_dir(const char * dir)
 {
-    snprintf(s_artwork_dir, sizeof(s_artwork_dir), "%s",
-             dir != NULL && dir[0] != '\0' ? dir : "/sdcard/covers");
+    const char *path=dir && dir[0] ? dir : "/sdcard/mpd/covers";
+    if(strcmp(s_artwork_dir,path)) artwork_cache_reset();
+    snprintf(s_artwork_dir,sizeof(s_artwork_dir),"%s",path);
 }
 static int cover_cache_next;
 
@@ -1528,6 +1534,10 @@ static uint8_t * real_cover_buf;
 static lv_image_dsc_t real_cover_dsc;
 static uint16_t real_cover_id;
 static bool real_cover_valid;
+static void artwork_cache_reset(void) {
+    real_cover_valid=false;
+    for(unsigned i=0;i<COVER_CACHE_SLOTS;i++) cover_cache[i].id=0;
+}
 
 /* Full-size artwork generated during the AFC artwork sync.  The file is a
  * packed 360x360 RGB565 image, so it can be handed to LVGL as a descriptor
@@ -1718,7 +1728,7 @@ static uint64_t g_iap2_cover_track_id;
 static bool g_iap2_cover_ready;
 static artwork_quality_t g_iap2_cover_quality;
 
-static char s_np_cache_dir[160] = "/sdcard/np";
+static char s_np_cache_dir[160] = "/sdcard/mpd/np";
 
 static uint32_t np_cache_hash(uint64_t id)
 {
@@ -1883,6 +1893,9 @@ static void np_cache_task(void * arg)
 void ui_set_np_cache_dir(const char * dir)
 {
     if(dir == NULL || dir[0] == '\0') return;
+    if(strcmp(s_np_cache_dir,dir)) {
+        g_iap2_cover_ready=false; g_iap2_cover_track_id=0;
+    }
     snprintf(s_np_cache_dir, sizeof(s_np_cache_dir), "%s", dir);
 #if defined(ESP_PLATFORM)
     np_cache_ensure_dir();
@@ -2109,6 +2122,7 @@ static player_status_t g_menu_play_status = (player_status_t)-1;
 /* Device availability.  In iAP2 mode a missing iPod and a missing SD card
  * both put the UI into a blocked state: the menubar dims everything except
  * Now Playing and Settings, and Now Playing shows a placeholder. */
+static char mpd_ui_status[192]="Set MPD server in the web interface";
 static bool g_dev_iap2_mode;
 static bool g_dev_present;
 static bool g_dev_sd_ready = true;
@@ -2145,6 +2159,13 @@ bool ui_library_available(void)
 static bool ui_screen_enabled(screen_id_t id)
 {
     return !ui_screen_needs_devices(id) || ui_library_available();
+}
+
+void ui_set_mpd_status(const char *status)
+{
+    if(!status || !strcmp(mpd_ui_status,status)) return;
+    snprintf(mpd_ui_status,sizeof(mpd_ui_status),"%s",status);
+    if(ui_device_blocked()) g_dev_state_dirty=true;
 }
 
 void ui_set_device_state(bool iap2_mode, bool present, bool sd_ready)
@@ -2211,7 +2232,7 @@ static void ui_menu_update(void)
         np_icon = ICON_SD_CARD;
     }
     else if(g_dev_iap2_mode && !g_dev_present) {
-        np_icon = ICON_PHONE;
+        np_icon = ICON_MUSIC;
     }
     else {
         np_icon = snapshot.status == PLAYER_PLAYING ? ICON_PLAY : ICON_PAUSE;
@@ -2787,6 +2808,7 @@ void ui_set_network_status(const char * status, const char * ip)
                  "%s", status);
     }
     if(ip != NULL) {
+        if(strcmp(g_system_config.wifi_ip,ip) && ui_device_blocked()) g_dev_state_dirty=true;
         snprintf(g_system_config.wifi_ip, sizeof(g_system_config.wifi_ip), "%s", ip);
     }
     settings_update_system_labels();
@@ -4155,14 +4177,15 @@ static void np_placeholder(lv_obj_t * parent)
         }
     }
     else {
-        lv_obj_t * img = lv_image_create(box);
-        lv_image_set_src(img, &plug_in_dsc);
-        /* Preserve the artwork's alpha while adapting its white silhouette
-         * to the theme: muted gray on dark, black on light backgrounds. */
-        lv_obj_set_style_image_recolor(img, lv_color_hex(
-            g_theme->id == UI_THEME_GRAY ? COL_DIM : 0x000000), 0);
-        lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
-        lv_obj_align(img, LV_ALIGN_BOTTOM_MID, 0, -24);
+        lv_obj_set_flex_flow(box,LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(box,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
+        make_label(box,ICON_MUSIC,&bootstrap_icons_48,COL_ACCENT);
+        make_label(box,"MPD Controller",&inter_40,COL_TEXT);
+        make_label(box,mpd_ui_status,FONT_H2,COL_MUTED);
+        char url[160];
+        snprintf(url,sizeof(url),"Setup at http://%s",g_system_config.wifi_ip[0] ? g_system_config.wifi_ip : "device-ip");
+        make_label(box,url,FONT_GROUP,COL_ACCENT);
+        make_label(box,"Settings and cache: sdcard://mpd/",FONT_CAPTION,COL_DIM);
     }
 }
 
@@ -7966,7 +7989,7 @@ void ui_apply_saved_settings(const ui_system_config_t * cfg)
 static void settings_rebuild(void);
 
 static const char * const settings_names[SETTING_COUNT] = {
-    "iOS Device",
+    "MPD Server",
     "Bluetooth",
     "Sort Order",
     "Fast Scroll",
@@ -9273,59 +9296,21 @@ static void settings_render_detail(lv_obj_t * parent, bool interactive)
 
     switch(index) {
         case SETTING_AFC_IAP2: {
-            ui_afc_status_t st;
-            settings_afc_read_status(&st);
-            if(st.afc_mode) {
-                settings_afc_action_row(parent, "Enter iAP2 Mode", "Reboot",
-                                        UI_AFC_ACTION_IPOD_MODE, interactive);
-            }
-            else {
-                settings_afc_action_row(parent, "Enter AFC Mode", "Reboot",
-                                        UI_AFC_ACTION_PAIR, interactive);
-            }
-
-            char value[96];
-            char size[24];
-            int total_albums = player_library_album_count();
-            snprintf(value, sizeof(value), "%d/%d", st.cached_albums,
-                     total_albums);
-            settings_make_info_row(parent, "Albums Cached", value,
-                                   FONT_H2, FONT_H2, SETTINGS_ROW_H);
-            if(st.library_db_bytes > 0) {
-                settings_format_bytes(st.library_db_bytes, size, sizeof(size));
-            }
-            else {
-                snprintf(size, sizeof(size), "—");
-            }
-            settings_make_info_row(parent, "Database Size", size,
-                                   FONT_H2, FONT_H2, SETTINGS_ROW_H);
-            if(st.cover_cache_bytes > 0) {
-                settings_format_bytes(st.cover_cache_bytes, size, sizeof(size));
-            }
-            else {
-                snprintf(size, sizeof(size), "—");
-            }
-            settings_make_info_row(parent, "Cover Cache Size", size,
-                                   FONT_H2, FONT_H2, SETTINGS_ROW_H);
-            settings_make_info_row(parent, "Library ID",
-                                   st.library_suffix[0] ? st.library_suffix : "—",
-                                   FONT_H2, FONT_H2, SETTINGS_ROW_H);
-            settings_make_info_row(parent, "iAP2 Status",
-                                   st.iap2_status[0] ? st.iap2_status : "—",
-                                   FONT_H2, FONT_H2, SETTINGS_ROW_H);
-            player_snapshot_t snap;
-            player_get_snapshot(&snap);
-            char battery[48];
-            if(snap.battery >= 0) {
-                snprintf(battery, sizeof(battery), "%s  %d%%",
-                         snap.charging ? "CHG" : "NOT CHG", snap.battery);
-            }
-            else {
-                snprintf(battery, sizeof(battery), "%s  --%%",
-                         snap.charging ? "CHG" : "NOT CHG");
-            }
-            settings_make_info_row(parent, "Battery", battery,
-                                   FONT_H2, FONT_H2, SETTINGS_ROW_H);
+            player_snapshot_t snap; player_get_snapshot(&snap);
+            char address[160]="Desktop preview",count[48];
+#ifdef ESP_PLATFORM
+            mpd_config_t c; mpd_client_config(&c);
+            snprintf(address,sizeof(address),"%s:%u",c.host[0] ? c.host : "Not configured",c.port);
+#endif
+            settings_make_info_row(parent,"MPD Server",address,FONT_H2,FONT_H2,SETTINGS_ROW_H);
+            settings_make_info_row(parent,"Connection",snap.connected ? "Connected" : "Offline",FONT_H2,FONT_H2,SETTINGS_ROW_H);
+            snprintf(count,sizeof(count),"%d",player_library_album_count());
+            settings_make_info_row(parent,"Albums",count,FONT_H2,FONT_H2,SETTINGS_ROW_H);
+            snprintf(count,sizeof(count),"%d",player_library_track_count());
+            settings_make_info_row(parent,"Tracks",count,FONT_H2,FONT_H2,SETTINGS_ROW_H);
+            snprintf(address,sizeof(address),"http://%s",g_system_config.wifi_ip);
+            settings_make_info_row(parent,"Configure in browser",address,FONT_H2,FONT_H2,SETTINGS_ROW_H);
+            settings_make_info_row(parent,"Storage","sdcard://mpd/",FONT_H2,FONT_H2,SETTINGS_ROW_H);
             break;
         }
         case SETTING_BLUETOOTH: {

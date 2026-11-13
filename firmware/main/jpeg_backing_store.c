@@ -66,7 +66,7 @@ void __wrap_jpeg_open_backing_store(j_common_ptr cinfo, backing_store_ptr store,
     static uint32_t sequence;
 #ifdef ESP_PLATFORM
     uint32_t stamp = (uint32_t)esp_timer_get_time();
-    const char *root = "/sdcard";
+    const char *root = "/sdcard/mpd";
 #else
     uint32_t stamp = (uint32_t)getpid();
     const char *root = "/tmp";
@@ -96,7 +96,7 @@ void jpeg_thumbnail_cleanup(void)
 {
     /* Boot only, before decoder workers start. Recover scratch space from an
      * interrupted decode without touching user covers or other temp files. */
-    DIR *directory = opendir("/sdcard");
+    DIR *directory = opendir("/sdcard/mpd");
     if(!directory)
         return;
     struct dirent *entry;
@@ -113,7 +113,7 @@ void jpeg_thumbnail_cleanup(void)
         if(!valid)
             continue;
         char path[80];
-        snprintf(path, sizeof(path), "/sdcard/%.27s", name);
+        snprintf(path, sizeof(path), "/sdcard/mpd/%.27s", name);
         remove(path);
     }
     closedir(directory);

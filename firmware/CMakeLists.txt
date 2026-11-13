@@ -3,7 +3,7 @@ option(IAP2TAB5_FULL_LIBRARY_SYNC "Subscribe to live iAP2 library updates" ON)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-project(iap2tab5)
+project(mpdtab5 VERSION 0.1.0)
 
 # LVGL 9.6's PPA draw unit calls esp_cache_get_line_size_by_addr(), which only
 # exists in IDF v5.5+. Declare it for the managed lvgl component (the

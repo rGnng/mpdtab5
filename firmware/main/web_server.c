@@ -36,7 +36,7 @@
 #include "usbmux_host.h"
 #include "lockdown_client.h"
 #include "afc_client.h"
-#include "iap2_host.h"
+#include "mpd_client.h"
 #include "debug_log.h"
 #include "display_diag.h"
 
@@ -143,7 +143,7 @@ static esp_err_t asset_get(httpd_req_t * req)
 
 static esp_err_t debuglog_get(httpd_req_t * req)
 {
-    FILE * f = fopen("/sdcard/debug.log", "r");
+    FILE * f = fopen("/sdcard/mpd/debug.log", "r");
     if(f == NULL) {
         return httpd_resp_send_err(
             req, HTTPD_404_NOT_FOUND,
@@ -299,7 +299,7 @@ static esp_err_t key_post(httpd_req_t * req)
     url_decode_inplace(value);
 
     if(strcmp(value, "nprefresh") == 0) {
-        esp_err_t err = iap2_host_refresh_now_playing();
+        esp_err_t err = mpd_client_refresh_now_playing();
         if(err != ESP_OK) {
             httpd_resp_set_status(req, "409 Conflict");
             return httpd_resp_sendstr(req, "iPod not identified");
@@ -519,13 +519,13 @@ static esp_err_t hidbit_post(httpd_req_t * req)
 
     esp_err_t err;
     if(strcmp(mode, "press") == 0) {
-        err = iap2_host_hid_press_bit((uint8_t)bit);
+        err = mpd_client_hid_press_bit((uint8_t)bit);
     }
     else if(strcmp(mode, "release") == 0) {
-        err = iap2_host_hid_release();
+        err = mpd_client_hid_release();
     }
     else {
-        err = iap2_host_hid_raw_bit((uint8_t)bit);
+        err = mpd_client_hid_raw_bit((uint8_t)bit);
     }
 
     char reply[64];
@@ -688,6 +688,54 @@ static esp_err_t log_stream_get(httpd_req_t * req)
                                    "log stream busy");
     }
     return ESP_OK;
+}
+
+static esp_err_t mpd_get(httpd_req_t *req)
+{
+    mpd_config_t c; mpd_client_config(&c);
+    cJSON *j=cJSON_CreateObject();
+    if(!j) return httpd_resp_send_500(req);
+    cJSON_AddStringToObject(j,"host",c.host);
+    cJSON_AddNumberToObject(j,"port",c.port);
+    cJSON_AddBoolToObject(j,"password_set",c.password[0]!=0);
+    cJSON_AddStringToObject(j,"status",mpd_client_status());
+    cJSON_AddBoolToObject(j,"connected",mpd_client_is_connected());
+    char *text=cJSON_PrintUnformatted(j); cJSON_Delete(j);
+    if(!text) return httpd_resp_send_500(req);
+    httpd_resp_set_type(req,"application/json");
+    httpd_resp_set_hdr(req,"Cache-Control","no-store");
+    esp_err_t err=httpd_resp_sendstr(req,text); free(text); return err;
+}
+static esp_err_t mpd_post(httpd_req_t *req)
+{
+    if(req->content_len<=0 || req->content_len>2048)
+        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Invalid body size");
+    char body[2049]; int used=0;
+    while(used<req->content_len) {
+        int n=httpd_req_recv(req,body+used,req->content_len-used);
+        if(n<=0) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Incomplete request");
+        used+=n;
+    }
+    body[used]=0;
+    cJSON *j=cJSON_Parse(body);
+    if(!cJSON_IsObject(j)) { cJSON_Delete(j); return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Expected JSON object"); }
+    const cJSON *action=cJSON_GetObjectItemCaseSensitive(j,"action");
+    if(cJSON_IsString(action) && !strcmp(action->valuestring,"rescan")) {
+        mpd_client_rescan(); cJSON_Delete(j); return mpd_get(req);
+    }
+    mpd_config_t c; mpd_client_config(&c);
+    const cJSON *host=cJSON_GetObjectItemCaseSensitive(j,"host"), *port=cJSON_GetObjectItemCaseSensitive(j,"port"), *password=cJSON_GetObjectItemCaseSensitive(j,"password");
+    const char *error=NULL;
+    if(!cJSON_IsString(host) || strlen(host->valuestring)>=sizeof(c.host)) error="Host must be a hostname or IP, up to 127 bytes";
+    else if(!cJSON_IsNumber(port) || port->valuedouble!=port->valueint || port->valueint<1 || port->valueint>65535) error="Port must be 1..65535";
+    else if(password && (!cJSON_IsString(password) || strlen(password->valuestring)>=sizeof(c.password))) error="Password must be a string up to 127 bytes";
+    if(error) { cJSON_Delete(j); return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,error); }
+    strcpy(c.host,host->valuestring); c.port=port->valueint;
+    if(password) strcpy(c.password,password->valuestring);
+    esp_err_t result=mpd_client_configure(&c); cJSON_Delete(j);
+    if(result==ESP_ERR_INVALID_ARG) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Invalid hostname or password characters");
+    if(result!=ESP_OK) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Cannot save sdcard://mpd/server.json; check SD card");
+    return mpd_get(req);
 }
 
 static esp_err_t config_get(httpd_req_t * req)
@@ -1193,6 +1241,10 @@ static esp_err_t status_get(httpd_req_t * req)
 
     const esp_app_desc_t * app = esp_app_get_description();
     cJSON_AddStringToObject(root, "firmware", app->version);
+    cJSON_AddStringToObject(root,"project",app->project_name);
+    char elf_sha[65];
+    for(unsigned i=0;i<32;i++) snprintf(elf_sha+i*2,3,"%02x",app->app_elf_sha256[i]);
+    cJSON_AddStringToObject(root,"elf_sha256",elf_sha);
     np_battery_status_t battery;
     np_battery_hw_snapshot(&battery);
     cJSON *np=cJSON_AddObjectToObject(root,"np_battery");
@@ -1242,48 +1294,17 @@ static esp_err_t status_get(httpd_req_t * req)
     cJSON_AddBoolToObject(root, "qc_high", g_app_config.qc_high);
     cJSON_AddStringToObject(root, "wifi", s_net_status);
     cJSON_AddStringToObject(root, "ip", s_net_ip);
-    cJSON_AddStringToObject(root, "usbmux", usbmux_host_status());
-    cJSON_AddStringToObject(root, "lockdown", lockdown_client_status());
-    lockdown_pair_status_t pairing;
-    lockdown_client_pair_status(&pairing);
-    cJSON_AddBoolToObject(root, "apple_pair_busy", pairing.busy);
-    cJSON_AddBoolToObject(root, "apple_trusted", pairing.trusted && usbmux_host_is_ready());
-    cJSON_AddStringToObject(root, "apple_pair_status", pairing.message);
-    cJSON_AddStringToObject(root, "afc", afc_client_status());
-    lockdown_artwork_progress_t progress;
-    lockdown_client_artwork_progress(&progress);
-    cJSON * sync = cJSON_AddObjectToObject(root, "afc_sync");
-    if(sync != NULL) {
-        cJSON_AddBoolToObject(sync, "active", progress.active);
-        cJSON_AddNumberToObject(sync, "phase", progress.phase);
-        cJSON_AddNumberToObject(sync, "total", progress.total);
-        cJSON_AddNumberToObject(sync, "attempted", progress.attempted);
-        cJSON_AddNumberToObject(sync, "cached", progress.copied);
-        cJSON_AddNumberToObject(sync, "failed", progress.failed);
-    }
-    cJSON_AddStringToObject(root, "iap2", iap2_host_status());
-    cJSON_AddBoolToObject(root, "iap2_identified",
-                          iap2_host_is_identified());
-    iap2_link_stats_t link;
-    iap2_host_link_stats(&link);
-    cJSON * transport = cJSON_AddObjectToObject(root, "iap2_link");
-    if(transport != NULL) {
-#if defined(IAP2TAB5_FULL_LIBRARY_SYNC)
-        cJSON_AddBoolToObject(transport, "full_library_sync", true);
-#else
-        cJSON_AddBoolToObject(transport, "full_library_sync", false);
-#endif
-#define LINK_STAT(name) cJSON_AddNumberToObject(transport, #name, link.name)
-        LINK_STAT(rx_packets); LINK_STAT(bad_headers); LINK_STAT(bad_payloads);
-        LINK_STAT(duplicates); LINK_STAT(sequence_gaps); LINK_STAT(rx_overflows);
-        LINK_STAT(hid_errors); LINK_STAT(queue_stalls); LINK_STAT(queue_high_water);
-        LINK_STAT(link_resets); LINK_STAT(retransmits);
-        LINK_STAT(library_messages); LINK_STAT(library_items);
-#undef LINK_STAT
-        cJSON_AddBoolToObject(transport, "library_complete", link.library_complete);
-    }
-    iap2_state_t iap2;
-    if(iap2_host_get_state(&iap2)) {
+    cJSON_AddStringToObject(root,"product","MPD Tab5");
+    cJSON_AddStringToObject(root,"mpd_status",mpd_client_status());
+    cJSON_AddBoolToObject(root,"mpd_connected",mpd_client_is_connected());
+    mpd_config_t mpd_cfg; mpd_client_config(&mpd_cfg);
+    cJSON_AddStringToObject(root,"mpd_host",mpd_cfg.host);
+    cJSON_AddNumberToObject(root,"mpd_port",mpd_cfg.port);
+    cJSON_AddStringToObject(root,"storage_root","sdcard://mpd/");
+    mpd_state_t iap2;
+    if(mpd_client_get_state(&iap2)) {
+        cJSON_AddNumberToObject(root,"mpd_volume",iap2.volume);
+        cJSON_AddBoolToObject(root,"mpd_syncing",iap2.library_syncing);
         cJSON_AddNumberToObject(root, "play_status", iap2.play_status);
         cJSON_AddStringToObject(root, "title", iap2.title);
         cJSON_AddStringToObject(root, "artist", iap2.artist);
@@ -1682,6 +1703,8 @@ esp_err_t web_server_start(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 40;
+    config.max_open_sockets = 14;
+    config.backlog_conn = 8;
     config.stack_size = 12288;
     config.lru_purge_enable = true;
 
@@ -1705,6 +1728,11 @@ esp_err_t web_server_start(void)
     const httpd_uri_t root = {
         .uri = "/", .method = HTTP_GET, .handler = root_get,
     };
+    const httpd_uri_t mpd_routes[] = {
+        {.uri="/api/mpd", .method=HTTP_GET, .handler=mpd_get},
+        {.uri="/api/mpd", .method=HTTP_POST, .handler=mpd_post},
+    };
+    for(size_t i=0;i<2;i++) ESP_ERROR_CHECK(httpd_register_uri_handler(server,&mpd_routes[i]));
     const httpd_uri_t cfg_get = {
         .uri = "/api/config", .method = HTTP_GET, .handler = config_get,
     };
@@ -1804,11 +1832,11 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &time_sync);
     httpd_register_uri_handler(server, &reboot);
     httpd_register_uri_handler(server, &ota);
-    httpd_register_uri_handler(server, &library);
-    httpd_register_uri_handler(server, &pair);
-    httpd_register_uri_handler(server, &trust);
-    httpd_register_uri_handler(server, &sync);
-    httpd_register_uri_handler(server, &cache_reset);
+    (void)library;
+    (void)pair;
+    (void)trust;
+    (void)sync;
+    (void)cache_reset;
     httpd_register_uri_handler(server, &debug);
     httpd_register_uri_handler(server, &log);
     httpd_register_uri_handler(server, &debuglog);
@@ -1817,7 +1845,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &usbmode);
     httpd_register_uri_handler(server, &key);
     httpd_register_uri_handler(server, &screenshot);
-    httpd_register_uri_handler(server, &hidbit);
+    (void)hidbit;
     httpd_register_uri_handler(server, &keystate);
     httpd_register_uri_handler(server, &power);
     httpd_register_uri_handler(server, &charge);

@@ -10,8 +10,9 @@ extern "C" {
 #endif
 
 #define APP_CONFIG_SD_MOUNT   "/sdcard"
-#define APP_CONFIG_PATH       APP_CONFIG_SD_MOUNT "/config.json"
-#define APP_WIFI_CRED_PATH    APP_CONFIG_SD_MOUNT "/wifi.txt"
+#define APP_CONFIG_ROOT       APP_CONFIG_SD_MOUNT "/mpd"
+#define APP_CONFIG_PATH       APP_CONFIG_ROOT "/config.json"
+#define APP_WIFI_CRED_PATH    APP_CONFIG_ROOT "/wifi.txt"
 
 typedef struct {
     uint16_t screen_flip;      /* 0 or 180 degrees */

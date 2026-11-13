@@ -46,7 +46,7 @@ app_config_t g_app_config = {
     .sound_enabled = true,
     .sound_mode = 2,
     .volume = 65,
-    .ap_ssid = "IAP2TAB5",
+    .ap_ssid = "MPDTAB5",
     .clock_12h = false,
     .sort_field = 0,
     .sort_desc = true,
@@ -265,7 +265,7 @@ static void library_paths_apply(const char * id)
                           sizeof(s_library_short));
 
     if(s_library_short[0] != '\0') {
-        snprintf(s_library_dir, sizeof(s_library_dir), "/sdcard/lib/%s",
+        snprintf(s_library_dir, sizeof(s_library_dir), "/sdcard/mpd/lib/%s",
                  s_library_short);
         snprintf(s_library_bin, sizeof(s_library_bin), "%s/library.bin",
                  s_library_dir);
@@ -273,9 +273,9 @@ static void library_paths_apply(const char * id)
                  s_library_dir);
     }
     else {
-        snprintf(s_library_dir, sizeof(s_library_dir), "/sdcard");
-        snprintf(s_library_bin, sizeof(s_library_bin), "/sdcard/library.bin");
-        snprintf(s_artwork_dir, sizeof(s_artwork_dir), "/sdcard/covers");
+        snprintf(s_library_dir, sizeof(s_library_dir), "/sdcard/mpd");
+        snprintf(s_library_bin, sizeof(s_library_bin), "/sdcard/mpd/library.bin");
+        snprintf(s_artwork_dir, sizeof(s_artwork_dir), "/sdcard/mpd/covers");
     }
     snprintf(s_library_stars, sizeof(s_library_stars), "%s/stars.csv",
              s_library_dir);
@@ -313,10 +313,10 @@ static void library_migrate_previous_dir(void)
     return;
 #endif
     if(s_library_short[0] == '\0' || !s_sd_ready) return;
-    if(path_exists(s_library_bin) || !path_exists("/sdcard/lib")) return;
+    if(path_exists(s_library_bin) || !path_exists("/sdcard/mpd/lib")) return;
 
     char candidate[256] = "";
-    DIR * d = opendir("/sdcard/lib");
+    DIR * d = opendir("/sdcard/mpd/lib");
     if(d == NULL) return;
     struct dirent * ent;
     while((ent = readdir(d)) != NULL) {
@@ -326,7 +326,7 @@ static void library_migrate_previous_dir(void)
             continue;
         }
         char bin[320];
-        snprintf(bin, sizeof(bin), "/sdcard/lib/%s/library.bin",
+        snprintf(bin, sizeof(bin), "/sdcard/mpd/lib/%s/library.bin",
                  ent->d_name);
         if(!path_exists(bin)) continue;
         if(candidate[0] != '\0') {
@@ -344,7 +344,7 @@ static void library_migrate_previous_dir(void)
     if(path_exists(s_library_dir)) rmdir(s_library_dir);
 
     char old_dir[320];
-    snprintf(old_dir, sizeof(old_dir), "/sdcard/lib/%s", candidate);
+    snprintf(old_dir, sizeof(old_dir), "/sdcard/mpd/lib/%s", candidate);
     if(rename(old_dir, s_library_dir) == 0) {
         ESP_LOGI(TAG, "migrated library dir %s -> %s",
                  old_dir, s_library_dir);
@@ -358,12 +358,12 @@ static void library_migrate_legacy(void)
 {
     if(s_library_short[0] == '\0' || !s_sd_ready) return;
 
-    mkdir("/sdcard/lib", 0777);
+    mkdir("/sdcard/mpd/lib", 0777);
     library_migrate_previous_dir();
     mkdir(s_library_dir, 0777);
 
-    if(!path_exists(s_library_bin) && path_exists("/sdcard/library.bin")) {
-        if(rename("/sdcard/library.bin", s_library_bin) == 0) {
+    if(!path_exists(s_library_bin) && path_exists("/sdcard/mpd/library.bin")) {
+        if(rename("/sdcard/mpd/library.bin", s_library_bin) == 0) {
             ESP_LOGI(TAG, "migrated library.bin -> %s", s_library_bin);
         }
     }
@@ -386,14 +386,14 @@ static void library_migrate_legacy(void)
         }
         if(empty) rmdir(s_artwork_dir);
     }
-    if(!path_exists(s_artwork_dir) && path_exists("/sdcard/covers")) {
-        if(rename("/sdcard/covers", s_artwork_dir) == 0) {
+    if(!path_exists(s_artwork_dir) && path_exists("/sdcard/mpd/covers")) {
+        if(rename("/sdcard/mpd/covers", s_artwork_dir) == 0) {
             ESP_LOGI(TAG, "migrated covers -> %s", s_artwork_dir);
         }
     }
 
-    char legacy_pack[64] = "/sdcard/thumbs.bin";
-    char legacy_idx[64] = "/sdcard/thumbs.idx";
+    char legacy_pack[64] = "/sdcard/mpd/thumbs.bin";
+    char legacy_idx[64] = "/sdcard/mpd/thumbs.idx";
     char new_pack[128];
     char new_idx[128];
     snprintf(new_pack, sizeof(new_pack), "%s/thumbs.bin", s_library_dir);
@@ -412,7 +412,7 @@ static void library_dirs_ensure(void)
 {
     if(!s_sd_ready) return;
     if(s_library_short[0] != '\0') {
-        mkdir("/sdcard/lib", 0777);
+        mkdir("/sdcard/mpd/lib", 0777);
         mkdir(s_library_dir, 0777);
     }
     mkdir(s_artwork_dir, 0777);
@@ -457,13 +457,7 @@ esp_err_t app_config_set_library_id(const char * id)
     ESP_LOGI(TAG, "library id '%s' -> short '%s', dir '%s'",
              s_library_id, s_library_short, s_library_dir);
 
-    nvs_handle_t h;
-    esp_err_t err = nvs_open("usbcfg", NVS_READWRITE, &h);
-    if(err != ESP_OK) return err;
-    err = nvs_set_str(h, "libid", s_library_id);
-    if(err == ESP_OK) err = nvs_commit(h);
-    nvs_close(h);
-    return err;
+    return ESP_OK;
 }
 
 static void set_defaults(void)
@@ -474,7 +468,7 @@ static void set_defaults(void)
     g_app_config.sound_enabled = true;
     g_app_config.sound_mode = 2;
     g_app_config.volume = 65;
-    snprintf(g_app_config.ap_ssid, sizeof(g_app_config.ap_ssid), "IAP2TAB5");
+    snprintf(g_app_config.ap_ssid, sizeof(g_app_config.ap_ssid), "MPDTAB5");
     g_app_config.clock_12h = false;
     g_app_config.sort_field = 0;
     g_app_config.sort_desc = true;
@@ -623,13 +617,38 @@ static void load_from_json(const char * text)
     cJSON_Delete(root);
 }
 
+/* Keep the optional font available after moving all application files into
+ * mpd/. Import once; never rename or modify the original iPod app's file. */
+static void import_legacy_font(void)
+{
+    const char *dst=APP_CONFIG_ROOT "/JPFONT.TTF";
+    struct stat st;
+    if(stat(dst,&st)==0 || stat("/sdcard/JPFONT.TTF",&st)!=0 || st.st_size<=0 || st.st_size>32*1024*1024) return;
+    FILE *in=fopen("/sdcard/JPFONT.TTF","rb");
+    if(!in) return;
+    FILE *out=fopen(APP_CONFIG_ROOT "/JPFONT.tmp","wb");
+    bool ok=out!=NULL;
+    char buffer[4096]; size_t n;
+    if(out) {
+        while((n=fread(buffer,1,sizeof(buffer),in))>0) {
+            if(fwrite(buffer,1,n,out)!=n) { ok=false; break; }
+            vTaskDelay(1);
+        }
+        ok=!ferror(in) && ok;
+        ok=fflush(out)==0 && ok;
+        ok=fclose(out)==0 && ok;
+    }
+    fclose(in);
+    if(ok && rename(APP_CONFIG_ROOT "/JPFONT.tmp",dst)==0) ESP_LOGI(TAG,"Imported font into %s",dst);
+    else remove(APP_CONFIG_ROOT "/JPFONT.tmp");
+}
+
 esp_err_t app_config_init(void)
 {
     set_defaults();
     library_paths_apply("");
-    load_nvs_mode();
-    if(s_nvs_mode_valid) g_app_config.iap2_mode = s_nvs_mode;
-    load_nvs_library_id();
+    (void)load_nvs_mode; (void)load_nvs_library_id;
+    g_app_config.iap2_mode=true;
     ESP_LOGI(TAG, "NVS USB mode: %s (valid=%d), library='%s'",
              g_app_config.iap2_mode ? "iAP2 config 2" : "AFC config 4",
              (int)s_nvs_mode_valid, s_library_id);
@@ -645,7 +664,9 @@ esp_err_t app_config_init(void)
                      card->is_uhs1 ? " UHS-I" : "");
         }
         app_config_sd_info_refresh();
-        library_migrate_legacy();
+        mkdir(APP_CONFIG_ROOT,0777);
+        import_legacy_font();
+        (void)library_migrate_legacy;
         library_dirs_ensure();
     }
     else {
@@ -665,7 +686,7 @@ esp_err_t app_config_init(void)
     buffer[n] = '\0';
 
     load_from_json(buffer);
-    if(s_nvs_mode_valid) g_app_config.iap2_mode = s_nvs_mode;
+    g_app_config.iap2_mode=true;
     if(s_library_id[0] == '\0' && g_app_config.library_id[0] != '\0') {
         app_config_set_library_id(g_app_config.library_id);
     }
@@ -952,7 +973,9 @@ bool app_config_sd_ensure(void)
         }
         ESP_LOGI(TAG, "SD card mounted on demand");
         app_config_sd_info_refresh();
-        library_migrate_legacy();
+        mkdir(APP_CONFIG_ROOT,0777);
+        import_legacy_font();
+        (void)library_migrate_legacy;
         library_dirs_ensure();
         return true;
     }
@@ -1046,12 +1069,16 @@ esp_err_t app_config_read_wifi_credentials(char * ssid, size_t ssid_len,
     if(err == ESP_OK) {
         /* wifi.txt is authoritative: a valid SD file replaces the NVS copy,
          * even if the caller requests only a shortened SSID or no password. */
-        wifi_credentials_save_nvs(&credentials);
+        (void)wifi_credentials_save_nvs;
     }
     else {
         err = wifi_credentials_load_nvs(&credentials);
         if(err != ESP_OK) return err;
         ESP_LOGW(TAG, "SD Wi-Fi credentials unavailable; using NVS backup");
+        if(app_config_sd_ready()) {
+            FILE *m=fopen(APP_WIFI_CRED_PATH,"wb");
+            if(m) { fprintf(m,"%s\n%s\n",credentials.ssid,credentials.password); fclose(m); }
+        }
     }
     snprintf(ssid, ssid_len, "%s", credentials.ssid);
     if(password != NULL && password_len > 0) {

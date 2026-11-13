@@ -27,9 +27,8 @@ idf_component_register(
         "afc_client.c"
         "thumb_cache.c"
         "star_store.c"
-        "iap2_identity.c"
-        "iap2_auth.c"
-        "iap2_host.c"
+        "mpd_client.c"
+        "../../app/mpd/mpd_wire.c"
         "lvgl_ppa_idf_compat.c"
         "../../app/backend/mock_player.c"
         "../../app/backend/media_index.c"
@@ -45,6 +44,7 @@ idf_component_register(
         ${UI_FONT_SRCS}
     INCLUDE_DIRS
         "."
+        "../../app/mpd"
         "../../app/backend"
         "../../app/ui"
     REQUIRES

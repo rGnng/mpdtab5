@@ -165,6 +165,8 @@ bool player_album_track_get(uint64_t album_id, int index, player_track_t *out);
 int player_artist_song_count(uint64_t artist_id);
 bool player_artist_song_get(uint64_t artist_id, int index, player_track_t *out);
 
+void player_library_playlists_reset(void);
+void player_library_playlist_item(int index, const char *name, uint64_t key);
 int player_playlist_count(void);
 bool player_playlist_get(int index, player_playlist_t *out);
 int player_playlist_track_count(int index);

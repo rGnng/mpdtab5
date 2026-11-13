@@ -23,6 +23,7 @@
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "nvs.h"
+#include "app_config.h"
 #include "store/config/ble_store_config.h"
 #include "ulanzi_d100h.h"
 #include "usb_hid_input.h"
@@ -203,50 +204,46 @@ static void paired_save_locked(void)
         if(n < 0 || (size_t)n >= sizeof(buf) - used) break;
         used += (size_t)n;
     }
-    nvs_handle_t h;
-    if(nvs_open(BLE_REMOTE_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
-    nvs_set_str(h, BLE_REMOTE_NVS_KEY, buf);
-    nvs_commit(h);
-    nvs_close(h);
+    if(!app_config_sd_ready()) return;
+    FILE *f=fopen("/sdcard/mpd/bluetooth.txt.tmp","wb");
+    if(!f) return;
+    bool ok=fwrite(buf,1,used,f)==used;
+    ok=fflush(f)==0 && ok; ok=fclose(f)==0 && ok;
+    if(ok) {
+        remove("/sdcard/mpd/bluetooth.txt.bak");
+        rename("/sdcard/mpd/bluetooth.txt","/sdcard/mpd/bluetooth.txt.bak");
+        if(rename("/sdcard/mpd/bluetooth.txt.tmp","/sdcard/mpd/bluetooth.txt")!=0)
+            rename("/sdcard/mpd/bluetooth.txt.bak","/sdcard/mpd/bluetooth.txt");
+    }
 }
-
 static void paired_load(void)
 {
-    nvs_handle_t h;
-    if(nvs_open(BLE_REMOTE_NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
-    size_t len = 0;
-    if(nvs_get_str(h, BLE_REMOTE_NVS_KEY, NULL, &len) != ESP_OK || len == 0) {
-        nvs_close(h);
-        return;
+    char buf[BLE_REMOTE_MAX_DEVICES*64]={0};
+    FILE *f=fopen("/sdcard/mpd/bluetooth.txt","rb");
+    if(!f) f=fopen("/sdcard/mpd/bluetooth.txt.bak","rb");
+    bool migrated=false;
+    if(f) { size_t n=fread(buf,1,sizeof(buf)-1,f); fclose(f); buf[n]=0; }
+    else {
+        /* Import the existing controller once, without changing old NVS. */
+        nvs_handle_t h; size_t n=sizeof(buf);
+        if(nvs_open(BLE_REMOTE_NVS_NS,NVS_READONLY,&h)!=ESP_OK) return;
+        esp_err_t err=nvs_get_str(h,BLE_REMOTE_NVS_KEY,buf,&n); nvs_close(h);
+        if(err!=ESP_OK) return;
+        migrated=true;
     }
-    char * buf = malloc(len + 1);
-    if(buf == NULL) {
-        nvs_close(h);
-        return;
+    char *line=buf;
+    while(line && *line && s_paired_count<BLE_REMOTE_MAX_DEVICES) {
+        char *next=strchr(line,'\n'); if(next) *next++=0;
+        char *type=strchr(line,','); if(!type) break; *type++=0;
+        char *name=strchr(type,','); if(!name) break; *name++=0;
+        ble_remote_device_t *dev=&s_paired[s_paired_count];
+        memset(dev,0,sizeof(*dev));
+        copy_name(dev->addr,sizeof(dev->addr),line);
+        copy_name(dev->name,sizeof(dev->name),name);
+        s_paired_type[s_paired_count++]=(uint8_t)atoi(type);
+        line=next;
     }
-    if(nvs_get_str(h, BLE_REMOTE_NVS_KEY, buf, &len) == ESP_OK) {
-        char * line = buf;
-        while(line != NULL && *line != '\0' &&
-              s_paired_count < BLE_REMOTE_MAX_DEVICES) {
-            char * next = strchr(line, '\n');
-            if(next != NULL) *next++ = '\0';
-            char * first = strchr(line, ',');
-            if(first == NULL) break;
-            *first++ = '\0';
-            char * second = strchr(first, ',');
-            if(second == NULL) break;
-            *second++ = '\0';
-            ble_remote_device_t * dev = &s_paired[s_paired_count];
-            memset(dev, 0, sizeof(*dev));
-            copy_name(dev->addr, sizeof(dev->addr), line);
-            s_paired_type[s_paired_count] = (uint8_t)atoi(first);
-            copy_name(dev->name, sizeof(dev->name), second);
-            s_paired_count++;
-            line = next;
-        }
-    }
-    free(buf);
-    nvs_close(h);
+    if(migrated) paired_save_locked();
 }
 
 static int paired_find_locked(const char * addr)

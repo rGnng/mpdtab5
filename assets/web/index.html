@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>TAB5 · MediaCtrl</title>
+<title>TAB5 · MPD</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/common.js"></script>
 </head>
 <body>
 <header>
-  <div class="brand"><span class="dot"></span>TAB5<span class="sub">/ MEDIACTRL</span></div>
+  <div class="brand"><span class="dot"></span>TAB5<span class="sub">/ MPD</span></div>
   <nav id="nav">
     <a href="#player" class="on">Player</a>
     <a href="#device">Device</a>
@@ -43,8 +43,8 @@
         <button title="Previous" onclick="key('prev')">|&lt;</button>
         <button class="main" title="Play / Pause" onclick="key('play')" id="btn_play">PLAY</button>
         <button title="Next" onclick="key('next')">&gt;|</button>
-        <button title="iPod volume down" onclick="key('voldown')">VOL −</button>
-        <button title="iPod volume up" onclick="key('volup')">VOL +</button>
+        <button title="MPD volume down" onclick="key('voldown')">VOL −</button>
+        <button title="MPD volume up" onclick="key('volup')">VOL +</button>
       </div>
     </div>
   </section>
@@ -69,24 +69,17 @@
     </section>
 
     <section id="library">
-      <h2>Library</h2>
-      <div class="body">
+      <h2>MPD Server<span class="spacer"></span><span class="micro" id="mpd_status">Not configured</span></h2>
+      <form class="body" id="mpd_form">
+        <label class="field"><span class="lbl">Hostname or IP address</span><input id="mpd_host" type="text" maxlength="127" placeholder="Configure your MPD server" autocomplete="off" spellcheck="false"></label>
+        <label class="field"><span class="lbl">Port</span><input id="mpd_port" type="number" min="1" max="65535" value="6600" required></label>
+        <label class="field"><span class="lbl">Password (optional)</span><input id="mpd_password" type="password" maxlength="127" placeholder="Leave blank to keep existing password" autocomplete="new-password"></label>
+        <label class="check"><input id="mpd_clear_password" type="checkbox"> Clear saved password</label>
+        <div class="actions"><button class="main" type="submit" id="mpd_save">Save &amp; connect</button><button type="button" id="btn_sync" onclick="sync_media()">Resync library</button></div>
         <div class="rows" id="library_rows"></div>
-        <div class="actions">
-          <button class="main" id="btn_sync" onclick="sync_media()">Sync</button>
-          <button id="btn_trust" onclick="pairApple()">Pair / Trust</button>
-          <button id="btn_mode" onclick="switchMode()">Enter Library Sync</button>
-        </div>
-        <div class="hint" id="sync_hint">—</div>
-        <div class="hint" id="apple_trust"></div>
-        <details><summary>Import files</summary>
-          <label class="field"><span class="lbl">Library (.bin)</span><input type="file" id="lib_file" accept=".bin"></label>
-          <div class="progress" id="lib_prog"><i></i></div>
-          <div class="actions"><button onclick="uploadLibrary()">Upload library &amp; reboot</button></div>
-          <label class="field"><span class="lbl">Pair record (.plist)</span><input type="file" id="pair_file" accept=".plist"></label>
-          <div class="actions"><button onclick="uploadPair()">Upload pair record</button></div>
-        </details>
-      </div>
+        <div class="hint" id="sync_hint">Enter the address of your Music Player Daemon. Music plays on the server's audio output.</div>
+        <div class="hint">Settings, library cache, artwork, stars and logs are stored in sdcard://mpd/.</div>
+      </form>
     </section>
 
     <section id="system">
@@ -118,7 +111,6 @@
           </select>
         </label>
         <label class="check"><input type="checkbox" id="debug_log"> Debug log to SD</label>
-        <label class="check"><input type="checkbox" id="iap2_mode"> iAP2 mode (reboot to apply)</label>
         <label class="field"><span class="lbl">USB mode</span>
           <select id="usb_mode">
             <option value="0">USB-A HighSpeed Only</option>

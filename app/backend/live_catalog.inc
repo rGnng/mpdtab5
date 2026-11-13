@@ -64,13 +64,16 @@ typedef enum
     LIVE_DELETE,
     LIVE_RESET,
     LIVE_COMPLETE,
-    LIVE_AFC
+    LIVE_AFC,
+    LIVE_PLAYLIST_RESET,
+    LIVE_PLAYLIST_ITEM
 } live_kind_t;
 typedef struct
 {
     live_kind_t kind;
     union
     {
+        struct { int index; uint64_t key; char name[64]; } playlist;
         player_media_item_t item;
         uint64_t pid;
         char library[128];
@@ -625,6 +628,23 @@ static void live_apply(const live_event_t *event)
         return;
     switch(event->kind)
     {
+    case LIVE_PLAYLIST_RESET:
+        playlist_count=0;
+        live_revision++; live_publish=true;
+        break;
+    case LIVE_PLAYLIST_ITEM: {
+        int i=event->playlist.index;
+        if(i<0 || i>=MAX_PLAYLISTS) break;
+        if(i>=playlist_count) {
+            while(playlist_count<=i) memset(&playlists[playlist_count++],0,sizeof(playlists[0]));
+        }
+        device_playlist_t *p=&playlists[i];
+        p->id=i+1;
+        if(event->playlist.name[0]) copy_str(p->name,sizeof(p->name),event->playlist.name);
+        if(event->playlist.key && p->track_count<MAX_PLAYLIST_TRACKS) p->track_ids[p->track_count++]=event->playlist.key;
+        live_revision++; live_publish=true;
+        break;
+    }
     case LIVE_ITEM:
         live_upsert(&event->item);
         break;
@@ -840,4 +860,14 @@ bool player_library_poll(void)
     live_publish = false;
     live_give();
     return changed;
+}
+
+void player_library_playlists_reset(void) {
+    live_event_t e={.kind=LIVE_PLAYLIST_RESET}; live_post(&e);
+}
+void player_library_playlist_item(int index,const char *name,uint64_t key) {
+    live_event_t e={.kind=LIVE_PLAYLIST_ITEM};
+    e.playlist.index=index; e.playlist.key=key;
+    if(name) copy_str(e.playlist.name,sizeof(e.playlist.name),name);
+    live_post(&e);
 }

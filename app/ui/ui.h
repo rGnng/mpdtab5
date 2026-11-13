@@ -127,6 +127,7 @@ void ui_set_network_status(const char *status, const char *ip);
 /** Device availability for the menubar and Now Playing placeholder:
  *  iap2_mode is the USB role, present means an iPod is identified, and
  *  sd_ready reports the SD card mount. Safe to call from any task. */
+void ui_set_mpd_status(const char *status);
 void ui_set_device_state(bool iap2_mode, bool present, bool sd_ready);
 /** Publish iAP2 library transfer activity under the platform display lock. */
 void ui_set_library_syncing(bool syncing);
