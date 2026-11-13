@@ -64,7 +64,7 @@ seek, play/pause, and shuffle/repeat/mute command semantics.
 - Idle artwork caching fetched previously unplayed albums from Tracks. More
   than 500 cached album covers survived OTA/reboot, and the visible Albums
   list rendered their thumbnails after restart.
-- Inspected Settings → MPD Server and the web page with live artwork progress.
+- Inspected Settings → MPD Server and the web page with live artwork counts.
   The counter continued advancing while the catalog revision stayed unchanged;
   cover arrivals no longer rebuild or reorder the page.
 - Kept the growing MPD thumbnail pack on SD instead of preloading it into RAM.
@@ -88,8 +88,12 @@ in place. `tests/test_mpd_artwork.py` checks visible priority, idle delays,
 warm-cache reuse, retry/absence behavior, chunk cancellation, and stale server
 and track identities against production code and a socket peer. `/api/status`
 reports `artwork_cached` and pass progress in `artwork`; album snapshots include
-`cover_cached`. The Tab5's Settings → MPD Server page and the web interface
-show live cache counts, progress, and paused/active/completed states.
+`cover_cached`. The Tab5's Settings → MPD Server page shows a single normal
+Artwork Cache count row; the existing clock-area sync icon stays active during
+library/artwork passes. The waiting screen has one `Connecting to <host>:<port>`
+message in the existing status font/color. The web interface retains detailed
+cache progress and paused/active/completed states. All six MPD view/notification
+checks passed across the three themes after this settings simplification.
 
 Final verified ELF SHA-256:
-`d2ff3678f3dbe3d6d229211526b68ec36035cdff24cec601ce132ad79b5795cb`.
+`1932e788c87dbca4b2efaa9cb405ec8e3b1be7a9ceea2fa9c4fb5d05cb144d51`.

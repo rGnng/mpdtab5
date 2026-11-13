@@ -136,19 +136,42 @@ static void settings(void)
     }
     settings_open((void*)SETTING_AFC_IAP2);pump(200);
     check(!strcmp(settings_names[SETTING_AFC_IAP2],"MPD Server"),"First settings pane must describe MPD");
-    check(settings_mpd_cache_count && settings_mpd_cache_state && settings_mpd_cache_bar,
-          "MPD Server must show live artwork cache progress");
-    settings_mpd_cache_values(8,10,10,"Cache pass complete",2,0);
-    check(strstr(lv_label_get_text(settings_mpd_cache_count),"8 / 10") &&
-          strstr(lv_label_get_text(settings_mpd_cache_count),"100%"),"Cache counts must include checked missing albums");
-    check(lv_bar_get_value(settings_mpd_cache_bar)==1000,"Completed cache pass must fill the progress bar");
-    check(strstr(lv_label_get_text(settings_mpd_cache_state),"2 without artwork"),"Cache state must explain missing covers");
+    check(settings_mpd_cache_count,"MPD Server must show the live artwork cache count");
+    check(lv_obj_get_child_count(settings_right_content)==5,
+          "MPD settings must contain only server, connection, albums, tracks and artwork cache");
+    lv_obj_t *cache_row=lv_obj_get_parent(settings_mpd_cache_count);
+    check(!strcmp(lv_label_get_text(lv_obj_get_child(cache_row,0)),"Artwork Cache"),
+          "The cache row must use the requested label");
+    check(lv_obj_get_style_text_font(settings_mpd_cache_count,0)==FONT_H2 &&
+          lv_obj_get_height(cache_row)==SETTINGS_ROW_H,
+          "Artwork Cache must use the same font and row height as other info rows");
+    settings_mpd_cache_values(8,10);
+    check(!strcmp(lv_label_get_text(settings_mpd_cache_count),"8 / 10 (80%)"),
+          "Cache percentage must describe cached albums rather than checked missing images");
+    settings_mpd_cache_values(0,0);
+    check(!strcmp(lv_label_get_text(settings_mpd_cache_count),"0 / 0 (0%)"),
+          "Empty cache progress must remain well defined");
     settings_open((void*)SETTING_ABOUT);pump(200);
-    check(!settings_mpd_cache_count && !settings_mpd_cache_bar,"Leaving MPD settings must clear deleted widget references");
+    check(!settings_mpd_cache_count,"Leaving MPD settings must clear the deleted count reference");
     ui_select_screen(SCR_BLUETOOTH);pump(400);check(g_focus_count>0,"Bluetooth view must retain accessible controls");
     ui_select_screen(SCR_NOW_PLAYING);pump(400);
     for(int i=0;i<5;i++){ui_handle_key(UI_KEY_SCREEN_NEXT);pump(300);}
     check(g_current_screen==SCR_SETTINGS,"Tab navigation must reach Settings while skipping the Bluetooth subpage");
+}
+static void connection_placeholder(void)
+{
+    lv_obj_t *parent=lv_obj_create(lv_screen_active());
+    np_placeholder(parent);
+    lv_obj_t *box=lv_obj_get_child(parent,0);
+    check(box && lv_obj_get_child_count(box)==1,
+          "Waiting for MPD must show only a single connection message");
+    lv_obj_t *label=lv_obj_get_child(box,0);
+    check(!strcmp(lv_label_get_text(label),"Connecting to MPD server"),
+          "An unconfigured connection must use the simple waiting message");
+    check(lv_obj_get_style_text_font(label,0)==FONT_H2 &&
+          lv_color_eq(lv_obj_get_style_text_color(label,0),lv_color_hex(COL_MUTED)),
+          "The connecting message must retain the previous connection-status font and color");
+    lv_obj_delete(parent);
 }
 int main(int argc,char **argv)
 {
@@ -158,6 +181,6 @@ int main(int argc,char **argv)
     lv_display_set_flush_cb(d,flush);
     ui_system_config_t cfg={.theme=argc>1?atoi(argv[1]):0,.brightness=45,.menubar_left=1,.sort_desc=1,.song_sort_desc=1,.fast_scroll_pages=2};
     ui_apply_saved_settings(&cfg);ui_init();pump(600);fixture();
-    albums();artists();songs();playlists();now_playing();settings();
+    albums();artists();songs();playlists();now_playing();settings();connection_placeholder();
     puts("All MPD view actions passed");return 0;
 }

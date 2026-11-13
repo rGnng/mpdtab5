@@ -551,7 +551,12 @@ void app_main(void)
             mpd_state_t state;
             if(g_app_config.iap2_mode && mpd_client_get_state(&state)) {
                 present = state.identified;
-                library_syncing = state.library_syncing;
+                mpd_artwork_status_t artwork;
+                mpd_client_artwork_status(&artwork);
+                /* Keep the existing rotating sync indicator through the whole
+                 * artwork pass, including gaps between individual covers. */
+                library_syncing = state.library_syncing ||
+                    (state.connected && app_config_sd_ready() && artwork.total>artwork.checked);
                 library_state_valid = true;
             }
             if(bsp_display_lock(1000)) {

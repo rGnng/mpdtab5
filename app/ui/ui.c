@@ -4188,13 +4188,13 @@ static void np_placeholder(lv_obj_t * parent)
     else {
         lv_obj_set_flex_flow(box,LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(box,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
-        make_label(box,ICON_MUSIC,&bootstrap_icons_48,COL_ACCENT);
-        make_label(box,"MPD Controller",&inter_40,COL_TEXT);
-        make_label(box,mpd_ui_status,FONT_H2,COL_MUTED);
-        char url[160];
-        snprintf(url,sizeof(url),"Setup at http://%s",g_system_config.wifi_ip[0] ? g_system_config.wifi_ip : "device-ip");
-        make_label(box,url,FONT_GROUP,COL_ACCENT);
-        make_label(box,"Settings and cache: /sdcard/mpd/",FONT_CAPTION,COL_DIM);
+        char text[176]="Connecting to MPD server";
+#ifdef ESP_PLATFORM
+        mpd_config_t config; mpd_client_config(&config);
+        if(config.host[0])
+            snprintf(text,sizeof(text),"Connecting to %s:%u",config.host,config.port);
+#endif
+        make_label(box,text,FONT_H2,COL_MUTED);
     }
 }
 
@@ -7844,7 +7844,7 @@ static lv_obj_t * settings_detail_time_format_value;
 static lv_obj_t * settings_detail_set_time_value;
 static lv_obj_t * settings_detail_ble_value;
 static lv_obj_t * settings_detail_np_battery_value;
-static lv_obj_t * settings_mpd_cache_count, *settings_mpd_cache_state, *settings_mpd_cache_bar;
+static lv_obj_t * settings_mpd_cache_count;
 static lv_obj_t * settings_detail_usb_a_check;
 static lv_obj_t * settings_detail_usb_both_check;
 static lv_obj_t * settings_detail_boot_off_check;
@@ -7913,7 +7913,7 @@ static lv_obj_t * settings_detail_sound_none_check;
 static void settings_clear_detail_widgets(void)
 {
     settings_detail_np_battery_value=NULL;
-    settings_mpd_cache_count=settings_mpd_cache_state=settings_mpd_cache_bar=NULL;
+    settings_mpd_cache_count=NULL;
     settings_detail_time_format_value = NULL;
     settings_detail_set_time_value = NULL;
     settings_detail_ble_value = NULL;
@@ -9048,26 +9048,15 @@ static void settings_update_np_battery(void)
         lv_label_set_text(settings_detail_np_battery_value,text);
 }
 
-static void settings_mpd_cache_values(unsigned cached, unsigned total, unsigned checked,
-                                      const char *status, unsigned missing, unsigned failed)
+static void settings_mpd_cache_values(unsigned cached, unsigned total)
 {
-    if(!settings_mpd_cache_count || !settings_mpd_cache_state || !settings_mpd_cache_bar) return;
+    if(!settings_mpd_cache_count) return;
     if(cached>total) cached=total;
-    if(checked<cached) checked=cached;
-    if(checked>total) checked=total;
-    unsigned percent=total ? checked*100/total : 0;
-    char text[128];
-    snprintf(text,sizeof(text),"%u / %u  (%u%%)",cached,total,percent);
+    unsigned percent=total ? cached*100/total : 0;
+    char text[64];
+    snprintf(text,sizeof(text),"%u / %u (%u%%)",cached,total,percent);
     if(strcmp(lv_label_get_text(settings_mpd_cache_count),text))
         lv_label_set_text(settings_mpd_cache_count,text);
-    int length=snprintf(text,sizeof(text),"%s",status);
-    if(missing && length>0 && (size_t)length<sizeof(text))
-        length+=snprintf(text+length,sizeof(text)-length," · %u without artwork",missing);
-    if(failed && length>0 && (size_t)length<sizeof(text))
-        snprintf(text+length,sizeof(text)-length," · %u failed",failed);
-    if(strcmp(lv_label_get_text(settings_mpd_cache_state),text))
-        lv_label_set_text(settings_mpd_cache_state,text);
-    lv_bar_set_value(settings_mpd_cache_bar,total ? checked*1000/total : 0,LV_ANIM_OFF);
 }
 static void settings_update_mpd_cache(bool force)
 {
@@ -9075,23 +9064,13 @@ static void settings_update_mpd_cache(bool force)
     static uint32_t last;
     if(!force && lv_tick_elaps(last)<250) return;
     last=lv_tick_get();
-    unsigned total=(unsigned)player_library_album_count(),cached=0,checked=0,missing=0,failed=0;
-    const char *status="Desktop preview";
+    unsigned total=(unsigned)player_library_album_count(),cached=0;
 #ifdef ESP_PLATFORM
     mpd_artwork_status_t progress; mpd_client_artwork_status(&progress);
     if(progress.total) total=progress.total;
-    cached=thumb_cache_count(); checked=progress.checked;
-    missing=progress.missing; failed=progress.failed;
-    const char *state=progress.status;
-    status=!strcmp(state,"caching") ? "Caching artwork" :
-        !strcmp(state,"paused") ? "Paused while using Tab5" :
-        !strcmp(state,"waiting") ? "Waiting for idle" :
-        !strcmp(state,"retrying") ? "Waiting to retry" :
-        !strcmp(state,"complete") ? "Cache pass complete" :
-        !strcmp(state,"offline") ? "MPD offline" :
-        !strcmp(state,"no_sd") ? "Insert SD card" : "Loading library";
+    cached=thumb_cache_count();
 #endif
-    settings_mpd_cache_values(cached,total,checked,status,missing,failed);
+    settings_mpd_cache_values(cached,total);
 }
 
 static void settings_tick(void)
@@ -9375,28 +9354,10 @@ static void settings_render_detail(lv_obj_t * parent, bool interactive)
             settings_make_info_row(parent,"Albums",count,FONT_H2,FONT_H2,SETTINGS_ROW_H);
             snprintf(count,sizeof(count),"%d",player_library_track_count());
             settings_make_info_row(parent,"Tracks",count,FONT_H2,FONT_H2,SETTINGS_ROW_H);
-            settings_make_value_row(parent,"Artwork cache","",COL_ACCENT,48,FONT_H2,
-                                    &inter_tabular_20,&settings_mpd_cache_count);
-            lv_obj_t *cache_row=make_row(parent,54);
-            lv_obj_set_flex_flow(cache_row,LV_FLEX_FLOW_COLUMN);
-            lv_obj_set_flex_align(cache_row,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_START,LV_FLEX_ALIGN_START);
-            lv_obj_set_style_pad_left(cache_row,16,0);
-            lv_obj_set_style_pad_right(cache_row,16,0);
-            lv_obj_set_style_pad_row(cache_row,8,0);
-            settings_mpd_cache_state=make_label(cache_row,"",FONT_CAPTION,COL_MUTED);
-            lv_obj_set_width(settings_mpd_cache_state,LV_PCT(100));
-            lv_label_set_long_mode(settings_mpd_cache_state,LV_LABEL_LONG_DOT);
-            settings_mpd_cache_bar=lv_bar_create(cache_row);
-            lv_obj_set_size(settings_mpd_cache_bar,LV_PCT(100),8);
-            lv_obj_set_style_radius(settings_mpd_cache_bar,0,LV_PART_MAIN);
-            lv_obj_set_style_radius(settings_mpd_cache_bar,0,LV_PART_INDICATOR);
-            lv_obj_set_style_bg_color(settings_mpd_cache_bar,lv_color_hex(COL_BORDER),LV_PART_MAIN);
-            lv_obj_set_style_bg_color(settings_mpd_cache_bar,lv_color_hex(COL_ACCENT),LV_PART_INDICATOR);
-            lv_bar_set_range(settings_mpd_cache_bar,0,1000);
+            lv_obj_t *cache_row=settings_make_info_row(parent,"Artwork Cache","",
+                FONT_H2,FONT_H2,SETTINGS_ROW_H);
+            settings_mpd_cache_count=lv_obj_get_child(cache_row,-1);
             settings_update_mpd_cache(true);
-            snprintf(address,sizeof(address),"http://%s",g_system_config.wifi_ip);
-            settings_make_info_row(parent,"Configure in browser",address,FONT_H2,FONT_H2,SETTINGS_ROW_H);
-            settings_make_info_row(parent,"Storage","/sdcard/mpd/",FONT_H2,FONT_H2,SETTINGS_ROW_H);
             break;
         }
         case SETTING_BLUETOOTH: {

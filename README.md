@@ -45,11 +45,17 @@ input starts a background pass over the remaining albums. Input pauses the pass,
 covers survive reboots; missing images are skipped until a library rescan.
 Other image formats currently use the UI's fallback artwork.
 
-Both **Settings → MPD Server** on the Tab5 and the web interface show a live
-progress bar, cached albums / total, missing or failed images, and whether the
-pass is caching, waiting for idle, paused by input, or complete. Covers update
-in place without rebuilding the album list. MPD keeps the growing thumbnail pack on SD,
-using bounded row caches in RAM. **Resync library** retries skipped albums.
+**Settings → MPD Server** on the Tab5 shows one **Artwork Cache** row with
+`cached / total (percentage)`, styled like the other settings rows. The clock
+area uses the original rotating sync icon while the library or artwork cache
+pass is in progress. While disconnected, the Tab5 shows only
+`Connecting to <host>:<port>` in the normal connection-message style. The web
+interface retains its detailed progress bar, missing/failed counts, and
+paused/active/completed states.
+
+Covers update in place without rebuilding the album list. MPD keeps the growing
+thumbnail pack on SD, using bounded row caches in RAM. **Resync library** retries
+skipped albums.
 This follows the idle caching approach in
 [rGnng/headunit](https://github.com/rGnng/headunit), while retaining the original
 Tab5 list's two-cover / 4 ms loading budget after scrolling stops.
