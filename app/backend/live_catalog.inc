@@ -875,8 +875,8 @@ bool player_library_poll(void)
     {
         cache_revision = current;
         live_covers();
-        live_revision++;
-        live_publish = true;
+        /* Artwork has its own revision. Publishing a catalog change here
+         * rebuilds every visible row and interrupts a running scroll. */
     }
 #endif
     live_save();

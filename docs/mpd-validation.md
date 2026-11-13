@@ -24,20 +24,22 @@ Validated on 2026-11-13 against the Tab5 and Tracks' MPD server, with ESP-IDF
 - Tolerate multiline metadata and blank response lines emitted by Tracks.
   Paused and empty playback no longer tear down the protocol connection.
 - Clip metadata on complete UTF-8 code points so long Japanese/emoji tags remain
-  valid in LVGL and JSON. Move URI strings to `sdcard://mpd/uris.bin` rather
+  valid in LVGL and JSON. Move URI strings to `/sdcard/mpd/uris.bin` rather
   than reserving a fixed 3 MiB PSRAM pool.
 - Restore local stars after catalog rebuilds. Populate Now Playing's catalog
   artist relationship and open the correct detail for Go to Album/Artist.
 
 ## Automated checks
 
-**99 tests passed:**
+**131 tests passed:**
 
-- 54 MPD protocol, model, firmware snapshot and Chromium setup-form tests.
+- 66 MPD protocol, model, firmware snapshot, artwork scheduler/transfer, and
+  Chromium setup/progress tests.
 - 21 headless LVGL integration tests, including every MPD view/action in Gray,
   Aqua and Windows 95, context navigation, and empty/stopped Now Playing.
 - 18 live catalog persistence/reconciliation tests.
 - 6 indexed library membership/performance tests.
+- 13 album scroll/idle/batch-budget tests and 7 persistent thumbnail identity/RAM-policy tests.
 
 Playback-list checks cover sorted Songs, album/artist Play and Play From Here,
 700-track selections, duplicate playlist occurrences, local stars, queue jumps,
@@ -59,6 +61,15 @@ seek, play/pause, and shuffle/repeat/mute command semantics.
   user's live queue.
 - Two simultaneous Chromium tabs loaded the embedded web interface without
   JavaScript errors or failed requests. Original sort preferences were restored.
+- Idle artwork caching fetched previously unplayed albums from Tracks. More
+  than 500 cached album covers survived OTA/reboot, and the visible Albums
+  list rendered their thumbnails after restart.
+- Inspected Settings → MPD Server and the web page with live artwork progress.
+  The counter continued advancing while the catalog revision stayed unchanged;
+  cover arrivals no longer rebuild or reorder the page.
+- Kept the growing MPD thumbnail pack on SD instead of preloading it into RAM.
+  The final warm boot retained over 5 MiB free PSRAM after library import, and
+  full device screenshots succeeded alongside background caching.
 
 Run `python3 tools/audit_mpd_views.py --screenshots` to repeat the read-only view
 checks. The bounded `/api/library` endpoint exposes model snapshots for the same
@@ -66,8 +77,19 @@ views. Reports/screenshots stay under `/tmp/mpd-view-audit/` by default.
 
 Physical Bluetooth input still depends on the controller being awake; its
 paired entry and rendered settings were checked, but a physical BLE link was
-not available during this audit. Album thumbnails are filled when artwork is
-retrieved; uncached albums retain their fallback tiles.
+not available during this audit.
+
+Artwork now has a separate MPD worker and persistent album-PID caches under
+`/sdcard/mpd/lib/<server-id>/covers/`. Visible albums load after the 140 ms
+scroll-stop delay, then a whole-library pass starts after three seconds without
+input. New thumbnails update placeholders without publishing catalog changes
+or rebuilding the page. The original two-cover/4 ms list loading budget remains
+in place. `tests/test_mpd_artwork.py` checks visible priority, idle delays,
+warm-cache reuse, retry/absence behavior, chunk cancellation, and stale server
+and track identities against production code and a socket peer. `/api/status`
+reports `artwork_cached` and pass progress in `artwork`; album snapshots include
+`cover_cached`. The Tab5's Settings → MPD Server page and the web interface
+show live cache counts, progress, and paused/active/completed states.
 
 Final verified ELF SHA-256:
-`b48395630c5029d4d8f43d6d2c9280e8e8c7975b5f5f1d8c20c164417602f9ea`.
+`d2ff3678f3dbe3d6d229211526b68ec36035cdff24cec601ce132ad79b5795cb`.

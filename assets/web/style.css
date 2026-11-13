@@ -221,3 +221,8 @@ pre {
   .chips { min-width: 0; }
   .metrics { gap: 8px; }
 }
+
+.cache-status { margin: 14px 0; }
+.cache-heading { display: flex; justify-content: space-between; gap: 12px; color: var(--text-2); }
+#artwork_state { color: var(--text-3); text-align: right; }
+#artwork_progress { display: block; width: 100%; height: 8px; margin-top: 8px; accent-color: var(--ok); }

@@ -37,6 +37,7 @@
 #include "lockdown_client.h"
 #include "afc_client.h"
 #include "mpd_client.h"
+#include "thumb_cache.h"
 #include "debug_log.h"
 #include "display_diag.h"
 
@@ -734,7 +735,7 @@ static esp_err_t mpd_post(httpd_req_t *req)
     if(password) strcpy(c.password,password->valuestring);
     esp_err_t result=mpd_client_configure(&c); cJSON_Delete(j);
     if(result==ESP_ERR_INVALID_ARG) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Invalid hostname or password characters");
-    if(result!=ESP_OK) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Cannot save sdcard://mpd/server.json; check SD card");
+    if(result!=ESP_OK) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Cannot save /sdcard/mpd/server.json; check SD card");
     return mpd_get(req);
 }
 
@@ -1296,6 +1297,8 @@ static esp_err_t library_get(httpd_req_t *req)
             cJSON_AddNumberToObject(item,"year",a.year);
             cJSON_AddNumberToObject(item,"date_added",a.date_added);
             cJSON_AddNumberToObject(item,"tracks",a.track_count);
+            cJSON_AddBoolToObject(item,"cover_cached",a.cover_index>PLAYER_REAL_COVER_BASE &&
+                thumb_cache_has(a.cover_index-PLAYER_REAL_COVER_BASE));
         } else if(kind==1) {
             player_artist_t a;
             if(!player_artist_get(i,&a)) continue;
@@ -1392,7 +1395,16 @@ static esp_err_t status_get(httpd_req_t * req)
     mpd_config_t mpd_cfg; mpd_client_config(&mpd_cfg);
     cJSON_AddStringToObject(root,"mpd_host",mpd_cfg.host);
     cJSON_AddNumberToObject(root,"mpd_port",mpd_cfg.port);
-    cJSON_AddStringToObject(root,"storage_root","sdcard://mpd/");
+    cJSON_AddStringToObject(root,"storage_root","/sdcard/mpd/");
+    cJSON_AddNumberToObject(root,"artwork_cached",thumb_cache_count());
+    cJSON_AddNumberToObject(root,"artwork_revision",thumb_cache_revision());
+    mpd_artwork_status_t artwork; mpd_client_artwork_status(&artwork);
+    cJSON *artwork_json=cJSON_AddObjectToObject(root,"artwork");
+    cJSON_AddNumberToObject(artwork_json,"total",artwork.total);
+    cJSON_AddNumberToObject(artwork_json,"checked",artwork.checked);
+    cJSON_AddNumberToObject(artwork_json,"missing",artwork.missing);
+    cJSON_AddNumberToObject(artwork_json,"failed",artwork.failed);
+    cJSON_AddStringToObject(artwork_json,"state",artwork.status);
     mpd_state_t iap2;
     if(mpd_client_get_state(&iap2)) {
         cJSON_AddNumberToObject(root,"mpd_volume",iap2.volume);

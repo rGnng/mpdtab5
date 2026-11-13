@@ -136,6 +136,15 @@ static void settings(void)
     }
     settings_open((void*)SETTING_AFC_IAP2);pump(200);
     check(!strcmp(settings_names[SETTING_AFC_IAP2],"MPD Server"),"First settings pane must describe MPD");
+    check(settings_mpd_cache_count && settings_mpd_cache_state && settings_mpd_cache_bar,
+          "MPD Server must show live artwork cache progress");
+    settings_mpd_cache_values(8,10,10,"Cache pass complete",2,0);
+    check(strstr(lv_label_get_text(settings_mpd_cache_count),"8 / 10") &&
+          strstr(lv_label_get_text(settings_mpd_cache_count),"100%"),"Cache counts must include checked missing albums");
+    check(lv_bar_get_value(settings_mpd_cache_bar)==1000,"Completed cache pass must fill the progress bar");
+    check(strstr(lv_label_get_text(settings_mpd_cache_state),"2 without artwork"),"Cache state must explain missing covers");
+    settings_open((void*)SETTING_ABOUT);pump(200);
+    check(!settings_mpd_cache_count && !settings_mpd_cache_bar,"Leaving MPD settings must clear deleted widget references");
     ui_select_screen(SCR_BLUETOOTH);pump(400);check(g_focus_count>0,"Bluetooth view must retain accessible controls");
     ui_select_screen(SCR_NOW_PLAYING);pump(400);
     for(int i=0;i<5;i++){ui_handle_key(UI_KEY_SCREEN_NEXT);pump(300);}

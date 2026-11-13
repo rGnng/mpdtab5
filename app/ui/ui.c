@@ -322,6 +322,9 @@ bool ui_screen_is_on(void) { return !g_screen_idle.off; }
 
 bool ui_user_activity(void)
 {
+#ifdef ESP_PLATFORM
+    mpd_client_artwork_pause();
+#endif
     bool was_on = ui_screen_is_on();
     bool woke = screen_idle_activity(&g_screen_idle, lv_tick_get());
     ui_screen_apply(was_on);
@@ -1555,7 +1558,13 @@ static const lv_image_dsc_t * real_cover_for_album(uint16_t id)
     }
 
     char path[128];
-    snprintf(path, sizeof(path), "%s/%u.cov", s_artwork_dir, (unsigned)id);
+#ifdef ESP_PLATFORM
+    if(mpd_client_is_enabled())
+        snprintf(path, sizeof(path), "%s/%llu.cov", s_artwork_dir,
+                 (unsigned long long)thumb_cache_pid(id));
+    else
+#endif
+        snprintf(path, sizeof(path), "%s/%u.cov", s_artwork_dir, (unsigned)id);
     FILE * f = fopen(path, "rb");
     if(f == NULL) return NULL;
     size_t n = fread(real_cover_buf, 1, one, f);
@@ -4185,7 +4194,7 @@ static void np_placeholder(lv_obj_t * parent)
         char url[160];
         snprintf(url,sizeof(url),"Setup at http://%s",g_system_config.wifi_ip[0] ? g_system_config.wifi_ip : "device-ip");
         make_label(box,url,FONT_GROUP,COL_ACCENT);
-        make_label(box,"Settings and cache: sdcard://mpd/",FONT_CAPTION,COL_DIM);
+        make_label(box,"Settings and cache: /sdcard/mpd/",FONT_CAPTION,COL_DIM);
     }
 }
 
@@ -4945,6 +4954,9 @@ static void albums_scroll_cb(lv_event_t * event)
     LV_UNUSED(event);
     if(albums_left_list == NULL) return;
     albums_last_scroll_tick = lv_tick_get();
+#ifdef ESP_PLATFORM
+    mpd_client_artwork_pause();
+#endif
     albums_schedule_refresh();
     albums_schedule_covers();
 }
@@ -7832,6 +7844,7 @@ static lv_obj_t * settings_detail_time_format_value;
 static lv_obj_t * settings_detail_set_time_value;
 static lv_obj_t * settings_detail_ble_value;
 static lv_obj_t * settings_detail_np_battery_value;
+static lv_obj_t * settings_mpd_cache_count, *settings_mpd_cache_state, *settings_mpd_cache_bar;
 static lv_obj_t * settings_detail_usb_a_check;
 static lv_obj_t * settings_detail_usb_both_check;
 static lv_obj_t * settings_detail_boot_off_check;
@@ -7900,6 +7913,7 @@ static lv_obj_t * settings_detail_sound_none_check;
 static void settings_clear_detail_widgets(void)
 {
     settings_detail_np_battery_value=NULL;
+    settings_mpd_cache_count=settings_mpd_cache_state=settings_mpd_cache_bar=NULL;
     settings_detail_time_format_value = NULL;
     settings_detail_set_time_value = NULL;
     settings_detail_ble_value = NULL;
@@ -9034,10 +9048,57 @@ static void settings_update_np_battery(void)
         lv_label_set_text(settings_detail_np_battery_value,text);
 }
 
+static void settings_mpd_cache_values(unsigned cached, unsigned total, unsigned checked,
+                                      const char *status, unsigned missing, unsigned failed)
+{
+    if(!settings_mpd_cache_count || !settings_mpd_cache_state || !settings_mpd_cache_bar) return;
+    if(cached>total) cached=total;
+    if(checked<cached) checked=cached;
+    if(checked>total) checked=total;
+    unsigned percent=total ? checked*100/total : 0;
+    char text[128];
+    snprintf(text,sizeof(text),"%u / %u  (%u%%)",cached,total,percent);
+    if(strcmp(lv_label_get_text(settings_mpd_cache_count),text))
+        lv_label_set_text(settings_mpd_cache_count,text);
+    int length=snprintf(text,sizeof(text),"%s",status);
+    if(missing && length>0 && (size_t)length<sizeof(text))
+        length+=snprintf(text+length,sizeof(text)-length," · %u without artwork",missing);
+    if(failed && length>0 && (size_t)length<sizeof(text))
+        snprintf(text+length,sizeof(text)-length," · %u failed",failed);
+    if(strcmp(lv_label_get_text(settings_mpd_cache_state),text))
+        lv_label_set_text(settings_mpd_cache_state,text);
+    lv_bar_set_value(settings_mpd_cache_bar,total ? checked*1000/total : 0,LV_ANIM_OFF);
+}
+static void settings_update_mpd_cache(bool force)
+{
+    if(!settings_mpd_cache_count) return;
+    static uint32_t last;
+    if(!force && lv_tick_elaps(last)<250) return;
+    last=lv_tick_get();
+    unsigned total=(unsigned)player_library_album_count(),cached=0,checked=0,missing=0,failed=0;
+    const char *status="Desktop preview";
+#ifdef ESP_PLATFORM
+    mpd_artwork_status_t progress; mpd_client_artwork_status(&progress);
+    if(progress.total) total=progress.total;
+    cached=thumb_cache_count(); checked=progress.checked;
+    missing=progress.missing; failed=progress.failed;
+    const char *state=progress.status;
+    status=!strcmp(state,"caching") ? "Caching artwork" :
+        !strcmp(state,"paused") ? "Paused while using Tab5" :
+        !strcmp(state,"waiting") ? "Waiting for idle" :
+        !strcmp(state,"retrying") ? "Waiting to retry" :
+        !strcmp(state,"complete") ? "Cache pass complete" :
+        !strcmp(state,"offline") ? "MPD offline" :
+        !strcmp(state,"no_sd") ? "Insert SD card" : "Loading library";
+#endif
+    settings_mpd_cache_values(cached,total,checked,status,missing,failed);
+}
+
 static void settings_tick(void)
 {
     if(g_current_screen != SCR_SETTINGS || settings_detail_dirty ||
        settings_right_content == NULL) return;
+    if(settings_selected==SETTING_AFC_IAP2) settings_update_mpd_cache(false);
     if(settings_selected==SETTING_ABOUT) settings_update_np_battery();
     if(settings_selected==SETTING_FAST_SCROLL) settings_update_fast_scroll_checks();
     if(settings_selected == SETTING_SCREEN) {
@@ -9314,9 +9375,28 @@ static void settings_render_detail(lv_obj_t * parent, bool interactive)
             settings_make_info_row(parent,"Albums",count,FONT_H2,FONT_H2,SETTINGS_ROW_H);
             snprintf(count,sizeof(count),"%d",player_library_track_count());
             settings_make_info_row(parent,"Tracks",count,FONT_H2,FONT_H2,SETTINGS_ROW_H);
+            settings_make_value_row(parent,"Artwork cache","",COL_ACCENT,48,FONT_H2,
+                                    &inter_tabular_20,&settings_mpd_cache_count);
+            lv_obj_t *cache_row=make_row(parent,54);
+            lv_obj_set_flex_flow(cache_row,LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_flex_align(cache_row,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_START,LV_FLEX_ALIGN_START);
+            lv_obj_set_style_pad_left(cache_row,16,0);
+            lv_obj_set_style_pad_right(cache_row,16,0);
+            lv_obj_set_style_pad_row(cache_row,8,0);
+            settings_mpd_cache_state=make_label(cache_row,"",FONT_CAPTION,COL_MUTED);
+            lv_obj_set_width(settings_mpd_cache_state,LV_PCT(100));
+            lv_label_set_long_mode(settings_mpd_cache_state,LV_LABEL_LONG_DOT);
+            settings_mpd_cache_bar=lv_bar_create(cache_row);
+            lv_obj_set_size(settings_mpd_cache_bar,LV_PCT(100),8);
+            lv_obj_set_style_radius(settings_mpd_cache_bar,0,LV_PART_MAIN);
+            lv_obj_set_style_radius(settings_mpd_cache_bar,0,LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(settings_mpd_cache_bar,lv_color_hex(COL_BORDER),LV_PART_MAIN);
+            lv_obj_set_style_bg_color(settings_mpd_cache_bar,lv_color_hex(COL_ACCENT),LV_PART_INDICATOR);
+            lv_bar_set_range(settings_mpd_cache_bar,0,1000);
+            settings_update_mpd_cache(true);
             snprintf(address,sizeof(address),"http://%s",g_system_config.wifi_ip);
             settings_make_info_row(parent,"Configure in browser",address,FONT_H2,FONT_H2,SETTINGS_ROW_H);
-            settings_make_info_row(parent,"Storage","sdcard://mpd/",FONT_H2,FONT_H2,SETTINGS_ROW_H);
+            settings_make_info_row(parent,"Storage","/sdcard/mpd/",FONT_H2,FONT_H2,SETTINGS_ROW_H);
             break;
         }
         case SETTING_BLUETOOTH: {
@@ -10609,6 +10689,50 @@ static bool ui_apply_theme(void)
 /* -------------------------------------------------------------------------
  * Public entry point
  * ------------------------------------------------------------------------- */
+#ifdef ESP_PLATFORM
+static void ui_mpd_artwork_tick(void)
+{
+    bool scrolling=g_current_screen==SCR_ALBUMS && albums_left_list &&
+        (lv_obj_is_scrolling(albums_left_list) ||
+         lv_tick_elaps(albums_last_scroll_tick)<ALBUMS_COVER_IDLE_MS);
+    bool active=scrolling ||
+        (g_touch_indev && lv_indev_get_state(g_touch_indev)==LV_INDEV_STATE_PRESSED) ||
+        lv_display_get_inactive_time(NULL)<ALBUMS_COVER_IDLE_MS;
+    uint64_t visible[ALBUMS_POOL]; unsigned count=0;
+    if(!active && g_current_screen==SCR_ALBUMS && albums_left_list) {
+        for(int slot=0;slot<ALBUMS_POOL;slot++) {
+            player_album_t album;
+            if(albums_row_visible[slot] && player_album_get(albums_row_indices[slot],&album) &&
+               album.id==albums_row_album_ids[slot]) visible[count++]=album.album_pid;
+        }
+    }
+    mpd_client_artwork_view(visible,count,active);
+    static uint32_t revision;
+    uint32_t current=thumb_cache_revision();
+    if(revision==current || active) return;
+    revision=current;
+    if(g_current_screen!=SCR_ALBUMS || !albums_left_list) return;
+    /* Existing descriptors remain valid. Only placeholders need work; use the
+     * original idle/batch timer to read the newly available thumbnails. */
+    for(int slot=0;slot<ALBUMS_POOL;slot++) {
+        player_album_t album;
+        if(albums_row_visible[slot] &&
+           lv_image_get_src(albums_row_covers[slot])==NULL &&
+           player_album_get(albums_row_indices[slot],&album) &&
+           album.id==albums_row_album_ids[slot] && !album_thumb_missing(&album)) {
+            albums_row_cover_pending[slot]=true;
+            albums_row_cover_attempts[slot]=0;
+            albums_row_cover_attempt_tick[slot]=0;
+        }
+    }
+    albums_schedule_covers();
+    player_album_t selected;
+    if(player_album_get(albums_selected,&selected) && !album_thumb_missing(&selected) &&
+       detail_thumb_slot.id!=selected.cover_index-PLAYER_REAL_COVER_BASE)
+        albums_schedule_detail();
+}
+#endif
+
 static void ui_library_tick_cb(lv_timer_t *timer)
 {
     LV_UNUSED(timer);
@@ -10637,6 +10761,9 @@ static void ui_library_tick_cb(lv_timer_t *timer)
     if(player_playlist_get(playlists_selected,&previous_playlist))
         snprintf(playlist_name,sizeof(playlist_name),"%s",previous_playlist.name);
     bool library_changed=player_library_poll();
+#ifdef ESP_PLATFORM
+    ui_mpd_artwork_tick();
+#endif
     bool album_order_changed=library_changed || g_album_sort_dirty;
     bool song_order_changed=library_changed || g_song_sort_dirty;
     if(!library_changed && !g_album_sort_dirty && !g_song_sort_dirty) return;

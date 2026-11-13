@@ -37,7 +37,7 @@ class SetupFormTest(unittest.TestCase):
             return
         fixtures={
             '/api/mpd':{'host':'music.local','port':6601,'password_set':True},
-            '/api/status':{'mpd_status':'MPD connected','mpd_host':'music.local','mpd_port':6601,'mpd_connected':True,'sd_ready':True,'mpd_volume':45,'catalog':{'albums':2,'tracks':4},'storage_root':'sdcard://mpd/'},
+            '/api/status':{'mpd_status':'MPD connected','mpd_host':'music.local','mpd_port':6601,'mpd_connected':True,'sd_ready':True,'mpd_volume':45,'catalog':{'albums':2,'tracks':4},'storage_root':'/sdcard/mpd/'},
             '/api/config':{'volume':65,'brightness':70},'/api/power':{},
         }
         if path in fixtures:
@@ -68,5 +68,30 @@ class SetupFormTest(unittest.TestCase):
         self.assertEqual(self.posts,[])
         self.page.locator('#mpd_port').fill('6600')
         self.assertEqual(self.submit()['host'],'')
+
+    def test_cache_progress_and_activity_states(self):
+        for state,label in [('caching','Caching artwork'),('paused','Paused while using Tab5'),
+                            ('waiting','Waiting for idle'),('retrying','Waiting to retry'),
+                            ('offline','MPD offline'),('library','Loading library'),('no_sd','Insert SD card')]:
+            self.page.evaluate("""state => renderArtwork({artwork_cached:12,
+                artwork:{total:100,checked:15,missing:2,failed:1,state:state}}, {})""",state)
+            self.assertEqual(self.page.locator('#artwork_state').inner_text(),label)
+            self.assertEqual(self.page.locator('#artwork_progress').get_attribute('value'),'15')
+            self.assertIn('12 / 100 albums cached',self.page.locator('#artwork_counts').inner_text())
+            self.assertIn('15% checked',self.page.locator('#artwork_counts').inner_text())
+    def test_completed_cache_pass_counts_missing_images(self):
+        self.page.evaluate("""renderArtwork({artwork_cached:8,
+            artwork:{total:10,checked:10,missing:2,state:'complete'}}, {})""")
+        self.assertEqual(self.page.locator('#artwork_state').inner_text(),'Cache pass complete')
+        self.assertEqual(self.page.locator('#artwork_progress').get_attribute('value'),'10')
+        self.assertIn('8 / 10 albums cached · 100% checked · 2 without supported artwork',
+                      self.page.locator('#artwork_counts').inner_text())
+    def test_storage_uses_firmware_path_and_empty_library_has_finite_progress(self):
+        self.assertIn('/sdcard/mpd/',self.page.locator('#library').inner_text())
+        self.assertNotIn('sdcard://',self.page.locator('#library').inner_text())
+        self.page.evaluate("renderArtwork({artwork_cached:0,artwork:{total:0,state:'library'}}, {})")
+        self.assertEqual(self.page.locator('#artwork_progress').get_attribute('max'),'1')
+        self.assertEqual(self.page.locator('#artwork_progress').get_attribute('value'),'0')
+        self.assertIn('0%',self.page.locator('#artwork_counts').inner_text())
 
 if __name__=='__main__': unittest.main()

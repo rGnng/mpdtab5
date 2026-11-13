@@ -52,9 +52,10 @@ static inline void xSemaphoreGiveRecursive(SemaphoreHandle_t m) {pthread_mutex_u
 ''',
             'freertos/task.h': '''#pragma once
 static inline void vTaskDelete(void *p) {(void)p;}
+extern unsigned preload_requests;
 static inline int xTaskCreateWithCaps(void (*fn)(void*),const char *name,int stack,void *arg,
     int priority,void *handle,int caps) {
-    (void)fn;(void)name;(void)stack;(void)arg;(void)priority;(void)handle;(void)caps;return 0;
+    (void)fn;(void)name;(void)stack;(void)arg;(void)priority;(void)handle;(void)caps;preload_requests++;return 0;
 }
 ''',
             'app_config.h': '''#pragma once
@@ -74,6 +75,8 @@ const char *app_config_artwork_dir(void);
 #include <stdio.h>
 #include "thumb_cache.h"
 static char library[128],directory[256],covers[256];
+unsigned preload_requests;
+unsigned test_preload_requests(void) { return preload_requests; }
 bool app_config_sd_ready(void) {return true;}
 const char *app_config_library_id(void) {return library;}
 const char *app_config_library_dir(void) {return directory;}
@@ -197,3 +200,27 @@ void setup(const char *dir,const char *id) {
         with ThreadPoolExecutor(max_workers=3) as executor:
             for future in [executor.submit(writer),executor.submit(reader),executor.submit(reader)]:
                 future.result()
+
+    def test_mpd_pack_stays_on_sd_while_iap2_preload_remains_available(self):
+        self.lib.setup(str(self.root).encode(),b'MPD-test')
+        self.assertEqual(self.lib.thumb_cache_open(0),0)
+        slot=self.lib.thumb_cache_slot(123,True)
+        pixels=(C.c_uint8*THUMB)(*([17]*THUMB))
+        self.assertEqual(self.lib.thumb_cache_write(slot,pixels),0)
+        before=self.lib.test_preload_requests()
+        self.lib.thumb_cache_preload()
+        self.assertEqual(self.lib.test_preload_requests(),before)
+        output=(C.c_uint8*THUMB)()
+        self.assertTrue(self.lib.thumb_cache_read(slot,output))
+        self.assertEqual(bytes(output),bytes(pixels))
+        self.lib.setup(str(self.root).encode(),b'MPD-test')
+        self.assertEqual(self.lib.thumb_cache_open(0),0)
+        self.lib.thumb_cache_preload()
+        self.assertEqual(self.lib.test_preload_requests(),before)
+        # An existing iAP2 namespace retains its original preload path.
+        other=self.root/'iap2';other.mkdir()
+        self.lib.setup(str(other).encode(),b'A')
+        self.assertEqual(self.lib.thumb_cache_open(0),0)
+        self.lib.thumb_cache_slot(456,True)
+        self.lib.thumb_cache_preload()
+        self.assertEqual(self.lib.test_preload_requests(),before+1)

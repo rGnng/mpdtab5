@@ -64,6 +64,9 @@ static bool remote_repeat, remote_single;
 static int muted_volume=50;
 static char current_uri[2048];
 static char library_id[64];
+static void artwork_register(uint64_t album, uint64_t track);
+static void artwork_reset(void);
+static void artwork_step(uint32_t generation);
 
 typedef enum { CMD_TEXT, CMD_PLAY, CMD_ALL, CMD_JUMP } command_kind_t;
 typedef struct {
@@ -276,10 +279,16 @@ static bool song_finish(song_parser_t *p) {
     p->item.fields=PLAYER_MEDIA_MPD|(1u<<1)|(1u<<4)|(1u<<5)|(1u<<6)|(1u<<7)|(1u<<9)|(1u<<12)|(1u<<14);
     if(p->library) {
         if(!uri_insert(p->uri)) return false;
+#ifdef ESP_PLATFORM
+        artwork_register(p->item.album_pid,p->item.pid);
+#endif
         player_library_update(&p->item);
     }
     if(p->stored && !uri_lookup(p->item.pid)) {
         if(!uri_insert(p->uri)) return false;
+#ifdef ESP_PLATFORM
+        artwork_register(p->item.album_pid,p->item.pid);
+#endif
         player_library_update(&p->item);
     }
     if(p->queue) {
@@ -289,6 +298,9 @@ static bool song_finish(song_parser_t *p) {
         /* Queue-only streams have real metadata and remain selectable. */
         if(!uri_lookup(p->item.pid)) {
             if(!uri_insert(p->uri)) return false;
+#ifdef ESP_PLATFORM
+            artwork_register(p->item.album_pid,p->item.pid);
+#endif
             player_library_update(&p->item);
         }
     }
@@ -349,6 +361,9 @@ static bool sync_library(void) {
     if(!uri_store) { message("Cannot create MPD URI cache on SD"); return false; }
 #endif
     take(); state.library_syncing=true; state.revision++; give();
+#ifdef ESP_PLATFORM
+    artwork_reset();
+#endif
     player_library_reset();
     memset(uri_slots,0,URI_SLOTS*sizeof(*uri_slots)); uri_count=uri_used=0;
     song_parser_t *p=calloc(1,sizeof(*p));
@@ -455,33 +470,7 @@ static bool art_binary(const void *data,size_t len,void *ctx) {
     if(fwrite(data,1,len,t->file)!=len) return false;
     t->received+=len; t->chunk+=len; return true;
 }
-static void fetch_art(uint64_t album_pid) {
-    if(!app_config_sd_ready() || !current_uri[0]) return;
-    char path[192],quoted[4100],cmd[4160];
-    snprintf(path,sizeof(path),"%s/current.tmp",app_config_artwork_dir());
-    if(!mpd_quote(quoted,sizeof(quoted),current_uri)) return;
-    bool complete=false;
-    for(int mode=0;mode<2 && wire.fd>=0 && !complete;mode++) {
-        FILE *f=fopen(path,"wb"); if(!f) return;
-        art_transfer_t t={.file=f};
-        do {
-            t.chunk=0;
-            snprintf(cmd,sizeof(cmd),"%s %s %u",mode ? "albumart" : "readpicture",quoted,t.received);
-            if(!mpd_wire_command(&wire,cmd,art_field,art_binary,&t)) break;
-            if(t.total && t.received==t.total) { complete=true; break; }
-        } while(t.chunk);
-        if(fclose(f)!=0) complete=false;
-    }
-    if(complete) {
-        uint8_t *pixels=heap_caps_malloc(ART_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-        if(pixels && jpeg_thumbnail_decode(path,pixels,360)) {
-            take(); memcpy(art,pixels,ART_BYTES); art_valid=true; art_revision++; give();
-            thumb_cache_capture(app_config_library_id(),album_pid,pixels);
-        }
-        free(pixels);
-    }
-    remove(path);
-}
+#include "mpd_artwork.inc"
 static bool play_selection(const uint64_t *keys,int count,int start) {
     /* Validate before touching the existing server queue. */
     if(!keys || count<=0 || start<0 || start>=count) return false;
@@ -602,7 +591,7 @@ static void worker_task(void *arg) {
         player_library_select(library_id);
         /* UI processes the namespace switch before queued database records. */
         bool ok=poll_state() && sync_library() && sync_playlists();
-        uint64_t art_key=0;
+
         int loops=0; last_playlist=-1;
         int64_t next_event_retry=esp_timer_get_time()+30000000;
         while(ok && !generation_changed(generation)) {
@@ -630,12 +619,6 @@ static void worker_task(void *arg) {
                 else if(!sync_queue()) { ok=false; break; }
                 last_playlist=mpd_playlist_version;
             }
-            mpd_state_t s={0}; mpd_client_get_state(&s);
-            if(s.track_key!=art_key) {
-                take(); art_valid=false; art_revision++; give();
-                art_key=s.track_key;
-                fetch_art(s.album_pid);
-            }
             take(); bool requested=rescan; rescan=false; uint8_t held=hold_bit; give();
             if(held) simple(held==11 ? "seekcur -5" : "seekcur +5");
             if(requested || (event_flags&1)) {
@@ -655,6 +638,7 @@ static void worker_task(void *arg) {
             }
             for(int n=0;n<10 && !generation_changed(generation);n++) {
                 if(uxQueueMessagesWaiting(commands)) break;
+                artwork_step(generation);
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
         }
@@ -671,6 +655,7 @@ esp_err_t mpd_client_start(void) {
     queue_keys=heap_caps_calloc(QUEUE_LIMIT,sizeof(*queue_keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     art=heap_caps_malloc(ART_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!uris || !uri_slots || !queue_ids || !queue_keys || !art) { message("Not enough memory for MPD"); return ESP_ERR_NO_MEM; }
+    if(!artwork_start()) return ESP_ERR_NO_MEM;
     if(xTaskCreateWithCaps(worker_task,"mpd",32768,NULL,3,&worker,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS) return ESP_ERR_NO_MEM;
     return ESP_OK;
 }

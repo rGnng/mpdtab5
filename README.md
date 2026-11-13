@@ -13,7 +13,7 @@ runs on **your MPD server's audio output**. The Tab5 is a remote control.
 
 1. Boot with an SD card inserted. Existing Wi-Fi credentials can be imported
    from the previous firmware's NVS backup. Otherwise put the SSID and password
-   on separate lines in `sdcard://mpd/wifi.txt`.
+   on separate lines in `/sdcard/mpd/wifi.txt`.
 2. Open the address shown on the Tab5, or your forwarded
    [web interface](http://127.0.0.1:10082/).
 3. Under **MPD Server**, enter a hostname/IP, port (normally `6600`), and optional
@@ -35,9 +35,28 @@ are preserved when the web password field is left blank; **Clear saved password*
 removes one. Passwords are stored in the SD configuration and omitted from API
 responses.
 
+## Album artwork
+
+JPEG embedded/external artwork is cached as 360×360 RGB565 covers under
+`/sdcard/mpd/lib/<server-id>/covers/`, with packed list thumbnails alongside the
+library catalog. A dedicated artwork connection gives Now Playing and visible
+albums priority after scrolling has stopped for 140 ms. Three seconds without
+input starts a background pass over the remaining albums. Input pauses the pass, and partial downloads are discarded. Cached
+covers survive reboots; missing images are skipped until a library rescan.
+Other image formats currently use the UI's fallback artwork.
+
+Both **Settings → MPD Server** on the Tab5 and the web interface show a live
+progress bar, cached albums / total, missing or failed images, and whether the
+pass is caching, waiting for idle, paused by input, or complete. Covers update
+in place without rebuilding the album list. MPD keeps the growing thumbnail pack on SD,
+using bounded row caches in RAM. **Resync library** retries skipped albums.
+This follows the idle caching approach in
+[rGnng/headunit](https://github.com/rGnng/headunit), while retaining the original
+Tab5 list's two-cover / 4 ms loading budget after scrolling stops.
+
 ## Storage
 
-All application files are below **`sdcard://mpd/`** (`/sdcard/mpd` in firmware):
+All application files are under **`/sdcard/mpd/`**:
 
 | Path | Contents |
 | --- | --- |
@@ -47,6 +66,7 @@ All application files are below **`sdcard://mpd/`** (`/sdcard/mpd` in firmware):
 | `bluetooth.txt` | Known controllers and reconnect preference |
 | `uris.bin` | Active MPD URI lookup strings, streamed from SD |
 | `lib/<server-id>/` | Per-server catalog, stars, thumbnail pack and cover caches |
+| `lib/<server-id>/covers/` | Album-PID 360×360 covers and temporary artwork downloads |
 | `lib/<server-id>/np/` | Now Playing RGB565 cover cache |
 | `debug.log`, `debug.old.log` | Optional logs |
 | `JPFONT.TTF` | Optional extra font (existing root font imported once) |
@@ -75,7 +95,9 @@ No MFi identity or Apple authentication material is needed.
 
 ## Development
 
-The background MPD worker owns all network I/O. UI callbacks enqueue commands;
+The control worker owns playback, database and idle-subscription connections;
+a separate artwork worker downloads and decodes one cover at a time. UI
+callbacks enqueue commands;
 metadata updates are applied on the UI thread using the inherited catalog.
 Database queries use batches of 256 songs where supported. Tracks uses its
 supported `listallinfo` response instead. URI strings are stored on SD instead
@@ -85,7 +107,10 @@ retry automatically after network/server failures. Server switches use separate
 SD cache namespaces.
 
 ```bash
+python3 tools/gen_web_ui.py  # after editing assets/web/
 python3 -m unittest discover -s tests -p 'test_mpd_*.py' -v
+python3 -m unittest discover -s tests -p 'test_album_view.py' -v
+python3 -m unittest discover -s tests -p 'test_thumb_identity.py' -v
 cmake -S . -B build -G Ninja -DIAP2TAB5_BUILD_UI_TESTS=ON
 cmake --build build -j
 ctest --test-dir build --output-on-failure
@@ -99,10 +124,8 @@ retained. MPD framing and command semantics follow the
 [official protocol documentation](https://mpd.readthedocs.io/en/stable/protocol.html).
 
 Current bounds: 24,000 library/queue entries, 4,096 albums, 2,048 album artists,
-32 stored playlists with up to 1,024 tracks each. Oversized
-network responses fail with a status message. JPEG embedded/external artwork is
-retrieved on track changes and cached as 360×360 RGB565; other formats currently
-use the UI's fallback artwork. Date Added uses MPD's `added` timestamp, falls
+32 stored playlists with up to 1,024 tracks each. Oversized network responses
+fail with a status message. Date Added uses MPD's `added` timestamp, falls
 back to `Last-Modified`, then to stable local discovery order. Album and song
 Name/Year/Date Added sorts support both directions. Playback follows each
 view's displayed order, and queue jumps use stable MPD entry IDs. Search and

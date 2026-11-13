@@ -38,6 +38,22 @@ function key(k) {
   return T.key(k).then(function () { setTimeout(refresh,350); })
     .catch(function (e) { toast(e.message,true); });
 }
+function renderArtwork(s,catalog) {
+  var art=s.artwork || {}, total=Number(art.total || catalog.albums || 0);
+  var cached=Math.min(total,Number(s.artwork_cached || 0));
+  var checked=Math.min(total,Math.max(cached,Number(art.checked || 0)));
+  var percent=total ? Math.floor(checked*100/total) : 0;
+  var labels={caching:'Caching artwork',paused:'Paused while using Tab5',waiting:'Waiting for idle',
+    retrying:'Waiting to retry',complete:'Cache pass complete',library:'Loading library',
+    offline:'MPD offline',no_sd:'Insert SD card'};
+  $('artwork_state').textContent=labels[art.state] || 'Waiting for library';
+  $('artwork_progress').max=total || 1;
+  $('artwork_progress').value=checked;
+  var summary=cached.toLocaleString()+' / '+total.toLocaleString()+' albums cached · '+percent+'% checked';
+  if(art.missing) summary+=' · '+Number(art.missing).toLocaleString()+' without supported artwork';
+  if(art.failed) summary+=' · '+Number(art.failed).toLocaleString()+' failed';
+  $('artwork_counts').textContent=summary;
+}
 function render(s,c,p) {
   S=s; C=c;
   btPanel.render(s.bluetooth);
@@ -67,6 +83,7 @@ function render(s,c,p) {
   $('mpd_status').textContent=s.mpd_status || 'Not configured';
   $('btn_sync').disabled=!s.mpd_connected || s.mpd_syncing;
   var catalog=s.catalog || {};
+  renderArtwork(s,catalog);
   $('library_rows').innerHTML=T.row('Albums',catalog.albums || 0)+T.row('Tracks',catalog.tracks || 0)+T.row('Storage',s.storage_root);
   $('sync_hint').textContent=s.mpd_syncing ? 'Importing the MPD library…' : s.mpd_connected ? 'Library ready. Resync after changing stored playlists; database changes refresh automatically.' : 'Enter your MPD server address. Music plays on the server’s audio output.';
   $('fw_rows').innerHTML=T.row('Firmware',s.firmware)+T.row('Build',s.build)+T.row('OTA slot',s.ota_partition)+T.row('USB mode',T.usb(s.usb_mode));

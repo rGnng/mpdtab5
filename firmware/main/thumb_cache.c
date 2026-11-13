@@ -699,6 +699,11 @@ static void preload_task(void *arg)
 }
 void thumb_cache_preload(void)
 {
+    /* MPD fills this pack during idle time. Its boot-time size cannot predict
+     * RAM left after importing the database; retain bounded UI row caches and
+     * lazy SD reads instead of pinning a growing pack in PSRAM. */
+    if(!strncmp(app_config_library_id(), "MPD-", 4))
+        return;
     lock();
     preload_t *p = calloc(1, sizeof(*p));
     if(p && s_count && !s_ram)

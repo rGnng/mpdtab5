@@ -77,8 +77,13 @@
         <label class="check"><input id="mpd_clear_password" type="checkbox"> Clear saved password</label>
         <div class="actions"><button class="main" type="submit" id="mpd_save">Save &amp; connect</button><button type="button" id="btn_sync" onclick="sync_media()">Resync library</button></div>
         <div class="rows" id="library_rows"></div>
+        <div class="cache-status">
+          <div class="cache-heading"><span>Album artwork cache</span><span id="artwork_state">Waiting for library</span></div>
+          <progress id="artwork_progress" value="0" max="1" aria-label="Album artwork caching progress"></progress>
+          <div class="hint" id="artwork_counts" role="status">0 albums cached</div>
+        </div>
         <div class="hint" id="sync_hint">Enter the address of your Music Player Daemon. Music plays on the server's audio output.</div>
-        <div class="hint">Settings, library cache, artwork, stars and logs are stored in sdcard://mpd/.</div>
+        <div class="hint">Settings, library cache, artwork, stars and logs are stored in /sdcard/mpd/.</div>
       </form>
     </section>
 

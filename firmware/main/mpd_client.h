@@ -74,3 +74,16 @@ bool mpd_client_queue_list_get(int index, uint64_t *key);
 uint32_t mpd_client_artwork_revision(void);
 bool mpd_client_artwork_copy(uint8_t *dst, size_t len, artwork_quality_t minimum,
                             artwork_quality_t *actual);
+
+/* UI reports activity and the settled viewport; calls never perform I/O. */
+void mpd_client_artwork_pause(void);
+void mpd_client_artwork_view(const uint64_t *albums, unsigned count, bool active);
+
+/* Snapshot of the current idle cache pass; cached image count is supplied by
+ * the persistent thumbnail cache, which also includes warm-boot entries. */
+typedef struct {
+    unsigned total, checked, missing, failed;
+    bool active;
+    const char *status;
+} mpd_artwork_status_t;
+void mpd_client_artwork_status(mpd_artwork_status_t *out);
