@@ -334,6 +334,11 @@ bool ui_user_activity(void)
 void ui_screen_off(void)
 {
     bool was_on = ui_screen_is_on();
+    /* Capture the current state even between the one-second timer ticks, so
+     * blanking an already playing screen does not look like a new start. */
+    player_snapshot_t snap;
+    player_get_snapshot(&snap);
+    g_screen_idle.playing = !g_afc_sync_mode && snap.status == PLAYER_PLAYING;
     screen_idle_off(&g_screen_idle);
     ui_screen_apply(was_on);
 }

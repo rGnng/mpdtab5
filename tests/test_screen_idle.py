@@ -82,13 +82,27 @@ class ScreenIdleTests(unittest.TestCase):
         self.update(101_900_001, playing=True)
         self.assertFalse(self.s.off)
 
-    def test_manual_blank_stays_off_during_playback_until_input(self):
+    def test_manual_blank_during_playback_stays_off_until_next_playback_start(self):
         self.configure(0)
+        self.update(200, playing=True)
         self.lib.screen_idle_off(C.byref(self.s))
         self.update(500, playing=True)
         self.update(1500, playing=True)
         self.assertTrue(self.s.off)
-        self.assertTrue(self.activity(1600))
+        self.update(1600, playing=False)
+        self.assertTrue(self.s.off)
+        self.update(1700, playing=True)
+        self.assertFalse(self.s.off)
+        self.assertFalse(self.s.manual)
+
+    def test_manual_blank_while_paused_wakes_on_play_even_with_timer_disabled(self):
+        self.configure(0)
+        self.update(200, playing=False)
+        self.lib.screen_idle_off(C.byref(self.s))
+        self.update(500, playing=False)
+        self.assertTrue(self.s.off)
+        self.update(600, playing=True)
+        self.assertFalse(self.s.off)
         self.assertFalse(self.s.manual)
 
     def test_monotonic_clock_wrap(self):

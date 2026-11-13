@@ -35,6 +35,10 @@ list. Controls use 65% transparency, follow the existing content margins, and
 hide when keyboard/knob navigation resumes or touch is disabled. The setting is
 saved in `/sdcard/mpd/config.json` and is also available on the web System page.
 
+The screen wakes when MPD starts or resumes playback, including after a manual
+screen-off. Blanking it while playback is already running stays effective until
+a subsequent pause/stop and playback start, or touch/key input.
+
 Stars use Tracks’ server-side **Stared** playlist. The Tab5 reads its membership,
 adds songs with `playlistadd`, and removes them with `playlistdelete`. The star
 icon and Stared view reflect confirmed server state; MPD mode does not read or

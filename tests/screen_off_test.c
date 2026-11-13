@@ -231,6 +231,20 @@ int main(int argc, char **argv)
     cfg.screen_off_minutes=0; ui_set_system_config(&cfg);
     lv_tick_inc(3601000); lv_timer_handler();
     check(ui_screen_is_on(),"Off setting must disable automatic screen blanking");
+    /* Change the player directly: no Tab5 input is allowed to supply the wake. */
+    ui_screen_off();pump(1100);
+    check(!ui_screen_is_on() && !backlight,"A paused manual blank must stay off");
+    ons=screen_on_cues;
+    player_play_pause();pump(1100);
+    check(ui_screen_is_on() && backlight,"Remote playback start must wake a manual blank even with the timer disabled");
+    check(screen_on_cues==ons+1,"Remote playback start must emit one screen-on cue");
+    /* Blank immediately after a start, before the idle timer samples it. */
+    player_play_pause();pump(1100);
+    player_play_pause();ui_screen_off();pump(2100);
+    check(!ui_screen_is_on() && !backlight,"Blanking ongoing playback must not wake on the next idle tick");
+    player_play_pause();pump(1100);
+    player_play_pause();pump(1100);
+    check(ui_screen_is_on() && backlight,"A later pause and resume must wake the manually blanked screen");
     puts("PASS: screen timer, clock hold, backlight and wake-only input");
     return 0;
 }

@@ -10,8 +10,12 @@ void screen_idle_configure(screen_idle_t *s, int minutes, uint32_t now)
 void screen_idle_update(screen_idle_t *s, bool playing, uint32_t now)
 {
     if(playing || s->playing) s->quiet_since_ms = now;
-    /* Playback may resume through the iPod itself. A manual blank stays off. */
-    if(playing && !s->manual) s->off = false;
+    /* A remote playback start also wakes a manual blank. An explicit blank
+     * during ongoing playback stays off until playback stops and starts. */
+    if(playing && (!s->manual || !s->playing)) {
+        s->off = false;
+        s->manual = false;
+    }
     s->playing = playing;
     if(!s->off && !playing && s->timeout_ms &&
        (uint32_t)(now - s->quiet_since_ms) >= s->timeout_ms) {
