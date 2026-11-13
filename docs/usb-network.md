@@ -64,4 +64,3 @@ On-device API checks rejected six invalid address/type combinations without
 partially changing other settings, saved/read back a custom address pair,
 restored the original defaults, and confirmed the running link stayed on its
 boot-time addresses until reboot.
-
