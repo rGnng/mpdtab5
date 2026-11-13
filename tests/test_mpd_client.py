@@ -20,6 +20,7 @@ PREFIX=r'''
 #include "mpd_wire.h"
 #include "mpd_client.h"
 #include "player.h"
+#include "text_util.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,10 +37,13 @@ static mpd_wire_t wire;
 static mpd_state_t state;
 static int muted_volume=50, mpd_playlist_version;
 static bool remote_repeat,remote_single,mpd_updating;
-static unsigned reported_queue_size;
+static unsigned reported_queue_size, database_songs;
+static char database_revision[64];
+static bool unpaged_server;
 static player_media_item_t items[1000];
 static int item_count,playlist_count;
 static uint64_t playlist_keys[1024];
+static uint32_t parsed_queue_ids[QUEUE_LIMIT];
 static char diagnostic[200];
 static void take(void) {}
 static void give(void) {}
@@ -57,19 +61,20 @@ SUFFIX=r'''
 void test_init(int fd) {
     memset(uri_slots,0,sizeof(uri_slots)); uri_count=uri_used=0;
     memset(&state,0,sizeof(state)); item_count=playlist_count=0;
+    unpaged_server=false; database_songs=0;
     diagnostic[0]=0; mpd_wire_init(&wire); mpd_wire_attach(&wire,fd,1000);
 }
 void test_close(void) { mpd_wire_close(&wire); }
 uint64_t test_insert(const char *uri) { return uri_insert(uri) ? mpd_id(uri) : 0; }
 int test_parse(int mode) {
     song_parser_t p={.library=mode==0,.queue=mode==1,.stored=mode==2,.playlist=0};
-    uint64_t keys[QUEUE_LIMIT]; p.keys=keys;
+    uint64_t keys[QUEUE_LIMIT]; p.keys=keys; p.ids=parsed_queue_ids;
     bool ok=mpd_wire_command(&wire,"test_metadata",song_field,NULL,&p) && song_finish(&p);
     return ok ? p.count : -1;
 }
 int test_sync(void) { return sync_library(); }
 int test_run(int kind,uint64_t *keys,int count,int start) {
-    command_t c={.kind=kind,.keys=keys,.count=count,.start=start}; return run_command(&c);
+    command_t c={.kind=kind,.keys=keys,.count=count,.start=start,.queue_id=(uint32_t)start}; return run_command(&c);
 }
 int test_toggle(const char *name,int repeat,int volume,int shuffle) {
     state.repeat=repeat; state.volume=volume; state.shuffle=shuffle;
@@ -82,6 +87,8 @@ const char *test_title(int i) { return items[i].title; }
 const char *test_artist(int i) { return items[i].artist; }
 unsigned test_duration(int i) { return items[i].duration_ms; }
 unsigned test_year(int i) { return items[i].year; }
+unsigned test_date(int i) { return items[i].date_added; }
+unsigned test_queue_entry_id(int i) { return parsed_queue_ids[i]; }
 int test_item_count(void) { return item_count; }
 int test_playlist_count(void) { return playlist_count; }
 const char *test_message(void) { return diagnostic; }
@@ -106,7 +113,7 @@ static unsigned uri_count,uri_used;
 '''
         functions='\n'.join(function(SOURCE,name) for name in [
             'uri_lookup','uri_insert','song_reset','song_finish','song_field',
-            'status_field','simple','sync_library','play_selection','run_command'])
+            'status_field','stat_field','simple','sync_library','play_selection','run_command'])
         (directory/'client.c').write_text(PREFIX+globals_+command_type+song_type+functions+SUFFIX)
         subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Wno-unused-function','-shared','-fPIC',
                         '-I'+str(directory),'-I'+str(ROOT/'app/mpd'),'-I'+str(ROOT/'app/backend'),
@@ -150,11 +157,49 @@ static unsigned uri_count,uri_used;
     def test_database_import_is_paginated_and_flushes_each_page(self):
         first=b''.join(f'file: music/{i}.flac\nTitle: Song {i}\n'.encode() for i in range(256))
         self.server([
+            (b'stats\n',b'songs: 257\ndb_update: 123\nOK\n'),
             (b'find "(base \'\')" window 0:256\n',first+b'OK\n'),
             (b'find "(base \'\')" window 256:512\n',b'file: music/256.flac\nTitle: Last\nOK\n')])
         self.assertEqual(self.lib.test_sync(),1)
         self.assertEqual(self.lib.test_item_count(),257)
         self.assertEqual(self.lib.test_title(256),b'Last')
+
+    def test_tracks_empty_find_falls_back_to_complete_library(self):
+        self.server([
+            (b'stats\n',b'songs: 2\ndb_update: 1794555168\nOK\n'),
+            (b'find "(base \'\')" window 0:256\n',b'OK\n'),
+            (b'listallinfo\n',b'file: /Music/a.flac\nTitle: Alpha\nadded: 2024-01-02T03:04:05Z\nfile: /Music/b.flac\nTitle: Beta\nadded: 2025-01-01T00:00:00Z\nOK\n')])
+        self.assertEqual(self.lib.test_sync(),1)
+        self.assertEqual(self.lib.test_item_count(),2)
+        self.assertEqual(self.lib.test_title(1),b'Beta')
+        self.assertEqual(self.lib.test_date(0),1704164645)
+
+    def test_long_unicode_title_is_clipped_at_a_complete_character(self):
+        title=('a'*94+'🐈').encode()
+        self.assertEqual(self.metadata(b'file: /Music/a.flac\nTitle: '+title+b'\n'),1)
+        self.assertEqual(self.lib.test_title(0).decode(),'a'*94)
+
+    def test_added_date_takes_priority_over_last_modified(self):
+        self.assertEqual(self.metadata(b'file: /Music/a.flac\nLast-Modified: 2025-01-01T00:00:00Z\nadded: 2024-01-02T03:04:05Z\n'),1)
+        self.assertEqual(self.lib.test_date(0),1704164645)
+
+    def test_unknown_added_date_falls_back_to_modified(self):
+        self.assertEqual(self.metadata(b'file: /Music/a.flac\nadded: -1\nLast-Modified: 2024-01-02T03:04:05Z\n'),1)
+        self.assertEqual(self.lib.test_date(0),1704164645)
+
+    def test_duplicate_queue_tracks_keep_distinct_server_entry_ids(self):
+        self.assertEqual(self.metadata(b'file: /Music/a.flac\nTitle: Alpha\nId: 17\nfile: /Music/a.flac\nTitle: Alpha\nId: 99\n',1),2)
+        self.assertEqual([self.lib.test_queue_entry_id(i) for i in range(2)],[17,99])
+
+    def test_queue_selection_longer_than_512_is_sent_in_full(self):
+        paths=[f'Music/{i}.flac'.encode() for i in range(700)]
+        keys=(C.c_uint64*len(paths))(*[self.lib.test_insert(p) for p in paths])
+        exchanges=[(b'command_list_begin\nclear\nrandom 0\nsingle 0\ncommand_list_end\n',b'OK\n')]
+        for start in range(0,len(paths),100):
+            commands=b'command_list_begin\n'+b''.join(b'add "'+p+b'"\n' for p in paths[start:start+100])+b'command_list_end\n'
+            exchanges.append((commands,b'OK\n'))
+        exchanges.append((b'play 0\n',b'OK\n'));self.server(exchanges)
+        self.assertEqual(self.lib.test_run(1,keys,len(paths),0),1)
 
     def test_metadata_uses_uri_identity_and_album_artist(self):
         self.assertEqual(self.metadata(
@@ -204,8 +249,8 @@ static unsigned uri_count,uri_used;
         self.peer.setblocking(False)
         with self.assertRaises(BlockingIOError): self.peer.recv(1)
 
-    def test_queue_jump_plays_position(self):
-        self.server([(b'play 3\n',b'OK\n')])
+    def test_queue_jump_plays_captured_server_id(self):
+        self.server([(b'playid 3\n',b'OK\n')])
         self.assertEqual(self.lib.test_run(3,None,0,3),1)
 
     def test_repeat_cycle_matches_ui_off_all_one(self):

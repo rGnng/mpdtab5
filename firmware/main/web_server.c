@@ -1234,6 +1234,98 @@ static esp_err_t bluetooth_post(httpd_req_t * req)
     return bluetooth_reply(req, message);
 }
 
+/* Bounded read-only snapshots for diagnosing the actual player views. IDs are
+ * strings so clients do not lose 64-bit URI identities through JSON doubles. */
+static void library_track_json(cJSON *item,const player_track_t *track)
+{
+    char id[17],album[17],artist[17];
+    snprintf(id,sizeof(id),"%016llx",(unsigned long long)track->id);
+    snprintf(album,sizeof(album),"%016llx",(unsigned long long)track->album_id);
+    snprintf(artist,sizeof(artist),"%016llx",(unsigned long long)track->artist_id);
+    cJSON_AddStringToObject(item,"id",id);
+    cJSON_AddStringToObject(item,"album_id",album);
+    cJSON_AddStringToObject(item,"artist_id",artist);
+    cJSON_AddStringToObject(item,"title",track->title);
+    cJSON_AddStringToObject(item,"artist",track->artist);
+    cJSON_AddStringToObject(item,"album",track->album);
+    cJSON_AddNumberToObject(item,"year",track->year);
+    cJSON_AddNumberToObject(item,"track",track->track_no);
+    cJSON_AddNumberToObject(item,"disc",track->disc_no);
+    cJSON_AddNumberToObject(item,"duration",track->duration_sec);
+}
+static esp_err_t library_get(httpd_req_t *req)
+{
+    char view[32]="albums",value[32];
+    query_value(req,"view",view,sizeof(view));
+    int offset=0,limit=64,index=0;
+    if(query_value(req,"offset",value,sizeof(value))) offset=atoi(value);
+    if(query_value(req,"limit",value,sizeof(value))) limit=atoi(value);
+    if(query_value(req,"index",value,sizeof(value))) index=atoi(value);
+    uint64_t parent=0;
+    if(query_value(req,"parent",value,sizeof(value))) parent=strtoull(value,NULL,16);
+    if(offset<0 || limit<1 || limit>128 || index<0)
+        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Invalid view range");
+    int kind=-1;
+    const char *names[]={"albums","artists","songs","playlists","queue","album_tracks","artist_tracks","playlist_tracks"};
+    for(int i=0;i<8;i++) if(!strcmp(view,names[i])) kind=i;
+    if(kind<0) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Unknown library view");
+    cJSON *root=cJSON_CreateObject();
+    if(!root) return httpd_resp_send_500(req);
+    cJSON *items=cJSON_AddArrayToObject(root,"items");
+    if(!items || !bsp_display_lock(1000)) { cJSON_Delete(root); return httpd_resp_send_500(req); }
+    int count=kind==0 ? player_album_count() : kind==1 ? player_artist_count() :
+        kind==2 ? player_song_count() : kind==3 ? player_playlist_count() :
+        kind==4 ? player_queue_count() : kind==5 ? player_album_track_count(parent) :
+        kind==6 ? player_artist_song_count(parent) : player_playlist_track_count(index);
+    cJSON_AddStringToObject(root,"view",view);
+    cJSON_AddNumberToObject(root,"total",count);
+    cJSON_AddNumberToObject(root,"offset",offset);
+    cJSON_AddNumberToObject(root,"revision",player_library_revision());
+    for(int i=offset;i<count && i-offset<limit;i++) {
+        cJSON *item=cJSON_CreateObject(); if(!item) break;
+        cJSON_AddItemToArray(items,item);
+        cJSON_AddNumberToObject(item,"index",i);
+        char id[17];
+        if(kind==0) {
+            player_album_t a;
+            if(!player_album_get(i,&a)) continue;
+            snprintf(id,sizeof(id),"%016llx",(unsigned long long)a.id);
+            cJSON_AddStringToObject(item,"id",id);
+            cJSON_AddStringToObject(item,"title",a.title);
+            cJSON_AddStringToObject(item,"artist",a.artist);
+            cJSON_AddNumberToObject(item,"year",a.year);
+            cJSON_AddNumberToObject(item,"date_added",a.date_added);
+            cJSON_AddNumberToObject(item,"tracks",a.track_count);
+        } else if(kind==1) {
+            player_artist_t a;
+            if(!player_artist_get(i,&a)) continue;
+            snprintf(id,sizeof(id),"%016llx",(unsigned long long)a.id);
+            cJSON_AddStringToObject(item,"id",id);
+            cJSON_AddStringToObject(item,"name",a.name);
+            cJSON_AddNumberToObject(item,"songs",a.song_count);
+            cJSON_AddNumberToObject(item,"albums",a.album_count);
+        } else if(kind==3) {
+            player_playlist_t a;
+            if(!player_playlist_get(i,&a)) continue;
+            cJSON_AddStringToObject(item,"name",a.name);
+            cJSON_AddNumberToObject(item,"tracks",a.track_count);
+            cJSON_AddBoolToObject(item,"local",a.local);
+        } else {
+            player_track_t track;
+            bool ok=kind==2 ? player_song_get(i,&track) : kind==4 ? player_queue_at(i,&track) :
+                kind==5 ? player_album_track_get(parent,i,&track) : kind==6 ? player_artist_song_get(parent,i,&track) :
+                player_playlist_track_get(index,i,&track);
+            if(ok) library_track_json(item,&track);
+        }
+    }
+    bsp_display_unlock();
+    char *text=cJSON_PrintUnformatted(root); cJSON_Delete(root);
+    if(!text) return httpd_resp_send_500(req);
+    httpd_resp_set_type(req,"application/json");
+    httpd_resp_set_hdr(req,"Cache-Control","no-store");
+    esp_err_t err=httpd_resp_sendstr(req,text); free(text); return err;
+}
+
 static esp_err_t status_get(httpd_req_t * req)
 {
     cJSON * root = cJSON_CreateObject();
@@ -1739,6 +1831,8 @@ esp_err_t web_server_start(void)
     const httpd_uri_t cfg_post = {
         .uri = "/api/config", .method = HTTP_POST, .handler = config_post,
     };
+    const httpd_uri_t view_snapshot={.uri="/api/library",.method=HTTP_GET,.handler=library_get};
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server,&view_snapshot));
     const httpd_uri_t status = {
         .uri = "/api/status", .method = HTTP_GET, .handler = status_get,
     };

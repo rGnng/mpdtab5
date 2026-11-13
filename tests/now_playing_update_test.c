@@ -346,6 +346,23 @@ static void artist_membership(void)
     free(members); free(albums); free(expected);
 }
 
+static void stopped_empty_queue(void)
+{
+    player_snapshot_t saved=injected;
+    bool saved_art=art_ready;
+    injected=(player_snapshot_t){.connected=true,.real_device=true,.status=PLAYER_STOPPED,.battery=-1};
+    force_empty_queue=true;art_ready=false;art_rev++;queue_rev++;
+    ui_select_screen(SCR_NOW_PLAYING);pump(300);np_tick();
+    text(np_play_icon,ICON_PLAY);text(np_time_cur,"0:00");text(np_time_dur,"0:00");
+    check(lv_bar_get_value(np_progress)==0,"An empty stopped queue must show zero progress");
+    check(lv_obj_has_flag(np_title,LV_OBJ_FLAG_HIDDEN),"An empty queue must not display stale track metadata");
+    np_toggle_queue();pump(300);
+    check(test_queue_count()==0 && g_current_screen==SCR_NOW_PLAYING,"Empty Up Next must remain a usable Now Playing view");
+    np_toggle_queue();pump(200);
+    injected=saved;art_ready=saved_art;force_empty_queue=false;art_rev++;queue_rev++;
+    np_tick();pump(200);
+}
+
 int main(int argc, char **argv)
 {
     lv_init();
@@ -417,6 +434,7 @@ int main(int argc, char **argv)
     np_toggle_queue(); pump(600);
     text(np_album,"Queue album"); text(np_star_icon,ICON_STAR_FILL);
     artwork_upgrades();
+    stopped_empty_queue();
     gradient_lifecycle();
     artist_membership();
     puts("PASS: selective updates, delayed metadata/artwork, progress and queue visibility");

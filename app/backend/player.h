@@ -66,6 +66,9 @@ typedef struct {
     bool local; /* Starred is the local playlist */
 } player_playlist_t;
 
+/* Metadata supplied by an MPD server, including its per-file added date. */
+#define PLAYER_MEDIA_MPD (UINT32_C(1) << 31)
+
 typedef struct {
     player_status_t status;
     player_track_t track;
@@ -134,7 +137,7 @@ uint64_t player_legacy_album_pid(uint32_t slot);
 /* Media item property numbers follow the iAP2 MediaItem property group. */
 typedef struct {
     uint64_t pid, album_pid, artist_pid, album_artist_pid;
-    uint32_t fields, duration_ms;
+    uint32_t fields, duration_ms, date_added;
     uint16_t track_no, year, disc_no;
     char title[96], album[80], artist[64], album_artist[64];
 } player_media_item_t;

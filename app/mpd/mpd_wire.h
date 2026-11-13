@@ -22,5 +22,10 @@ bool mpd_wire_attach(mpd_wire_t *w, int fd, unsigned timeout_ms);
  * I/O, framing, callback failures close it so partial replies cannot leak. */
 bool mpd_wire_command(mpd_wire_t *w, const char *command, mpd_field_cb field,
                       mpd_binary_cb binary, void *ctx);
+/* Split request/reply for a dedicated idle subscription connection. */
+bool mpd_wire_send(mpd_wire_t *w, const char *command);
+bool mpd_wire_response(mpd_wire_t *w, mpd_field_cb field, mpd_binary_cb binary, void *ctx);
+int mpd_wire_ready(mpd_wire_t *w); /* 1 readable, 0 pending, -1 disconnected */
 bool mpd_quote(char *out, size_t cap, const char *value);
 uint64_t mpd_id(const char *value);
+uint32_t mpd_timestamp(const char *value); /* ISO 8601 UTC/offset, 0 unknown */

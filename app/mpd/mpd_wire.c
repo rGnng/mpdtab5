@@ -86,21 +86,44 @@ static bool send_all(mpd_wire_t *w, const char *p, size_t len) {
     }
     return true;
 }
-bool mpd_wire_command(mpd_wire_t *w, const char *command, mpd_field_cb field,
-                      mpd_binary_cb binary, void *ctx) {
+bool mpd_wire_send(mpd_wire_t *w, const char *command) {
     w->error[0] = 0;
     if(w->fd < 0) return fail(w, "MPD is disconnected");
-    if(!send_all(w, command, strlen(command)) || !send_all(w, "\n", 1)) return false;
+    return send_all(w, command, strlen(command)) && send_all(w, "\n", 1);
+}
+int mpd_wire_ready(mpd_wire_t *w) {
+    if(w->fd < 0) return -1;
+    if(w->pos < w->used) return 1;
+    fd_set reads; FD_ZERO(&reads); FD_SET(w->fd,&reads);
+    struct timeval timeout={0};
+    int ready=select(w->fd+1,&reads,NULL,NULL,&timeout);
+    if(ready<0) { fail(w,"MPD idle connection failed"); return -1; }
+    return ready ? 1 : 0;
+}
+bool mpd_wire_response(mpd_wire_t *w, mpd_field_cb field, mpd_binary_cb binary, void *ctx) {
     char record[4096];
+    bool metadata_text=false;
     while(line(w, record, sizeof(record))) {
+        if(!record[0]) continue;
         if(!strcmp(record, "OK")) return true;
         if(!strncmp(record, "ACK ", 4)) {
             snprintf(w->error, sizeof(w->error), "%.191s", record); return false;
         }
         if(!strcmp(record, "list_OK")) continue;
         char *sep = strstr(record, ": ");
-        if(!sep) return fail(w, "Malformed MPD response");
+        if(!sep) {
+            /* Tracks writes stored tag text verbatim. A multiline Comment
+             * (or title) can therefore contain unkeyed continuation lines.
+             * They are not protocol commands and must not tear down playback. */
+            if(metadata_text) continue;
+            char error[192];
+            snprintf(error,sizeof(error),"Malformed MPD response: %.150s",record);
+            return fail(w,error);
+        }
         *sep = 0; const char *value = sep + 2;
+        if(!strcmp(record,"Comment") || !strcmp(record,"Title") ||
+           !strcmp(record,"Artist") || !strcmp(record,"Album") ||
+           !strcmp(record,"AlbumArtist")) metadata_text=true;
         if(!strcmp(record, "binary")) {
             char *end; unsigned long size = strtoul(value, &end, 10);
             if(!value[0] || *end || value[0] == '-' || size > 4*1024*1024)
@@ -118,6 +141,10 @@ bool mpd_wire_command(mpd_wire_t *w, const char *command, mpd_field_cb field,
     }
     return false;
 }
+bool mpd_wire_command(mpd_wire_t *w, const char *command, mpd_field_cb field,
+                      mpd_binary_cb binary, void *ctx) {
+    return mpd_wire_send(w,command) && mpd_wire_response(w,field,binary,ctx);
+}
 bool mpd_quote(char *out, size_t cap, const char *value) {
     if(cap < 3) return false;
     size_t n=0; out[n++]='"';
@@ -133,4 +160,29 @@ uint64_t mpd_id(const char *value) {
     uint64_t id=1469598103934665603ULL;
     for(const unsigned char *p=(const unsigned char *)value; *p; p++) { id^=*p; id*=1099511628211ULL; }
     return id ? id : 1;
+}
+uint32_t mpd_timestamp(const char *value) {
+    int year,month,day,hour,minute,second,used=0;
+    if(sscanf(value,"%d-%d-%dT%d:%d:%d%n",&year,&month,&day,&hour,&minute,&second,&used)!=6)
+        return 0;
+    if(year<1970 || year>2106 || month<1 || month>12 || hour<0 || hour>23 ||
+       minute<0 || minute>59 || second<0 || second>59) return 0;
+    static const int lengths[]={31,28,31,30,31,30,31,31,30,31,30,31};
+    bool leap=year%4==0 && (year%100!=0 || year%400==0);
+    if(day<1 || day>lengths[month-1]+(month==2 && leap)) return 0;
+    const char *zone=value+used;
+    if(*zone=='.') { zone++; if(*zone<'0' || *zone>'9') return 0; while(*zone>='0' && *zone<='9') zone++; }
+    int offset=0;
+    if(!strcmp(zone,"Z")) { }
+    else if(*zone=='+' || *zone=='-') {
+        int h,m,n=0;
+        if(sscanf(zone+1,"%d:%d%n",&h,&m,&n)!=2 || zone[n+1] || h<0 || h>23 || m<0 || m>59) return 0;
+        offset=(h*60+m)*60*(*zone=='-' ? -1 : 1);
+    } else return 0;
+    year-=month<=2;
+    int era=year/400,yoe=year-era*400;
+    int doy=(153*(month+(month>2 ? -3 : 9))+2)/5+day-1;
+    int days=era*146097+yoe*365+yoe/4-yoe/100+doy-719468;
+    int64_t seconds=(int64_t)days*86400+hour*3600+minute*60+second-offset;
+    return seconds>0 && seconds<=UINT32_MAX ? (uint32_t)seconds : 0;
 }

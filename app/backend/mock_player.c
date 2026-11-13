@@ -1,6 +1,7 @@
 #include "player.h"
 #include "media_index.h"
 #include "store_util.h"
+#include "text_util.h"
 #include <time.h>
 
 #include "cJSON.h"
@@ -90,6 +91,10 @@ static char device_name[64] = "iPod touch";
 static uint32_t revision = 1;
 static player_change_cb_t change_callback;
 static bool real_library;
+static bool mpd_library;
+static bool artist_order_ready;
+static uint16_t artist_order[MAX_ARTISTS];
+static int artist_order_count;
 static MOCK_LARGE_BSS char artwork_remote[MAX_ALBUMS][128];
 static int artwork_count;
 static MOCK_LARGE_BSS uint64_t legacy_album_pids[MAX_ALBUMS];
@@ -135,13 +140,9 @@ static void album_seen_lock_take(void) { }
 static void album_seen_lock_give(void) { }
 #endif
 
-static void copy_str(char *dst, size_t size, const char *src)
+static void copy_str(char *dst,size_t size,const char *src)
 {
-    if(size == 0) return;
-    size_t n = src ? strlen(src) : 0;
-    if(n >= size) n = size - 1;
-    if(n > 0) memcpy(dst, src, n);
-    dst[n] = '\0';
+    text_copy(dst,size,src);
 }
 
 static uint32_t album_seen_hash(uint64_t pid)
@@ -195,7 +196,7 @@ static bool album_seen_insert_unlocked(uint64_t pid, uint32_t seq)
 
 static bool album_artwork_pending(const player_album_t *album)
 {
-    return real_library && !album->afc_synced;
+    return !mpd_library && real_library && !album->afc_synced;
 }
 
 static int album_compare(const void * va, const void * vb)
@@ -242,7 +243,7 @@ static int album_compare(const void * va, const void * vb)
     if(cmp == 0) {
         cmp = strcasecmp(a->title, b->title);
         if(cmp == 0) cmp = (a->id > b->id) - (a->id < b->id);
-        return cmp;
+        return mpd_library && album_sort_desc ? -cmp : cmp;
     }
     return album_sort_desc ? -cmp : cmp;
 }
@@ -250,10 +251,11 @@ static int album_compare(const void * va, const void * vb)
 void player_sort_albums(int field, bool desc)
 {
     live_take();
-    if(album_count <= 1) { live_give(); return; }
-    album_seen_lock_take();
+    if(field < 0 || field > 2) field = 0;
     album_sort_field = field;
     album_sort_desc = desc;
+    if(album_count <= 1) { live_give(); return; }
+    album_seen_lock_take();
     live_album_ready = false;
     qsort(albums, (size_t)album_count, sizeof(albums[0]), album_compare);
     album_seen_lock_give();
@@ -462,7 +464,7 @@ static void iap2_snapshot(player_snapshot_t * out, const mpd_state_t * state)
      * Playing identity changes; the starred flag itself is read live. */
     static uint64_t star_key;
     static char star_title[128];
-    static char star_album[96];
+    static char star_album[128];
     static int star_idx = -1;
     static uint32_t star_catalog_revision;
     if(star_catalog_revision != player_library_revision() || state->track_key != star_key ||
@@ -470,15 +472,23 @@ static void iap2_snapshot(player_snapshot_t * out, const mpd_state_t * state)
        strcmp(star_album, state->album) != 0) {
         star_key = state->track_key;
         star_catalog_revision = player_library_revision();
-        snprintf(star_title, sizeof(star_title), "%s", state->title);
-        snprintf(star_album, sizeof(star_album), "%s", state->album);
+        copy_str(star_title, sizeof(star_title), state->title);
+        copy_str(star_album, sizeof(star_album), state->album);
         star_idx = state->track_key != 0
                        ? track_index_by_id(state->track_key) : -1;
         if(star_idx < 0) {
             star_idx = track_index_by_meta(state->title, state->album);
         }
     }
-    if(star_idx >= 0) out->starred = track_starred[star_idx];
+    if(star_idx >= 0) {
+        out->starred = track_starred[star_idx];
+        /* MPD's current-song reply has URI identity, while artist IDs belong
+         * to the local catalog. Context navigation needs that relationship. */
+        out->track.artist_id = tracks[star_idx].artist_id;
+        out->track.track_no = tracks[star_idx].track_no;
+        out->track.disc_no = tracks[star_idx].disc_no;
+        out->track.year = tracks[star_idx].year;
+    }
     out->volume = state->volume;
     out->muted = state->volume==0;
     out->shuffle = state->shuffle;
@@ -603,9 +613,15 @@ static int membership_compare(const void * a, const void * b, bool by_artist)
     uint16_t ia = *(const uint16_t *)a, ib = *(const uint16_t *)b;
     uint64_t pa = membership_id(ia, by_artist), pb = membership_id(ib, by_artist);
     if(pa != pb) return pa < pb ? -1 : 1;
-    if(!by_artist && real_library && tracks[ia].disc_no && tracks[ib].disc_no) {
-        if(tracks[ia].disc_no!=tracks[ib].disc_no)
-            return tracks[ia].disc_no<tracks[ib].disc_no?-1:1;
+    if(mpd_library && by_artist && tracks[ia].album_id != tracks[ib].album_id) {
+        int cmp = strcasecmp(tracks[ia].album, tracks[ib].album);
+        if(cmp) return cmp;
+        return tracks[ia].album_id < tracks[ib].album_id ? -1 : 1;
+    }
+    if(real_library && ((!by_artist && tracks[ia].disc_no && tracks[ib].disc_no) || mpd_library)) {
+        unsigned da = tracks[ia].disc_no ? tracks[ia].disc_no : 1;
+        unsigned db = tracks[ib].disc_no ? tracks[ib].disc_no : 1;
+        if(da != db) return da < db ? -1 : 1;
         if(tracks[ia].track_no!=tracks[ib].track_no)
             return tracks[ia].track_no<tracks[ib].track_no?-1:1;
     }
@@ -674,19 +690,9 @@ static bool membership_get(const uint16_t * order, uint64_t id, int index,
 
 /* The iAP2 path sends at most ~500 keys per command, so the device keeps
  * these lists small; the simulator needs room for the whole library. */
-#if defined(ESP_PLATFORM)
-#define PLAY_IDS_MAX 512
-#else
 #define PLAY_IDS_MAX MAX_QUEUE
-#endif
 
 static MOCK_LARGE_BSS uint64_t play_ids[PLAY_IDS_MAX];
-#if defined(ESP_PLATFORM)
-/* The last ordered list sent to the iPod.  Up Next shows it on the device;
- * the iPod's own queue is not read back yet. */
-static uint64_t device_queue[PLAY_IDS_MAX];
-static int device_queue_count;
-#endif
 
 static int ids_album_from(uint64_t album_id, int from, uint64_t * out, int max)
 {
@@ -710,6 +716,16 @@ static int ids_album_from(uint64_t album_id, int from, uint64_t * out, int max)
 
 static int ids_artist_display(uint64_t artist_id, uint64_t * out, int max)
 {
+    if(mpd_library) {
+        int count = player_artist_song_count(artist_id);
+        if(count > max) count = max;
+        for(int i=0; i<count; i++) {
+            player_track_t track;
+            if(!player_artist_song_get(artist_id, i, &track)) return i;
+            out[i] = track.id;
+        }
+        return count;
+    }
     uint64_t albums[ARTIST_ALBUMS_MAX];
     int album_count = 0;
     for(int i = 0; i < track_count; i++) {
@@ -756,11 +772,13 @@ static int ids_playlist(int index, uint64_t * out, int max)
  * play_ids[0..start). */
 static void rotate_play_ids(int count, int start)
 {
-    static MOCK_LARGE_BSS uint64_t rotated[PLAY_IDS_MAX];
-    for(int k = 0; k < count; k++) {
-        rotated[k] = play_ids[(start + k) % count];
+    /* Three reversals rotate in place, without a second full-library buffer. */
+    int bounds[3][2] = {{0,start-1},{start,count-1},{0,count-1}};
+    for(int part=0; part<3; part++) {
+        for(int left=bounds[part][0],right=bounds[part][1]; left<right; left++,right--) {
+            uint64_t tmp=play_ids[left]; play_ids[left]=play_ids[right]; play_ids[right]=tmp;
+        }
     }
-    memcpy(play_ids, rotated, (size_t)count * sizeof(uint64_t));
 }
 
 static uint32_t queue_rev;
@@ -783,8 +801,6 @@ static void play_ids_start(int count, bool shuffle_on)
 #if defined(ESP_PLATFORM)
     if(mpd_client_is_enabled()) {
         mpd_client_play_track_keys(play_ids, count, 0);
-        memcpy(device_queue, play_ids, (size_t)count * sizeof(uint64_t));
-        device_queue_count = count;
         queue_rev++;
         if(shuffle_on) player_set_shuffle(true);
         return;
@@ -1245,6 +1261,8 @@ static void load_library(void)
 
 void player_init(void)
 {
+    mpd_library=false;
+    artist_order_ready=false;
     track_id_index_ready = false;
     membership_index_ready = false;
     track_count = 0;
@@ -1481,11 +1499,28 @@ bool player_artwork_copy(uint8_t * dst, size_t len, artwork_quality_t minimum,
     return false;
 }
 
+static int artist_order_compare(const void *left,const void *right)
+{
+    int a=*(const uint16_t*)left,b=*(const uint16_t*)right;
+    int cmp=strcasecmp(artists[a].name,artists[b].name);
+    return cmp ? cmp : (artists[a].id>artists[b].id)-(artists[a].id<artists[b].id);
+}
+static void artist_order_build(void)
+{
+    if(artist_order_ready) return;
+    artist_order_count=0;
+    for(int i=0;i<artist_count;i++)
+        if(artists[i].song_count) artist_order[artist_order_count++]=(uint16_t)i;
+    qsort(artist_order,artist_order_count,sizeof(*artist_order),artist_order_compare);
+    artist_order_ready=true;
+}
+
 int player_artist_count(void)
 {
 #if defined(ESP_PLATFORM)
     if(!player_device_available()) return 0;
 #endif
+    if(mpd_library) { artist_order_build(); return artist_order_count; }
     return artist_count;
 }
 
@@ -1494,8 +1529,8 @@ bool player_artist_get(int index, player_artist_t * out)
 #if defined(ESP_PLATFORM)
     if(!player_device_available()) return false;
 #endif
-    if(index < 0 || index >= artist_count || out == NULL) return false;
-    *out = artists[index];
+    if(index < 0 || index >= player_artist_count() || out == NULL) return false;
+    *out = artists[mpd_library ? artist_order[index] : index];
     return true;
 }
 
@@ -1688,7 +1723,6 @@ int player_queue_count(void)
     if(mpd_client_is_enabled() && mpd_client_queue_list_count() > 0) {
         return mpd_client_queue_list_count();
     }
-    if(!mpd_client_is_enabled() && device_queue_count > 0) return device_queue_count;
     if(mpd_client_is_enabled()) {
         mpd_state_t state;
         if(mpd_client_get_state(&state)) {
@@ -1711,14 +1745,6 @@ int player_queue_index(void)
         int count = mpd_client_queue_list_count();
         return (index >= 0 && index < count) ? index : -1;
     }
-    if(!mpd_client_is_enabled() && device_queue_count > 0) {
-        player_snapshot_t snapshot;
-        player_get_snapshot(&snapshot);
-        for(int i = 0; i < device_queue_count; i++) {
-            if(device_queue[i] == snapshot.track.id) return i;
-        }
-        return -1;
-    }
     if(mpd_client_is_enabled()) {
         mpd_state_t state;
         if(mpd_client_get_state(&state) &&
@@ -1739,13 +1765,6 @@ bool player_queue_at(int index, player_track_t * out)
         uint64_t key = 0;
         if(out == NULL || !mpd_client_queue_list_get(index, &key)) return false;
         int track_index = track_index_by_id(key);
-        if(track_index < 0) return false;
-        *out = tracks[track_index];
-        return true;
-    }
-    if(!mpd_client_is_enabled() && device_queue_count > 0) {
-        if(index < 0 || index >= device_queue_count || out == NULL) return false;
-        int track_index = track_index_by_id(device_queue[index]);
         if(track_index < 0) return false;
         *out = tracks[track_index];
         return true;
@@ -2009,16 +2028,6 @@ void player_play_artist_shuffled(uint64_t artist_id)
 
 void player_play_song(uint64_t track_id)
 {
-#if defined(ESP_PLATFORM)
-    if(mpd_client_is_enabled()) {
-        if(track_index_by_id(track_id) >= 0) {
-            mpd_client_play_all_songs(track_id);
-            device_queue_count = 0;
-        }
-        return;
-    }
-    return;
-#endif
     int pos = player_song_index(track_id);
     if(pos < 0) return;
     int n = track_count < PLAY_IDS_MAX ? track_count : PLAY_IDS_MAX;
@@ -2031,17 +2040,6 @@ void player_play_song(uint64_t track_id)
 
 void player_play_all_shuffled(void)
 {
-#if defined(ESP_PLATFORM)
-    if(mpd_client_is_enabled()) {
-        if(track_count <= 0) return;
-        /* PlayMediaLibrarySpecial from a random track, then iPod shuffle. */
-        uint64_t start = tracks[rand() % track_count].id;
-        mpd_client_play_all_songs(start);
-        device_queue_count = 0;
-        player_set_shuffle(true);
-    }
-    return;
-#endif
     int n = track_count < PLAY_IDS_MAX ? track_count : PLAY_IDS_MAX;
     for(int k = 0; k < n; k++) play_ids[k] = tracks[k].id;
     play_ids_start(n, true);

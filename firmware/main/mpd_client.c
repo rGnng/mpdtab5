@@ -3,6 +3,7 @@
 #include "mpd_client.h"
 #include "mpd_wire.h"
 #include "player.h"
+#include "text_util.h"
 #include "app_config.h"
 #include "jpeg_thumbnail.h"
 #include "thumb_cache.h"
@@ -39,6 +40,7 @@ static uint32_t art_revision=1, queue_revision=1;
 static uint8_t *art;
 static bool art_valid;
 static uint64_t *queue_keys;
+static uint32_t *queue_ids;
 static int queue_size;
 static uint8_t hold_bit;
 static TaskHandle_t worker;
@@ -46,9 +48,13 @@ static TaskHandle_t worker;
 typedef struct { uint64_t id; uint32_t offset; } uri_entry_t;
 static uri_entry_t *uris;
 static uint16_t *uri_slots;
-static char *uri_pool;
+static FILE *uri_store;
+static char uri_read_buffer[2048];
 static unsigned uri_count, uri_used;
-static mpd_wire_t wire;
+static mpd_wire_t wire, events;
+static bool unpaged_server;
+static unsigned database_songs;
+static unsigned event_flags;
 static int last_playlist=-1;
 static char database_revision[64];
 static int mpd_playlist_version;
@@ -64,6 +70,7 @@ typedef struct {
     command_kind_t kind;
     uint32_t generation;
     int count, start;
+    uint32_t queue_id;
     uint64_t *keys;
     char text[80];
 } command_t;
@@ -126,6 +133,7 @@ void mpd_client_init(void) {
     identity(&config,library_id,sizeof(library_id));
     app_config_set_library_id(library_id);
     mpd_wire_init(&wire);
+    mpd_wire_init(&events);
 }
 void mpd_client_rescan(void) { take(); rescan=true; give(); }
 const char *mpd_client_status(void) {
@@ -149,7 +157,13 @@ static esp_err_t text_command(const char *text) {
 }
 esp_err_t mpd_client_seek_ms(uint32_t ms) { char cmd[64]; snprintf(cmd,sizeof(cmd),"seekcur %.3f",ms/1000.0); return text_command(cmd); }
 esp_err_t mpd_client_set_shuffle(bool on) { return text_command(on ? "random 1" : "random 0"); }
-esp_err_t mpd_client_queue_jump(int index) { command_t c={.kind=CMD_JUMP,.start=index}; return enqueue(&c); }
+esp_err_t mpd_client_queue_jump(int index) {
+    command_t c={.kind=CMD_JUMP};
+    take();
+    if(index>=0 && index<queue_size) c.queue_id=queue_ids[index];
+    give();
+    return c.queue_id ? enqueue(&c) : ESP_ERR_INVALID_ARG;
+}
 esp_err_t mpd_client_hid_command(const char *name) {
     if(!strcmp(name,"play")) return text_command("play");
     if(!strcmp(name,"pause")) return text_command("pause 1");
@@ -202,7 +216,16 @@ static const char *uri_lookup(uint64_t id) {
     unsigned h=(unsigned)id&(URI_SLOTS-1);
     for(unsigned n=0;n<URI_SLOTS;n++,h=(h+1)&(URI_SLOTS-1)) {
         unsigned slot=uri_slots[h]; if(!slot) return NULL;
-        if(uris[slot-1].id==id) return uri_pool+uris[slot-1].offset;
+        if(uris[slot-1].id==id) {
+#ifdef ESP_PLATFORM
+            if(!uri_store || fseek(uri_store,uris[slot-1].offset,SEEK_SET)!=0) return NULL;
+            size_t n=fread(uri_read_buffer,1,sizeof(uri_read_buffer)-1,uri_store);
+            uri_read_buffer[n]=0;
+            return n ? uri_read_buffer : NULL;
+#else
+            return uri_pool+uris[slot-1].offset;
+#endif
+        }
     }
     return NULL;
 }
@@ -211,31 +234,46 @@ static bool uri_insert(const char *uri) {
     const char *found=uri_lookup(id);
     if(found) return !strcmp(found,uri);
     size_t n=strlen(uri)+1;
-    if(uri_count==TRACK_LIMIT || uri_used+n>URI_BYTES) return false;
+    if(uri_count==TRACK_LIMIT) return false;
+#ifndef ESP_PLATFORM
+    if(uri_used+n>URI_BYTES) return false;
+#endif
     unsigned h=(unsigned)id&(URI_SLOTS-1); while(uri_slots[h]) h=(h+1)&(URI_SLOTS-1);
     uris[uri_count]=(uri_entry_t){.id=id,.offset=uri_used};
-    memcpy(uri_pool+uri_used,uri,n); uri_used+=n; uri_slots[h]=++uri_count; return true;
+#ifdef ESP_PLATFORM
+    if(!uri_store) return false;
+    if(ftell(uri_store)!=(long)uri_used && fseek(uri_store,uri_used,SEEK_SET)!=0) return false;
+    if(fwrite(uri,1,n,uri_store)!=n) return false;
+#else
+    memcpy(uri_pool+uri_used,uri,n);
+#endif
+    uri_used+=n; uri_slots[h]=++uri_count; return true;
 }
 typedef struct {
     player_media_item_t item;
     char uri[2048];
     bool library, queue, stored;
+    uint32_t modified, song_id;
+    uint64_t first_key;
     int playlist;
     int count;
     uint64_t *keys;
+    uint32_t *ids;
 } song_parser_t;
-static void song_reset(song_parser_t *p) { memset(&p->item,0,sizeof(p->item)); p->uri[0]=0; }
+static void song_reset(song_parser_t *p) { memset(&p->item,0,sizeof(p->item)); p->uri[0]=0; p->modified=p->song_id=0; }
 static bool song_finish(song_parser_t *p) {
     if(!p->uri[0]) return true;
     if(!p->item.title[0]) {
-        const char *base=strrchr(p->uri,'/'); snprintf(p->item.title,sizeof(p->item.title),"%.95s",base ? base+1 : p->uri);
+        const char *base=strrchr(p->uri,'/'); text_copy(p->item.title,sizeof(p->item.title),base ? base+1 : p->uri);
     }
     if(!p->item.album[0]) snprintf(p->item.album,sizeof(p->item.album),"%s","Singles / Streams");
     if(!p->item.artist[0]) snprintf(p->item.artist,sizeof(p->item.artist),"%s","Unknown artist");
     if(!p->item.album_artist[0]) snprintf(p->item.album_artist,sizeof(p->item.album_artist),"%s",p->item.artist);
     char album[256]; snprintf(album,sizeof(album),"%s\037%s",p->item.album_artist,p->item.album);
     p->item.pid=mpd_id(p->uri); p->item.album_pid=mpd_id(album);
-    p->item.fields=(1u<<1)|(1u<<4)|(1u<<5)|(1u<<6)|(1u<<7)|(1u<<9)|(1u<<12)|(1u<<14);
+    if(!p->item.date_added) p->item.date_added=p->modified;
+    if(!p->count) p->first_key=p->item.pid;
+    p->item.fields=PLAYER_MEDIA_MPD|(1u<<1)|(1u<<4)|(1u<<5)|(1u<<6)|(1u<<7)|(1u<<9)|(1u<<12)|(1u<<14);
     if(p->library) {
         if(!uri_insert(p->uri)) return false;
         player_library_update(&p->item);
@@ -247,6 +285,7 @@ static bool song_finish(song_parser_t *p) {
     if(p->queue) {
         if(p->count>=QUEUE_LIMIT) return false;
         p->keys[p->count]=p->item.pid;
+        if(p->ids) p->ids[p->count]=p->song_id;
         /* Queue-only streams have real metadata and remain selectable. */
         if(!uri_lookup(p->item.pid)) {
             if(!uri_insert(p->uri)) return false;
@@ -264,10 +303,13 @@ static bool song_field(const char *key,const char *value,void *ctx) {
         if(strlen(value)>=sizeof(p->uri)) return false;
         strcpy(p->uri,value);
     }
-    else if(!strcasecmp(key,"Title")) snprintf(p->item.title,sizeof(p->item.title),"%s",value);
-    else if(!strcasecmp(key,"Artist")) snprintf(p->item.artist,sizeof(p->item.artist),"%s",value);
-    else if(!strcasecmp(key,"AlbumArtist")) snprintf(p->item.album_artist,sizeof(p->item.album_artist),"%s",value);
-    else if(!strcasecmp(key,"Album")) snprintf(p->item.album,sizeof(p->item.album),"%s",value);
+    else if(!strcmp(key,"added")) p->item.date_added=mpd_timestamp(value);
+    else if(!strcmp(key,"Last-Modified")) p->modified=mpd_timestamp(value);
+    else if(!strcmp(key,"Id")) p->song_id=(uint32_t)strtoul(value,NULL,10);
+    else if(!strcasecmp(key,"Title")) text_copy(p->item.title,sizeof(p->item.title),value);
+    else if(!strcasecmp(key,"Artist")) text_copy(p->item.artist,sizeof(p->item.artist),value);
+    else if(!strcasecmp(key,"AlbumArtist")) text_copy(p->item.album_artist,sizeof(p->item.album_artist),value);
+    else if(!strcasecmp(key,"Album")) text_copy(p->item.album,sizeof(p->item.album),value);
     else if(!strcmp(key,"duration")) p->item.duration_ms=(uint32_t)(strtod(value,NULL)*1000);
     else if(!strcmp(key,"Time") && !p->item.duration_ms) p->item.duration_ms=(uint32_t)strtoul(value,NULL,10)*1000;
     else if(!strcasecmp(key,"Track")) p->item.track_no=atoi(value);
@@ -292,25 +334,43 @@ static bool status_field(const char *key,const char *value,void *ctx) {
 }
 static bool stat_field(const char *key,const char *value,void *ctx) {
     if(!strcmp(key,"db_update")) snprintf(ctx,64,"%s",value);
+    else if(!strcmp(key,"songs")) database_songs=(unsigned)strtoul(value,NULL,10);
     return true;
 }
 static bool simple(const char *cmd) { return mpd_wire_command(&wire,cmd,NULL,NULL,NULL); }
 static bool sync_library(void) {
     message("Syncing MPD library...");
+    char db[64]={0};
+    if(!mpd_wire_command(&wire,"stats",stat_field,NULL,db)) return false;
+    snprintf(database_revision,sizeof(database_revision),"%s",db);
+#ifdef ESP_PLATFORM
+    if(uri_store) fclose(uri_store);
+    uri_store=fopen("/sdcard/mpd/uris.bin","w+b");
+    if(!uri_store) { message("Cannot create MPD URI cache on SD"); return false; }
+#endif
     take(); state.library_syncing=true; state.revision++; give();
     player_library_reset();
     memset(uri_slots,0,URI_SLOTS*sizeof(*uri_slots)); uri_count=uri_used=0;
-    song_parser_t *p=calloc(1,sizeof(*p)); if(!p) return false;
-    p->library=true;
-    bool ok=true;
-    /* Bound each server response instead of relying on MPD's output buffer
-     * being large enough for the whole database. Requires MPD 0.21+. */
+    song_parser_t *p=calloc(1,sizeof(*p));
+    bool ok=p!=NULL;
+    if(p) p->library=true;
+    uint64_t first=0;
     for(unsigned offset=0;ok;offset+=256) {
         char cmd[96];
-        snprintf(cmd,sizeof(cmd),"find \"(base '')\" window %u:%u",offset,offset+256);
         song_reset(p); p->count=0;
-        ok=mpd_wire_command(&wire,cmd,song_field,NULL,p) && song_finish(p);
-        if(!ok || p->count<256) break;
+        snprintf(cmd,sizeof(cmd),"find \"(base '')\" window %u:%u",offset,offset+256);
+        ok=mpd_wire_command(&wire,unpaged_server ? "listallinfo" : cmd,song_field,NULL,p) && song_finish(p);
+        /* Tracks' filter/window implementation is incomplete. Its empty
+         * find response must not hide a nonempty database. Stream its supported
+         * listallinfo response once, with the same capacity checks. */
+        if(!unpaged_server && !offset && wire.fd>=0 && (!ok || (!p->count && database_songs))) {
+            unpaged_server=true; song_reset(p); p->count=0;
+            ok=mpd_wire_command(&wire,"listallinfo",song_field,NULL,p) && song_finish(p);
+        }
+        if(!ok || unpaged_server || p->count<256 || p->count>256 ||
+           (database_songs && uri_count>=database_songs)) break;
+        if(offset && p->first_key==first) { unpaged_server=true; break; }
+        first=p->first_key;
         vTaskDelay(1);
     }
     free(p);
@@ -342,12 +402,13 @@ static bool poll_state(void) {
 static bool sync_queue(void) {
     song_parser_t *p=calloc(1,sizeof(*p)); if(!p) return false;
     p->queue=true;
+    p->ids=heap_caps_malloc(QUEUE_LIMIT*sizeof(uint32_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     p->keys=heap_caps_malloc(QUEUE_LIMIT*sizeof(uint64_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-    if(!p->keys) { free(p); return false; }
+    if(!p->keys || !p->ids) { free(p->ids); free(p->keys); free(p); return false; }
     bool ok=mpd_wire_command(&wire,"playlistinfo",song_field,NULL,p) && song_finish(p);
     if(ok) player_library_complete();
-    if(ok) { take(); memcpy(queue_keys,p->keys,p->count*sizeof(uint64_t)); queue_size=p->count; queue_revision++; give(); }
-    free(p->keys); free(p); return ok;
+    if(ok) { take(); memcpy(queue_keys,p->keys,p->count*sizeof(uint64_t)); memcpy(queue_ids,p->ids,p->count*sizeof(uint32_t)); queue_size=p->count; queue_revision++; give(); }
+    free(p->ids); free(p->keys); free(p); return ok;
 }
 
 typedef struct { char names[32][256]; int count; } playlists_t;
@@ -423,9 +484,16 @@ static void fetch_art(uint64_t album_pid) {
 }
 static bool play_selection(const uint64_t *keys,int count,int start) {
     /* Validate before touching the existing server queue. */
-    for(int i=0;i<count;i++) if(!uri_lookup(keys[i])) { message("Selection is stale; resync the library"); return true; }
-    if(!simple("command_list_begin\nclear\nrandom 0\nsingle 0\ncommand_list_end")) return false;
+    if(!keys || count<=0 || start<0 || start>=count) return false;
+    char quoted_uri[4100];
+    for(int i=0;i<count;i++) {
+        const char *uri=uri_lookup(keys[i]);
+        if(!uri || !mpd_quote(quoted_uri,sizeof(quoted_uri),uri)) {
+            message("Selection is stale or has an invalid URI; resync the library"); return true;
+        }
+    }
     char *batch=malloc(32768); if(!batch) return false;
+    if(!simple("command_list_begin\nclear\nrandom 0\nsingle 0\ncommand_list_end")) { free(batch); return false; }
     int index=0;
     bool ok=true;
     while(index<count && ok) {
@@ -455,7 +523,7 @@ static bool run_command(command_t *c) {
         bool ok=play_selection(keys,uri_count,start); free(keys); return ok;
     }
     if(c->kind==CMD_JUMP) {
-        char cmd[40]; snprintf(cmd,sizeof(cmd),"play %d",c->start); return simple(cmd);
+        char cmd[40]; snprintf(cmd,sizeof(cmd),"playid %lu",(unsigned long)c->queue_id); return simple(cmd);
     }
     mpd_state_t s={0}; mpd_client_get_state(&s);
     char cmd[128];
@@ -475,10 +543,43 @@ static bool run_command(command_t *c) {
 static bool generation_changed(uint32_t generation) { take(); bool changed=generation!=config_revision; give(); return changed; }
 static void disconnected(void) {
     mpd_wire_close(&wire);
+    mpd_wire_close(&events);
     take(); state.connected=state.identified=false; state.library_syncing=false; state.play_status=0; state.revision++;
     queue_size=0; queue_revision++; art_valid=false; art_revision++; give();
     command_t c; while(xQueueReceive(commands,&c,0)==pdPASS) free(c.keys);
 }
+/* Tracks implements idle notifications even though its stats db_update is
+ * wall-clock time. Keep one dedicated subscription socket; never block input
+ * or playback polling while the server is waiting for a change. */
+static bool idle_field(const char *key,const char *value,void *ctx)
+{
+    unsigned *flags=ctx;
+    if(!strcmp(key,"changed")) {
+        if(!strcmp(value,"database") || !strcmp(value,"update")) *flags|=1;
+        if(!strcmp(value,"stored_playlist")) *flags|=2;
+    }
+    return true;
+}
+static bool subscribe_events(const mpd_config_t *cfg)
+{
+    if(!mpd_wire_connect(&events,cfg->host,cfg->port,3000)) return false;
+    if(cfg->password[0]) {
+        char quoted[260],cmd[280];
+        if(!mpd_quote(quoted,sizeof(quoted),cfg->password)) { mpd_wire_close(&events); return false; }
+        snprintf(cmd,sizeof(cmd),"password %s",quoted);
+        if(!mpd_wire_command(&events,cmd,NULL,NULL,NULL)) { mpd_wire_close(&events); return false; }
+    }
+    return mpd_wire_send(&events,"idle database stored_playlist update");
+}
+static unsigned poll_events(void)
+{
+    unsigned flags=0;
+    if(mpd_wire_ready(&events)<=0) return 0;
+    if(!mpd_wire_response(&events,idle_field,NULL,&flags)) { mpd_wire_close(&events); return 0; }
+    mpd_wire_send(&events,"idle database stored_playlist update");
+    return flags;
+}
+
 static void worker_task(void *arg) {
     (void)arg;
     for(;;) {
@@ -495,13 +596,21 @@ static void worker_task(void *arg) {
             snprintf(cmd,sizeof(cmd),"password %s",quoted);
             if(!simple(cmd)) { message("MPD authentication failed; check web settings"); disconnected(); vTaskDelay(pdMS_TO_TICKS(3000)); continue; }
         }
+        unpaged_server=false;
+        subscribe_events(&cfg);
         identity(&cfg,library_id,sizeof(library_id));
         player_library_select(library_id);
         /* UI processes the namespace switch before queued database records. */
         bool ok=poll_state() && sync_library() && sync_playlists();
         uint64_t art_key=0;
-        int loops=0; last_playlist=-1; database_revision[0]=0;
+        int loops=0; last_playlist=-1;
+        int64_t next_event_retry=esp_timer_get_time()+30000000;
         while(ok && !generation_changed(generation)) {
+            event_flags=poll_events();
+            if(events.fd<0 && esp_timer_get_time()>=next_event_retry) {
+                subscribe_events(&cfg);
+                next_event_retry=esp_timer_get_time()+30000000;
+            }
             command_t c;
             for(int n=0;n<8 && xQueueReceive(commands,&c,0)==pdPASS;n++) {
                 if(c.generation==generation) {
@@ -529,12 +638,17 @@ static void worker_task(void *arg) {
             }
             take(); bool requested=rescan; rescan=false; uint8_t held=hold_bit; give();
             if(held) simple(held==11 ? "seekcur -5" : "seekcur +5");
-            if(requested || loops++%30==0) {
-                char db[64]={0};
+            if(requested || (event_flags&1)) {
+                ok=sync_library() && sync_playlists(); last_playlist=-1;
+            } else if(event_flags&2) ok=sync_playlists();
+            if(ok && loops++%30==0) {
+                char db[64]={0}; unsigned previous_songs=database_songs;
                 if(!mpd_wire_command(&wire,"stats",stat_field,NULL,db)) { ok=false; break; }
-                if(requested || (database_revision[0] && strcmp(database_revision,db))) {
-                    ok=sync_library() && sync_playlists(); last_playlist=-1;
-                }
+                bool changed=previous_songs!=database_songs;
+                /* Generic MPD fallback when idle is unavailable. Tracks'
+                 * unpaged server must never reimport on its rolling timestamp. */
+                if(events.fd<0 && !unpaged_server && database_revision[0] && strcmp(database_revision,db)) changed=true;
+                if(changed) { ok=sync_library() && sync_playlists(); last_playlist=-1; }
                 snprintf(database_revision,sizeof(database_revision),"%s",db);
                 if(mpd_updating) message("MPD is updating its database");
                 else if(ok) message("MPD connected");
@@ -553,10 +667,10 @@ esp_err_t mpd_client_start(void) {
     if(worker) return ESP_OK;
     uris=heap_caps_calloc(TRACK_LIMIT,sizeof(*uris),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     uri_slots=heap_caps_calloc(URI_SLOTS,sizeof(*uri_slots),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-    uri_pool=heap_caps_malloc(URI_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    queue_ids=heap_caps_calloc(QUEUE_LIMIT,sizeof(*queue_ids),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     queue_keys=heap_caps_calloc(QUEUE_LIMIT,sizeof(*queue_keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     art=heap_caps_malloc(ART_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-    if(!uris || !uri_slots || !uri_pool || !queue_keys || !art) { message("Not enough memory for MPD"); return ESP_ERR_NO_MEM; }
+    if(!uris || !uri_slots || !queue_ids || !queue_keys || !art) { message("Not enough memory for MPD"); return ESP_ERR_NO_MEM; }
     if(xTaskCreateWithCaps(worker_task,"mpd",32768,NULL,3,&worker,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS) return ESP_ERR_NO_MEM;
     return ESP_OK;
 }

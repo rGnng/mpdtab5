@@ -6481,10 +6481,14 @@ static void context_menu_go_album(void * user)
     player_get_snapshot(&snapshot);
     int index = album_index_by_id(snapshot.track.album_id);
     if(index < 0) return;
-    albums_selected = index;
-    albums_detail_open = true;
     context_menu_close();
     ui_show_screen(SCR_ALBUMS);
+    /* Screen entry resets detail state, so apply the context destination
+     * afterwards, before the deferred page build. */
+    albums_selected = index;
+    albums_left_scroll_y = albums_row_top(index);
+    albums_detail_open = true;
+    if(!g_page_loading) ui_rebuild_page();
 }
 
 static void context_menu_go_artist(void * user)
@@ -6494,10 +6498,12 @@ static void context_menu_go_artist(void * user)
     player_get_snapshot(&snapshot);
     int index = artist_index_by_id(snapshot.track.artist_id);
     if(index < 0) return;
-    artists_selected = index;
-    artists_detail_open = true;
     context_menu_close();
     ui_show_screen(SCR_ARTISTS);
+    artists_selected = index;
+    artists_left_scroll_y = index * ARTISTS_ROW_H;
+    artists_detail_open = true;
+    if(!g_page_loading) ui_rebuild_page();
 }
 
 static void context_menu_star(void * user)
@@ -10623,11 +10629,30 @@ static void ui_library_tick_cb(lv_timer_t *timer)
             }
         }
     }
+    player_artist_t previous_artist;
+    uint64_t artist_id=player_artist_get(artists_selected,&previous_artist) ? previous_artist.id : 0;
+    int previous_artist_index=artists_selected;
+    player_playlist_t previous_playlist;
+    char playlist_name[64]="";
+    if(player_playlist_get(playlists_selected,&previous_playlist))
+        snprintf(playlist_name,sizeof(playlist_name),"%s",previous_playlist.name);
     bool library_changed=player_library_poll();
     bool album_order_changed=library_changed || g_album_sort_dirty;
     bool song_order_changed=library_changed || g_song_sort_dirty;
     if(!library_changed && !g_album_sort_dirty && !g_song_sort_dirty) return;
     g_album_sort_dirty=g_song_sort_dirty=false;
+    if(library_changed) {
+        if(artist_id) for(int i=0;i<player_artist_count();i++) {
+            player_artist_t artist;
+            if(player_artist_get(i,&artist) && artist.id==artist_id) { artists_selected=i; break; }
+        }
+        artists_left_scroll_y+=(artists_selected-previous_artist_index)*ARTISTS_ROW_H;
+        if(artists_left_scroll_y<0) artists_left_scroll_y=0;
+        if(playlist_name[0]) for(int i=0;i<player_playlist_count();i++) {
+            player_playlist_t playlist;
+            if(player_playlist_get(i,&playlist) && !strcmp(playlist.name,playlist_name)) { playlists_selected=i; break; }
+        }
+    }
     if(album_order_changed) player_sort_albums(g_sort_field, g_sort_desc);
     if(selected_id && album_order_changed) {
         for(int i=0;i<player_album_count();i++) {

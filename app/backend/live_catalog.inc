@@ -3,7 +3,7 @@
  * applies events. The USB worker queues bounded, copied property groups. */
 typedef struct
 {
-    uint32_t discovered, last_seen;
+    uint32_t discovered, last_seen, date_added;
     bool afc, present;
 } live_track_t;
 static MOCK_LARGE_BSS live_track_t live_tracks[MAX_TRACKS];
@@ -12,6 +12,7 @@ static uint32_t live_revision = 1, live_batch;
 static bool live_in_batch, live_dirty;
 static bool live_publish;
 static bool live_suspended;
+static bool live_restore_stars;
 static char live_library[128], live_directory[192];
 static char live_remote_revision[128], live_committed_revision[128];
 typedef struct
@@ -130,7 +131,8 @@ static int song_compare(const void *left,const void *right)
     if(comparison) return song_sort_desc ? -comparison : comparison;
     comparison=strcasecmp(a->title,b->title);
     if(!comparison) comparison=strcasecmp(a->artist,b->artist);
-    return comparison ? comparison : (a->id>b->id)-(a->id<b->id);
+    if(!comparison) comparison=(a->id>b->id)-(a->id<b->id);
+    return mpd_library && song_sort_desc ? -comparison : comparison;
 }
 void player_sort_songs(int field,bool desc)
 {
@@ -149,7 +151,7 @@ void player_sort_songs(int field,bool desc)
         const media_index_track_t *dated=media_index_track(&live_afc,tracks[i].id);
         bool matched=dated && dated->album_pid==tracks[i].album_id;
         int album=live_album(tracks[i].album_id);
-        song_sort_dates[i]=matched ? dated->date_added : 0;
+        song_sort_dates[i]=mpd_library ? live_tracks[i].date_added : matched ? dated->date_added : 0;
         if(!live_afc.library_id[0] && live_tracks[i].afc && album>=0)
             song_sort_dates[i]=albums[album].date_added;
         song_sort_years[i]=tracks[i].year;
@@ -176,6 +178,7 @@ static void live_load_afc(void)
 static void live_dates(void)
 {
     song_order_ready=false;
+    artist_order_ready=false;
     for(int a = 0; a < album_count; a++)
     {
         if(live_afc.library_id[0])
@@ -190,6 +193,7 @@ static void live_dates(void)
                 albums[a].year = indexed->year;
             albums[a].date_added = 0;
         }
+        if(mpd_library) albums[a].date_added=0;
         albums[a].track_count = 0;
     }
     for(int i = 0; i < artist_count; i++)
@@ -206,8 +210,8 @@ static void live_dates(void)
             live_tracks[i].afc = dated && dated->album_pid == album->album_pid;
         if(!live_tracks[i].afc)
             album->afc_synced = false;
-        if(dated && dated->date_added > album->date_added)
-            album->date_added = dated->date_added;
+        uint32_t date=mpd_library ? live_tracks[i].date_added : dated ? dated->date_added : 0;
+        if(date>album->date_added) album->date_added=date;
         if(dated && dated->album_pid==album->album_pid)
         {
             if(dated->disc_no) tracks[i].disc_no=dated->disc_no;
@@ -429,6 +433,11 @@ static void live_save(void) { }
 static void live_init(void)
 {
     song_order_ready=false;
+    artist_order_ready=false;
+    live_restore_stars=true;
+#ifdef ESP_PLATFORM
+    mpd_library=!strncmp(app_config_library_id(),"MPD-",4);
+#endif
     memset(live_tracks, 0, sizeof(live_tracks));
     media_index_clear(&live_afc);
     for(int i = 0; i < track_count; i++)
@@ -484,6 +493,7 @@ static void live_upsert(const player_media_item_t *item)
 {
     if(!item->pid)
         return;
+    if(item->fields & PLAYER_MEDIA_MPD) { mpd_library=true; real_library=true; }
     int index = track_index_by_id(item->pid);
     bool added = index < 0;
     if(added && (!item->title[0] || !item->album_pid || track_count == MAX_TRACKS))
@@ -493,6 +503,7 @@ static void live_upsert(const player_media_item_t *item)
     if(added)
     {
         index = track_count++;
+        live_restore_stars=true;
         memset(&tracks[index], 0, sizeof(tracks[index]));
         live_tracks[index] = (live_track_t) { .discovered = live_batch };
         tracks[index].id = item->pid;
@@ -567,6 +578,13 @@ static void live_upsert(const player_media_item_t *item)
         track->disc_no = item->disc_no;
     if(item->year)
         track->year = album->year = item->year;
+    if(item->fields & PLAYER_MEDIA_MPD) {
+        if(live_tracks[index].date_added!=item->date_added) {
+            live_tracks[index].date_added=item->date_added;
+            song_order_ready=false; live_dirty=live_publish=true;
+        }
+    }
+    artist_order_ready=false;
     live_tracks[index].present = true;
     const media_index_track_t *dated = media_index_track(&live_afc, item->pid);
     if(live_afc.library_id[0])
@@ -614,6 +632,12 @@ static void live_finish(void)
     live_album_ready = false;
     track_id_index_build();
     membership_index_build();
+#ifdef ESP_PLATFORM
+    if(live_restore_stars && app_config_sd_ready()) {
+        star_store_load(app_config_library_stars_path(),tracks,track_count,track_starred);
+        live_restore_stars=false;
+    }
+#endif
     live_covers();
     player_sort_albums(album_sort_field, album_sort_desc);
     live_in_batch = false;
