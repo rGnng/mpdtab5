@@ -61,6 +61,8 @@ app_config_t g_app_config = {
     .fast_scroll_hold_ms = 300,
     .brightness = 70,
     .usb_mode = 0,
+    .usb_net_ip = USB_NET_DEFAULT_IP,
+    .usb_net_client_ip = USB_NET_DEFAULT_CLIENT_IP,
     .debug_log = false,
     .iap2_mode = true,
 };
@@ -484,6 +486,8 @@ static void set_defaults(void)
     g_app_config.brightness = 70;
     g_app_config.screen_off_minutes = 0;
     g_app_config.usb_mode = 0;
+    snprintf(g_app_config.usb_net_ip,sizeof(g_app_config.usb_net_ip),"%s",USB_NET_DEFAULT_IP);
+    snprintf(g_app_config.usb_net_client_ip,sizeof(g_app_config.usb_net_client_ip),"%s",USB_NET_DEFAULT_CLIENT_IP);
     g_app_config.theme = 0;
     g_app_config.boot_screen = 0;
     g_app_config.ble_enabled = true;
@@ -584,6 +588,14 @@ static void load_from_json(const char * text)
     if(cJSON_IsNumber(item) && item->valuedouble == item->valueint &&
        (item->valueint == 0 || item->valueint == 30 || item->valueint == 60)) {
         g_app_config.screen_off_minutes = (uint8_t)item->valueint;
+    }
+    const cJSON *usb_ip=cJSON_GetObjectItemCaseSensitive(root,"usb_net_ip");
+    const cJSON *usb_client=cJSON_GetObjectItemCaseSensitive(root,"usb_net_client_ip");
+    const char *server=cJSON_IsString(usb_ip) ? usb_ip->valuestring : g_app_config.usb_net_ip;
+    const char *client=cJSON_IsString(usb_client) ? usb_client->valuestring : g_app_config.usb_net_client_ip;
+    if(usb_net_address_plan(server,client,NULL)) {
+        if(cJSON_IsString(usb_ip)) snprintf(g_app_config.usb_net_ip,sizeof(g_app_config.usb_net_ip),"%s",server);
+        if(cJSON_IsString(usb_client)) snprintf(g_app_config.usb_net_client_ip,sizeof(g_app_config.usb_net_client_ip),"%s",client);
     }
     item = cJSON_GetObjectItemCaseSensitive(root, "usb_mode");
     if(cJSON_IsNumber(item)) {
@@ -725,6 +737,8 @@ esp_err_t app_config_save(void)
     cJSON_AddNumberToObject(root, "brightness", g_app_config.brightness);
     cJSON_AddNumberToObject(root, "screen_off_minutes", g_app_config.screen_off_minutes);
     cJSON_AddNumberToObject(root, "usb_mode", g_app_config.usb_mode);
+    cJSON_AddStringToObject(root,"usb_net_ip",g_app_config.usb_net_ip);
+    cJSON_AddStringToObject(root,"usb_net_client_ip",g_app_config.usb_net_client_ip);
     cJSON_AddNumberToObject(root, "theme", g_app_config.theme);
     cJSON_AddNumberToObject(root, "boot_screen", g_app_config.boot_screen);
     cJSON_AddBoolToObject(root, "ble_enabled", g_app_config.ble_enabled);

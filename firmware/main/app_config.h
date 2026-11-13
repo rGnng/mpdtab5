@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "usb_net_config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,6 +40,8 @@ typedef struct {
     uint16_t fast_scroll_hold_ms; /* 150, 300 (default), 500, 1500 */
     uint8_t screen_off_minutes; /* 0 = disabled (default), 30, 60 */
     uint8_t usb_mode;
+    char usb_net_ip[USB_NET_IPV4_CAP];
+    char usb_net_client_ip[USB_NET_IPV4_CAP];
     uint8_t theme;              /* 0 = Gray, 1 = Aqua, 2 = Windows 95 */
     uint8_t boot_screen;        /* 0 = off, 1 = KCN4M1 boot animation */
     bool ble_enabled;           /* Bluetooth remote enabled */

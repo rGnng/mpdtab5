@@ -38,7 +38,7 @@ class SetupFormTest(unittest.TestCase):
         fixtures={
             '/api/mpd':{'host':'music.local','port':6601,'password_set':True},
             '/api/status':{'mpd_status':'MPD connected','mpd_host':'music.local','mpd_port':6601,'mpd_connected':True,'sd_ready':True,'mpd_volume':45,'catalog':{'albums':2,'tracks':4},'storage_root':'/sdcard/mpd/'},
-            '/api/config':{'volume':65,'brightness':70},'/api/power':{},
+            '/api/config':{'volume':65,'brightness':70,'usb_mode':0,'usb_net_ip':'172.32.30.1','usb_net_client_ip':'172.32.30.2'},'/api/power':{},
         }
         if path in fixtures:
             route.fulfill(status=200,content_type='application/json',body=json.dumps(fixtures[path])); return
@@ -68,6 +68,24 @@ class SetupFormTest(unittest.TestCase):
         self.assertEqual(self.posts,[])
         self.page.locator('#mpd_port').fill('6600')
         self.assertEqual(self.submit()['host'],'')
+
+    def test_usb_network_addresses_load_and_save_as_strings(self):
+        self.assertEqual(self.page.locator('#usb_net_ip').input_value(),'172.32.30.1')
+        self.assertEqual(self.page.locator('#usb_net_client_ip').input_value(),'172.32.30.2')
+        self.page.locator('#usb_net_ip').fill('192.168.80.10')
+        self.page.locator('#usb_net_client_ip').fill('192.168.80.11')
+        self.page.evaluate('saveConfig()')
+        self.page.wait_for_function("document.getElementById('toast').textContent.length > 0")
+        self.assertEqual(self.posts[-1],('/api/config',{
+            'usb_net_ip':'192.168.80.10','usb_net_client_ip':'192.168.80.11'}))
+        self.assertIn('no gateway',self.page.locator('#system').inner_text())
+        self.assertIn('One DHCP client',self.page.locator('#system').inner_text())
+        self.assertIn('Reboot',self.page.locator('#system').inner_text())
+    def test_usb_network_status_does_not_replace_wifi_address(self):
+        self.page.evaluate("render({...S,ip:'10.0.0.181',usb_network:{ready:true,connected:true,ip:'172.32.30.1'}},C,{})")
+        rows=self.page.locator('#device_rows').inner_text()
+        self.assertIn('172.32.30.1',rows)
+        self.assertIn('10.0.0.181',rows)
 
     def test_cache_progress_and_activity_states(self):
         for state,label in [('caching','Caching artwork'),('paused','Paused while using Tab5'),

@@ -31,6 +31,8 @@
 #include "thumb_cache.h"
 #include "jpeg_thumbnail.h"
 #include "usb_host_core.h"
+#include "usb_network.h"
+#include "usb_boot_guard.h"
 #include "mpd_client.h"
 #include "web_server.h"
 #include "wifi_manager.h"
@@ -358,6 +360,7 @@ void app_main(void)
     /* Install the in-memory log mirror before anything else so boot and
      * Wi-Fi/USB logs are available from the web debug page. */
     debug_log_init();
+    usb_boot_guard_init();
 
     ESP_LOGI(TAG, "MPD Tab5 firmware starting (build %s %s)",
              __DATE__, __TIME__);
@@ -516,6 +519,11 @@ void app_main(void)
     esp_err_t netif_err = esp_netif_init();
     if(netif_err == ESP_OK || netif_err == ESP_ERR_INVALID_STATE) {
         esp_event_loop_create_default();
+    }
+
+    if(g_app_config.usb_mode==0 && usb_boot_guard_allow()) {
+        usb_boot_guard_arm();
+        usb_network_start(g_app_config.usb_net_ip,g_app_config.usb_net_client_ip);
     }
 
     web_server_set_apply_cb(web_apply_runtime_config);

@@ -2,7 +2,7 @@
 var T = window.Tab5, S = {}, C = {}, dirty = {}, pending = {};
 var $ = function (id) { return document.getElementById(id); };
 var configFields = ['volume','brightness','screen_off_minutes','theme','sound_mode',
-  'debug_log','usb_mode','screen_flip','wifi_mode','ap_ssid'];
+  'debug_log','usb_mode','usb_net_ip','usb_net_client_ip','screen_flip','wifi_mode','ap_ssid'];
 function toast(msg, bad) {
   $('toast').textContent = msg; $('toast').className = 'on' + (bad ? ' bad' : '');
   clearTimeout(toast.timer); toast.timer = setTimeout(function () { $('toast').className = ''; }, 4000);
@@ -74,6 +74,8 @@ function render(s,c,p) {
     T.row('Playback volume',s.mpd_volume>=0 ? s.mpd_volume+'%' : 'Mixer unavailable')+
     T.row('WiFi',s.wifi)+T.row('IP',s.ip)+T.row('SD card',s.sd_ready ? T.bytes(s.sd_used)+' / '+T.bytes(s.sd_total) : 'Missing')+
     T.row('Uptime',T.time(s.uptime_s))+T.row('Free heap',T.bytes(s.free_heap))+T.row('Free PSRAM',T.bytes(s.free_psram))+T.row('Last reset',T.reset(s.reset_reason));
+  var usb=s.usb_network || {};
+  $('device_rows').innerHTML+=T.row('USB-C network',usb.ready ? (usb.connected ? 'Connected · ' : 'Ready · ')+usb.ip : 'Inactive');
   var power=T.power(p,c);
   $('charge_state').textContent=power.state; $('charge_state').className='micro '+power.cls;
   $('power_rows').innerHTML=T.row('Battery voltage',power.voltage)+T.row('Current flow',power.flow,power.cls)+
@@ -98,7 +100,7 @@ function saveConfig() {
   var body={}, snapshot={};
   configFields.forEach(function (id) {
     if (!dirty[id]) return;
-    snapshot[id]=value(id); body[id]=$(id).type==='checkbox' ? value(id) : id==='ap_ssid' ? value(id) : +value(id);
+    snapshot[id]=value(id); body[id]=$(id).type==='checkbox' ? value(id) : ['ap_ssid','usb_net_ip','usb_net_client_ip'].includes(id) ? value(id) : +value(id);
   });
   if (!Object.keys(body).length) { toast('No changes'); return; }
   postConfig(body).then(function (t) { saved(snapshot); toast(t); refresh(); }).catch(function(e) { toast(e.message,true); });

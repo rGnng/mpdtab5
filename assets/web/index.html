@@ -122,6 +122,9 @@
             <option value="2">USB-A HS &amp; USB-C OTG</option>
           </select>
         </label>
+        <label class="field"><span class="lbl">USB-C network IP</span><input id="usb_net_ip" type="text" maxlength="15" placeholder="172.32.30.1" autocomplete="off" spellcheck="false"></label>
+        <label class="field"><span class="lbl">USB-C DHCP client IP</span><input id="usb_net_client_ip" type="text" maxlength="15" placeholder="172.32.30.2" autocomplete="off" spellcheck="false"></label>
+        <div class="hint">USB-C CDC-NCM networking runs in USB-A HighSpeed Only mode. One DHCP client, /24 subnet, no gateway. Reboot after changing USB mode or addresses.</div>
         <label class="field"><span class="lbl">Screen orientation</span>
           <select id="screen_flip"><option value="0">0°</option><option value="180">180°</option></select>
         </label>

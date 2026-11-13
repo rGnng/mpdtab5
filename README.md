@@ -82,6 +82,33 @@ left in place. Wi-Fi/BLE radio internals still use their ESP-IDF/NimBLE system
 storage; this app imports existing credentials/controller preferences without
 rewriting the old application's configuration.
 
+## USB-C network
+
+In **USB-A HighSpeed Only** mode, USB-A remains a high-speed host and USB-C
+exposes a **CDC-NCM network adapter** named **MPD Tab5**.
+
+| Setting | Default |
+| --- | --- |
+| Tab5 USB address | `172.32.30.1` |
+| DHCP client address | `172.32.30.2` |
+| Netmask | `255.255.255.0` (`/24`) |
+| DHCP pool | Exactly one address |
+| Advertised gateway / DNS | None |
+
+Connect USB-C with a data cable and open `http://172.32.30.1/` for the same web
+settings, diagnostics and OTA interface. The attached computer can also run
+MPD; configure its USB address (`172.32.30.2` by default) as the MPD server.
+Wi-Fi remains available alongside USB, and the USB link does not route or
+bridge Internet traffic.
+
+The web interface's **System** section has **USB-C network IP** and
+**USB-C DHCP client IP** fields. Choose distinct host addresses within the
+same `/24` subnet, save, and reboot to apply. Settings are stored in
+`/sdcard/mpd/config.json`. USB-C remains a host in **USB-A HS & USB-C OTG**
+mode; USB networking starts only in **USB-A HighSpeed Only** mode.
+`/api/status` reports the active USB addresses, link state, and packet counters
+under `usb_network`, separately from Wi-Fi.
+
 ## Build and OTA
 
 Use **ESP-IDF 5.5.6**, with the ESP32-P4 tools installed:
@@ -115,6 +142,7 @@ SD cache namespaces.
 ```bash
 python3 tools/gen_web_ui.py  # after editing assets/web/
 python3 -m unittest discover -s tests -p 'test_mpd_*.py' -v
+python3 -m unittest discover -s tests -p 'test_usb_*.py' -v
 python3 -m unittest discover -s tests -p 'test_album_view.py' -v
 python3 -m unittest discover -s tests -p 'test_thumb_identity.py' -v
 cmake -S . -B build -G Ninja -DIAP2TAB5_BUILD_UI_TESTS=ON

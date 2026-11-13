@@ -33,6 +33,8 @@
 #include "driver/i2c_master.h"
 #include "serial_input.h"
 #include "usb_hid_input.h"
+#include "usb_network.h"
+#include "usb_boot_guard.h"
 #include "usbmux_host.h"
 #include "lockdown_client.h"
 #include "afc_client.h"
@@ -765,6 +767,8 @@ static esp_err_t config_get(httpd_req_t * req)
     cJSON_AddBoolToObject(root, "sd_ready", app_config_sd_ready());
     cJSON_AddBoolToObject(root, "iap2_mode", g_app_config.iap2_mode);
     cJSON_AddNumberToObject(root, "usb_mode", g_app_config.usb_mode);
+    cJSON_AddStringToObject(root,"usb_net_ip",g_app_config.usb_net_ip);
+    cJSON_AddStringToObject(root,"usb_net_client_ip",g_app_config.usb_net_client_ip);
     cJSON_AddBoolToObject(root, "charge_enabled", g_app_config.charge_enabled);
     cJSON_AddBoolToObject(root, "qc_high", g_app_config.qc_high);
 
@@ -803,6 +807,21 @@ static esp_err_t config_post(httpd_req_t * req)
     if(root == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
     }
+
+    const cJSON *usb_ip=cJSON_GetObjectItemCaseSensitive(root,"usb_net_ip");
+    const cJSON *usb_client=cJSON_GetObjectItemCaseSensitive(root,"usb_net_client_ip");
+    if((usb_ip && !cJSON_IsString(usb_ip)) || (usb_client && !cJSON_IsString(usb_client))) {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"USB network IP addresses must be strings");
+    }
+    const char *server=usb_ip ? usb_ip->valuestring : g_app_config.usb_net_ip;
+    const char *client=usb_client ? usb_client->valuestring : g_app_config.usb_net_client_ip;
+    if(!usb_net_address_plan(server,client,NULL)) {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,
+            "USB addresses must be distinct unicast hosts in the same /24 subnet");
+    }
+    bool usb_changed=strcmp(server,g_app_config.usb_net_ip) || strcmp(client,g_app_config.usb_net_client_ip);
 
     const cJSON * enabled = cJSON_GetObjectItemCaseSensitive(root, "fast_scroll_enabled");
     if(enabled != NULL && !cJSON_IsBool(enabled)) {
@@ -935,14 +954,17 @@ static esp_err_t config_post(httpd_req_t * req)
                  item->valuestring);
     }
 
+    if(usb_ip) snprintf(g_app_config.usb_net_ip,sizeof(g_app_config.usb_net_ip),"%s",server);
+    if(usb_client) snprintf(g_app_config.usb_net_client_ip,sizeof(g_app_config.usb_net_client_ip),"%s",client);
     cJSON_Delete(root);
 
     esp_err_t save_err = app_config_save();
     if(s_apply_cb != NULL) s_apply_cb();
 
     char reply[128];
-    snprintf(reply, sizeof(reply), "saved%s",
-             save_err == ESP_OK ? "" : " (SD not available; RAM only)");
+    snprintf(reply, sizeof(reply), "saved%s%s",
+             save_err == ESP_OK ? "" : " (SD not available; RAM only)",
+             usb_changed ? "; reboot to apply USB network addresses" : "");
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, reply);
 }
@@ -1368,6 +1390,19 @@ static esp_err_t status_get(httpd_req_t * req)
         cJSON_AddStringToObject(root, "local_time", local_text);
     }
     cJSON_AddNumberToObject(root, "usb_mode", g_app_config.usb_mode);
+    usb_boot_guard_json(root);
+    usb_network_status_t usb_network; usb_network_status(&usb_network);
+    cJSON *usb_json=cJSON_AddObjectToObject(root,"usb_network");
+    cJSON_AddBoolToObject(usb_json,"ready",usb_network.ready);
+    cJSON_AddBoolToObject(usb_json,"connected",usb_network.connected);
+    cJSON_AddStringToObject(usb_json,"ip",usb_network.ip);
+    cJSON_AddStringToObject(usb_json,"client_ip",usb_network.client_ip);
+    cJSON_AddStringToObject(usb_json,"netmask","255.255.255.0");
+    cJSON_AddNullToObject(usb_json,"gateway");
+    cJSON_AddNumberToObject(usb_json,"dhcp_pool_size",1);
+    cJSON_AddNumberToObject(usb_json,"rx_packets",usb_network.rx_packets);
+    cJSON_AddNumberToObject(usb_json,"tx_packets",usb_network.tx_packets);
+    cJSON_AddNumberToObject(usb_json,"dropped_packets",usb_network.dropped_packets);
     cJSON_AddNumberToObject(root, "uptime_s", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
     cJSON_AddNumberToObject(root, "free_psram",

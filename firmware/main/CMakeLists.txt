@@ -17,6 +17,8 @@ idf_component_register(
         "usb_hid_input.c"
         "ulanzi_d100h.c"
         "usb_host_core.c"
+        "usb_network.c"
+        "usb_boot_guard.c"
         "usbmux_host.c"
         "lockdown_client.c"
         "scaled_tjpgd.c"
@@ -61,6 +63,7 @@ idf_component_register(
         app_update
         esp_wifi
         esp_netif
+        esp_tinyusb
         esp_event
         nvs_flash
         mbedtls
@@ -88,3 +91,6 @@ idf_component_get_property(tab5_jpeg_dir espressif__libjpeg-turbo COMPONENT_DIR)
 target_include_directories(${COMPONENT_LIB} PRIVATE "${tab5_jpeg_dir}/libjpeg-turbo/src")
 target_link_libraries(${COMPONENT_LIB} INTERFACE
     "-Wl,--wrap=jpeg_open_backing_store" "-Wl,-u,__wrap_jpeg_open_backing_store")
+
+# Recover Wi-Fi/OTA after an actual USB attachment panic.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler" "-Wl,--wrap=panic_abort")
