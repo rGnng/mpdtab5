@@ -568,6 +568,181 @@ static void live_song_focus(void)
           "A live song update must rebuild the sorted view and preserve selection");
 }
 
+
+static void album_pane_retention(void)
+{
+    ui_select_screen(SCR_ALBUMS);pump(500);albums_select(1);pump(400);
+    lv_obj_t *left=albums_left_list;
+    lv_obj_t *rows[ALBUMS_POOL];const void *covers[ALBUMS_POOL];
+    for(int i=0;i<ALBUMS_POOL;i++) {
+        rows[i]=albums_rows[i];covers[i]=lv_image_get_src(albums_row_covers[i]);
+    }
+    for(int index=2;index<=3;index++) {
+        albums_open((void*)(intptr_t)index);pump(300);
+        check(albums_left_list==left,"Opening another album must retain the left viewport");
+        for(int i=0;i<ALBUMS_POOL;i++) {
+            check(albums_rows[i]==rows[i],"Opening album details must retain pooled rows");
+            check(lv_image_get_src(albums_row_covers[i])==covers[i],"Opening album details must retain every loaded list cover");
+        }
+        check(g_focus_index>=0 && g_focus[g_focus_index].activate==albums_play_all_action,
+              "The retained list must still open the new album's Play control");
+    }
+    ui_handle_key(UI_KEY_BACK);pump(300);
+    check(albums_left_list==left && g_focus_count==0,"Back returns to the same virtual album viewport");
+    for(int i=0;i<ALBUMS_POOL;i++)
+        check(lv_image_get_src(albums_row_covers[i])==covers[i],"Returning to album navigation must retain list artwork");
+}
+
+static pagination_t *pager_for(lv_obj_t *list)
+{
+    for(unsigned i=0;i<sizeof(g_pagination)/sizeof(g_pagination[0]);i++)
+        if(g_pagination[i].list==list)return &g_pagination[i];
+    check(false,"Each list must own a pagination overlay");return NULL;
+}
+static void tap_pager(lv_obj_t *button)
+{
+    lv_area_t a;lv_obj_get_coords(button,&a);
+    lv_point_t hit={(a.x1+a.x2)/2,(a.y1+a.y2)/2};
+    pointer(hit.x,hit.y,true);
+    pointer(hit.x,hit.y,false);pump(350);
+}
+static int pagination_saved;
+static void pagination_save(const ui_system_config_t *cfg)
+{ pagination_saved=cfg->pagination_size; }
+
+static void pagination_views(void)
+{
+    touch=lv_indev_create();lv_indev_set_type(touch,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(touch,read_touch);ui_set_touch_enabled(true);ui_attach_touch(touch);
+    check(!g_system_config.pagination_size,"Pagination defaults to Off");
+    g_system_config.pagination_size=64;
+    ui_handle_key(UI_KEY_UP);
+    albums_selected=0;albums_left_scroll_y=0;
+    ui_select_screen(SCR_ALBUMS);pump(400);
+    check(lv_obj_has_flag(pager_for(albums_left_list)->controls,LV_OBJ_FLAG_HIDDEN),
+          "Keyboard navigation must keep pagination hidden");
+    /* A real touch switches the existing view into touch navigation. */
+    pointer(54,35,true);pointer(54,35,false);pump(100);
+    pagination_t *left=pager_for(albums_left_list);
+    check(lv_obj_is_visible(left->controls),"On touch must reveal list pagination");
+    check(lv_obj_get_width(left->up)==64 && lv_obj_get_height(left->up)==64 &&
+          lv_obj_get_width(left->down)==64 && lv_obj_get_height(left->down)==64,
+          "On touch 64 must create two 64 by 64 touch targets");
+    check(lv_obj_get_style_opa(left->controls,0)==89,"Pagination is 65 percent transparent");
+    lv_obj_scroll_to_y(albums_left_list,0,LV_ANIM_OFF);pump(150);
+    if(getenv("TAB5_PAGINATION_FRAME")) {
+        FILE *out=fopen(getenv("TAB5_PAGINATION_FRAME"),"wb");
+        check(out!=NULL,"Pagination frame output opens");
+        fwrite(frame,1,sizeof(frame),out);fclose(out);
+    }
+    int before=lv_obj_get_scroll_y(albums_left_list);
+    int selected=albums_selected;
+    check(lv_obj_has_state(left->up,LV_STATE_DISABLED),"Page up is disabled at the top");
+    tap_pager(left->down);
+    check(lv_obj_get_scroll_y(albums_left_list)>before,"Page down must scroll the virtual album list");
+    check(albums_selected==selected,"Paging must not activate or change album selection");
+    lv_area_t a,b;lv_obj_get_coords(left->controls,&a);lv_obj_get_coords(albums_left_list,&b);
+    check(a.x2==b.x2-lv_obj_get_style_pad_right(albums_left_list,0) &&
+          a.y2==b.y2-lv_obj_get_style_pad_bottom(albums_left_list,0),
+          "Pagination follows the list's existing right and bottom margins");
+    tap_pager(left->up);
+    check(lv_obj_get_scroll_y(albums_left_list)==0,"Page up must return one viewport without overscrolling");
+    lv_obj_scroll_to_y(albums_left_list,1000000,LV_ANIM_OFF);pump(150);
+    check(lv_obj_has_state(left->down,LV_STATE_DISABLED),"Page down is disabled at the final viewport");
+    int bottom=lv_obj_get_scroll_y(albums_left_list);
+    tap_pager(left->up);
+    check(lv_obj_get_scroll_y(albums_left_list)<bottom,"Page up leaves the final viewport");
+    ui_handle_key(UI_KEY_DOWN);pump(100);
+    check(!lv_obj_is_visible(left->controls),"Physical navigation hides pagination");
+
+    lv_obj_t *retained_list=albums_left_list;
+    ui_system_config_t resized=g_system_config;resized.pagination_size=96;
+    ui_set_system_config(&resized);pump(100);
+    check(albums_left_list==retained_list && lv_obj_get_width(left->up)==96 &&
+          lv_obj_get_height(left->up)==96 && lv_obj_get_width(left->down)==96 &&
+          lv_obj_get_height(left->down)==96,"Size changes resize existing buttons without rebuilding the list");
+    check(!lv_obj_is_visible(left->controls),"Changing size preserves keyboard navigation mode");
+    screen_id_t pages[]={SCR_ALBUMS,SCR_ARTISTS,SCR_SONGS,SCR_PLAYLISTS,SCR_BLUETOOTH,SCR_SETTINGS};
+    for(unsigned n=0;n<sizeof(pages)/sizeof(pages[0]);n++) {
+        ui_select_screen(pages[n]);pump(500);
+        pointer(54,35,true);pointer(54,35,false);pump(100);
+        int count=0;
+        for(unsigned i=0;i<sizeof(g_pagination)/sizeof(g_pagination[0]);i++) {
+            pagination_t *p=&g_pagination[i];if(!p->list)continue;
+            count++;
+            check(lv_obj_is_valid(p->list) && lv_obj_is_valid(p->controls),"Page changes must retire all deleted lists");
+            check(lv_obj_is_visible(p->controls),"Every visible list has touch pagination");
+            check(lv_obj_get_width(p->up)==96 && lv_obj_get_height(p->up)==96 &&
+                  lv_obj_get_y(p->down)-lv_obj_get_y(p->up)==104,
+                  "On touch 96 uses 96-pixel buttons and preserves the 8-pixel gap");
+            int others[12];
+            for(int j=0;j<12;j++)others[j]=g_pagination[j].list?lv_obj_get_scroll_y(g_pagination[j].list):0;
+            bool scrollable=lv_obj_get_scroll_bottom(p->list)>0;
+            int old=lv_obj_get_scroll_y(p->list);
+            if(scrollable) {
+                tap_pager(p->down);
+                check(lv_obj_get_scroll_y(p->list)>old,"Page button must scroll its own viewport");
+                for(int j=0;j<12;j++)if(j!=(int)i && g_pagination[j].list)
+                    check(lv_obj_get_scroll_y(g_pagination[j].list)==others[j],"Paging one pane must preserve every other viewport");
+                tap_pager(p->up);
+            }
+        }
+        check(count==(pages[n]==SCR_SONGS || pages[n]==SCR_BLUETOOTH ? 1:2),
+              "Each page must register exactly one overlay per list");
+    }
+    ui_select_screen(SCR_NOW_PLAYING);pump(400);np_toggle_queue();pump(400);
+    pointer(54,35,true);pointer(54,35,false);pump(100);
+    check(np_queue_list && lv_obj_is_visible(pager_for(np_queue_list)->controls),
+          "Up Next also exposes its own touch pagination");
+    np_toggle_queue();pump(200);
+    ui_select_screen(SCR_SETTINGS);pump(400);
+    settings_open((void *)(intptr_t)SETTING_SCREEN);pump(300);
+    lv_obj_t *first=lv_obj_get_child(settings_right_content,0);
+    check(!strcmp(lv_label_get_text(lv_obj_get_child(first,0)),"Pagination"),
+          "Pagination is the first item in Screen settings");
+    ui_set_system_config_changed_cb(pagination_save);
+    settings_pagination_action(NULL);pump(100);
+    check(pagination_saved==0 && !strcmp(lv_label_get_text(settings_pagination_value),"Off"),
+          "Off must update its value and persist through the settings callback");
+    for(int i=0;i<12;i++)if(g_pagination[i].list)
+        check(!lv_obj_is_visible(g_pagination[i].controls),"Off removes pagination from both panes");
+    settings_pagination_action(NULL);pump(100);
+    check(pagination_saved==64 && !strcmp(lv_label_get_text(settings_pagination_value),"On touch 64"),
+          "On touch 64 must persist and use the normal menu value style");
+    settings_pagination_action(NULL);pump(100);
+    check(pagination_saved==96 && !strcmp(lv_label_get_text(settings_pagination_value),"On touch 96"),
+          "The third option must persist the 96-pixel size");
+    ui_set_touch_enabled(false);pump(100);
+    for(int i=0;i<12;i++)if(g_pagination[i].list)
+        check(!lv_obj_is_visible(g_pagination[i].controls),"Disabling touch hides pagination");
+    ui_set_touch_enabled(true);g_system_config.pagination_size=0;pagination_refresh();
+    ui_set_system_config_changed_cb(NULL);ui_attach_touch(NULL);lv_indev_delete(touch);touch=NULL;
+}
+
+static bool playlist_view_deleted;
+static void playlist_view_delete_cb(lv_event_t *event)
+{ LV_UNUSED(event);playlist_view_deleted=true; }
+
+static void playlist_updates_retain_album_covers(void)
+{
+    ui_select_screen(SCR_ALBUMS);pump(400);
+    lv_obj_t *left=albums_left_list;
+    player_track_t first,second;
+    check(player_song_get(0,&first) && player_song_get(1,&second),"Playlist update fixture has tracks");
+    player_library_playlists_reset();
+    player_library_playlist_item(0,"Remote mix",0);
+    player_library_playlist_item(0,NULL,first.id);pump(300);
+    check(albums_left_list==left,"Playlist-only updates must not rebuild album rows or covers");
+    ui_select_screen(SCR_PLAYLISTS);pump(400);
+    playlist_view_deleted=false;
+    lv_obj_add_event_cb(playlists_left_list,playlist_view_delete_cb,LV_EVENT_DELETE,NULL);
+    player_library_playlist_item(0,NULL,second.id);pump(300);
+    player_playlist_t playlist;
+    check(player_playlist_get(1,&playlist) && playlist.track_count==2,
+          "Playlist-only updates must remain visible without catalog invalidation");
+    check(playlist_view_deleted,"The visible Playlists page refreshes when server membership changes");
+}
+
 int main(int argc,char **argv)
 {
     lv_init();lv_display_t *display=lv_display_create(1280,720);
@@ -581,8 +756,11 @@ int main(int argc,char **argv)
     check(g_system_config.fast_scroll_trigger_window_ms==550,"Missing trigger configuration must default to 550 ms");
     alpha_fade();artist_viewport();scrollbar_views();pressed_controls();fast_navigation();
     cursor_band_views();settings_widget_lifetime();rapid_tab_navigation();sort_order_settings();
+    album_pane_retention();
+    pagination_views();
     live_album_focus();
     live_song_focus();
+    playlist_updates_retain_album_covers();
     puts("PASS: transparent text fade, Artists viewport restoration, column scrollbar geometry, page scrolling and theme cursor feedback");
     return 0;
 }

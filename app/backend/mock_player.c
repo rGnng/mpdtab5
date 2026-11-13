@@ -480,8 +480,8 @@ static void iap2_snapshot(player_snapshot_t * out, const mpd_state_t * state)
             star_idx = track_index_by_meta(state->title, state->album);
         }
     }
+    out->starred = state->track_key != 0 && state->starred;
     if(star_idx >= 0) {
-        out->starred = track_starred[star_idx];
         /* MPD's current-song reply has URI identity, while artist IDs belong
          * to the local catalog. Context navigation needs that relationship. */
         out->track.artist_id = tracks[star_idx].artist_id;
@@ -754,6 +754,9 @@ static int ids_playlist(int index, uint64_t * out, int max)
 {
     int n = 0;
     if(index == 0) {
+#if defined(ESP_PLATFORM)
+        if(mpd_client_is_enabled()) return mpd_client_star_copy(out,max);
+#endif
         for(int i = 0; i < track_count && n < max; i++) {
             if(track_starred[i]) out[n++] = tracks[i].id;
         }
@@ -1308,9 +1311,9 @@ void player_init(void)
     ESP_LOGI(TAG, "library indexes: %d tracks in %lld us", track_count,
              (long long)(esp_timer_get_time() - index_start));
     album_seen_load();
-    /* stars.csv is the source of truth across reboots. It is per-library, so
-     * switching iPods cannot leak stars into another media library. */
-    if(app_config_sd_ready()) {
+    /* MPD stars come exclusively from the server. Retain the legacy file
+     * path only for a non-MPD transport. */
+    if(!mpd_client_is_enabled() && app_config_sd_ready()) {
         star_store_load(app_config_library_stars_path(), tracks, track_count,
                         track_starred);
     }
@@ -1624,6 +1627,14 @@ bool player_artist_song_get(uint64_t artist_id, int index, player_track_t * out)
     return false;
 }
 
+uint32_t player_playlist_revision(void)
+{
+#if defined(ESP_PLATFORM)
+    if(mpd_client_is_enabled()) return live_playlist_revision + mpd_client_star_revision();
+#endif
+    return live_playlist_revision;
+}
+
 int player_playlist_count(void)
 {
 #if defined(ESP_PLATFORM)
@@ -1642,6 +1653,14 @@ bool player_playlist_get(int index, player_playlist_t * out)
 
     if(index == 0) {
         out->id = 0;
+#if defined(ESP_PLATFORM)
+        if(mpd_client_is_enabled()) {
+            out->local=false;
+            copy_str(out->name,sizeof(out->name),"Stared");
+            out->track_count=mpd_client_star_count();
+            return true;
+        }
+#endif
         out->local = true;
         copy_str(out->name, sizeof(out->name), "Starred");
         for(int i = 0; i < track_count; i++) {
@@ -1671,6 +1690,15 @@ bool player_playlist_track_get(int index, int track_index, player_track_t * out)
     if(track_index < 0 || out == NULL) return false;
 
     if(index == 0) {
+#if defined(ESP_PLATFORM)
+        if(mpd_client_is_enabled()) {
+            uint64_t key;
+            if(!mpd_client_star_get(track_index,&key)) return false;
+            const player_track_t *track=track_by_id(key);
+            if(!track) return false;
+            *out=*track; return true;
+        }
+#endif
         int seen = 0;
         for(int i = 0; i < track_count; i++) {
             if(!track_starred[i]) continue;
@@ -1906,37 +1934,18 @@ void player_mute_toggle(void)
 void player_toggle_star(void)
 {
 #if defined(ESP_PLATFORM)
-    /* In iAP2 mode the displayed track comes from the iPod, not from the
-     * local queue. Match its persistent key against library.bin so the star
-     * belongs to the song the user is actually looking at. */
     if(mpd_client_is_enabled()) {
         mpd_state_t state;
-        if(mpd_client_get_state(&state) && state.title[0] != '\0') {
-            int idx = state.track_key != 0
-                          ? track_index_by_id(state.track_key) : -1;
-            if(idx < 0) {
-                idx = track_index_by_meta(state.title, state.album);
-            }
-            if(idx < 0) {
-                ESP_LOGW(TAG, "star: track %016llX '%s' is not in library.bin",
-                         (unsigned long long)state.track_key, state.title);
-                return;
-            }
-            track_starred[idx] = !track_starred[idx];
-            if(app_config_sd_ready()) {
-                star_store_update(app_config_library_stars_path(),
-                                  app_config_library_id(), state.device_name,
-                                  &tracks[idx], track_starred[idx]);
-            }
-            bump_revision();
-            return;
-        }
+        if(mpd_client_get_state(&state) && state.connected && state.track_key)
+            mpd_client_toggle_star(state.track_key);
+        return;
     }
 #endif
     if(queue_count <= 0 || queue_index < 0 || queue_index >= queue_count) return;
     int idx = track_index_by_id(queue[queue_index]);
     if(idx < 0) return;
     track_starred[idx] = !track_starred[idx];
+    live_playlist_revision++;
 #if defined(ESP_PLATFORM)
     if(app_config_sd_ready()) {
         star_store_update(app_config_library_stars_path(),
@@ -1949,6 +1958,10 @@ void player_toggle_star(void)
 
 void player_clear_stars(void)
 {
+#if defined(ESP_PLATFORM)
+    if(mpd_client_is_enabled()) { mpd_client_clear_stars(); return; }
+#endif
+    live_playlist_revision++;
     memset(track_starred, 0, sizeof(track_starred));
 #if defined(ESP_PLATFORM)
     if(app_config_sd_ready()) {

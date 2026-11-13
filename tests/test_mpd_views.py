@@ -143,6 +143,17 @@ class MPDViewsTest(unittest.TestCase):
         for id in [4,2,4,1]:self.lib.player_library_playlist_item(0,None,id)
         self.lib.player_play_playlist(1);self.assertEqual(self.queue(),[4,2,4,1])
         self.lib.player_play_playlist_from(1,2);self.assertEqual(self.queue(),[4,1])
+    def test_playlist_changes_do_not_invalidate_catalog(self):
+        self.fixture();self.lib.player_library_poll()
+        catalog=self.lib.player_library_revision();playlists=self.lib.player_playlist_revision()
+        self.lib.player_library_playlists_reset()
+        self.lib.player_library_playlist_item(0,b'Mix',0)
+        self.lib.player_library_playlist_item(0,None,1)
+        self.assertEqual(self.lib.player_library_revision(),catalog)
+        self.assertGreater(self.lib.player_playlist_revision(),playlists)
+        self.assertFalse(self.lib.player_library_poll())
+        self.assertEqual(self.lib.player_playlist_track_count(1),1)
+
     def test_empty_playlist_does_not_replace_existing_queue(self):
         self.fixture();self.lib.player_play_album(10);before=self.queue()
         self.lib.player_play_playlist(0);self.assertEqual(self.queue(),before)

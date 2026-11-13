@@ -22,10 +22,25 @@ runs on **your MPD server's audio output**. The Tab5 is a remote control.
    and stored-playlist changes. **Resync library** is also available manually.
 
 Playback controls include play/pause, previous/next, seek, volume, mute,
-shuffle, repeat all/one, local stars, starting albums/artists/songs/playlists,
+shuffle, repeat all/one, server stars, starting albums/artists/songs/playlists,
 and jumping to entries in Up Next. Touch, USB, BLE and web inputs use the same
 player functions. Hold previous/next on the Ulanzi to seek; hold the knob and
 turn it to change MPD volume.
+
+**Settings → Screen → Pagination** offers **Off** (default), **On touch 64**,
+or **On touch 96**. The numbers set each button’s width and height in pixels.
+On touch adds stacked page-up/down buttons at the lower right of every list,
+including both panes in split views and Up Next. Each button pages only its own
+list. Controls use 65% transparency, follow the existing content margins, and
+hide when keyboard/knob navigation resumes or touch is disabled. The setting is
+saved in `/sdcard/mpd/config.json` and is also available on the web System page.
+
+Stars use Tracks’ server-side **Stared** playlist. The Tab5 reads its membership,
+adds songs with `playlistadd`, and removes them with `playlistdelete`. The star
+icon and Stared view reflect confirmed server state; MPD mode does not read or
+write local star files. Stored-playlist notifications refresh remote changes,
+with a 10-second polling fallback for Tracks UI edits that omit notifications.
+Stared appears once in Playlists, without a Local label, and retains server order.
 
 Standard MPD 0.21+ and [Tracks](https://github.com/rGnng/tracks) are supported.
 The client detects servers without compatible filter/window queries and falls
@@ -53,6 +68,9 @@ pass is in progress. While disconnected, the Tab5 shows only
 interface retains its detailed progress bar, missing/failed counts, and
 paused/active/completed states.
 
+Opening another album retains the left viewport and its loaded covers; only
+the detail pane is rebuilt. Playback changes to known tracks do not republish
+the catalog or invalidate list artwork.
 Covers update in place without rebuilding the album list. MPD keeps the growing
 thumbnail pack on SD, using bounded row caches in RAM. **Resync library** retries
 skipped albums.
@@ -71,7 +89,7 @@ All application files are under **`/sdcard/mpd/`**:
 | `wifi.txt` | Wi-Fi SSID and password, one per line |
 | `bluetooth.txt` | Known controllers and reconnect preference |
 | `uris.bin` | Active MPD URI lookup strings, streamed from SD |
-| `lib/<server-id>/` | Per-server catalog, stars, thumbnail pack and cover caches |
+| `lib/<server-id>/` | Per-server catalog, thumbnail pack and cover caches |
 | `lib/<server-id>/covers/` | Album-PID 360×360 covers and temporary artwork downloads |
 | `lib/<server-id>/np/` | Now Playing RGB565 cover cache |
 | `debug.log`, `debug.old.log` | Optional logs |
@@ -157,13 +175,22 @@ when Playwright is unavailable. Existing source assets and their notices are
 retained. MPD framing and command semantics follow the
 [official protocol documentation](https://mpd.readthedocs.io/en/stable/protocol.html).
 
+Queue refreshes allocate for the reported queue size. If memory is temporarily
+unavailable, the previous queue remains visible and the refresh retries without
+disconnecting MPD. Protocol errors in the device log include the command verb
+and receive errors include the socket error number.
+If Tracks accepts TCP connections but closes them before the MPD greeting,
+check its 32-client connection limit. Fully quit and reopen Tracks to reset
+the count; toggling its MPD service can leave old connection slots occupied.
+
 Current bounds: 24,000 library/queue entries, 4,096 albums, 2,048 album artists,
 32 stored playlists with up to 1,024 tracks each. Oversized network responses
 fail with a status message. Date Added uses MPD's `added` timestamp, falls
 back to `Last-Modified`, then to stable local discovery order. Album and song
 Name/Year/Date Added sorts support both directions. Playback follows each
 view's displayed order, and queue jumps use stable MPD entry IDs. Search and
-playlist editing are not implemented.
+general playlist editing are not implemented; starring and unstarring through
+Stared are supported.
 
 Upstream base: `rGnng/iap2tab5@76c99718d4ed5afa7ff3a3cb9f5cfb4db12dcd91`.
 

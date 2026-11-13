@@ -95,6 +95,7 @@ typedef struct {
     int song_sort_desc;
     int menubar_left;
     int touch_enabled;
+    int pagination_size; /* 0 = Off (default), 64 or 96 = On touch button size */
     int np_bg_mode;        /* 0 = theme, 1 = blurred, 2 = gradient */
     bool fast_scroll_enabled; /* default true; retains threshold when disabled */
     int fast_scroll_pages; /* 1..5 pages per trigger window; default 2 */

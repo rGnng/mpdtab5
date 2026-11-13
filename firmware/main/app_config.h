@@ -32,6 +32,7 @@ typedef struct {
     bool song_sort_desc;
     bool menubar_left;
     bool touch_enabled;
+    uint8_t pagination_size; /* 0 = Off, 64 or 96 = On touch button size */
     uint8_t np_bg_mode;
     uint8_t brightness;        /* 1..100; a requested 0 falls back to Low (45) */
     bool fast_scroll_enabled; /* default true; preserves threshold when disabled */

@@ -56,6 +56,11 @@ static bool unpaged_server;
 static unsigned database_songs;
 static unsigned event_flags;
 static int last_playlist=-1;
+static bool queue_refresh_pending;
+static uint64_t *star_keys;
+static int star_count;
+static uint32_t star_revision;
+static bool stars_refresh_pending;
 static char database_revision[64];
 static int mpd_playlist_version;
 static bool mpd_updating;
@@ -68,7 +73,7 @@ static void artwork_register(uint64_t album, uint64_t track);
 static void artwork_reset(void);
 static void artwork_step(uint32_t generation);
 
-typedef enum { CMD_TEXT, CMD_PLAY, CMD_ALL, CMD_JUMP } command_kind_t;
+typedef enum { CMD_TEXT, CMD_PLAY, CMD_ALL, CMD_JUMP, CMD_STAR, CMD_CLEAR_STARS } command_kind_t;
 typedef struct {
     command_kind_t kind;
     uint32_t generation;
@@ -160,6 +165,30 @@ static esp_err_t text_command(const char *text) {
 }
 esp_err_t mpd_client_seek_ms(uint32_t ms) { char cmd[64]; snprintf(cmd,sizeof(cmd),"seekcur %.3f",ms/1000.0); return text_command(cmd); }
 esp_err_t mpd_client_set_shuffle(bool on) { return text_command(on ? "random 1" : "random 0"); }
+esp_err_t mpd_client_toggle_star(uint64_t key) {
+    if(!key) return ESP_ERR_INVALID_ARG;
+    command_t c={.kind=CMD_STAR,.count=1};
+    c.keys=malloc(sizeof(*c.keys)); if(!c.keys) return ESP_ERR_NO_MEM;
+    c.keys[0]=key; return enqueue(&c);
+}
+esp_err_t mpd_client_clear_stars(void) { command_t c={.kind=CMD_CLEAR_STARS}; return enqueue(&c); }
+int mpd_client_star_count(void) { take(); int n=star_count; give(); return n; }
+uint32_t mpd_client_star_revision(void) { take(); uint32_t r=star_revision; give(); return r; }
+bool mpd_client_star_get(int index,uint64_t *key) {
+    take(); bool ok=key && index>=0 && index<star_count;
+    if(ok) *key=star_keys[index];
+    give(); return ok;
+}
+int mpd_client_star_copy(uint64_t *keys,int capacity) {
+    if(!keys || capacity<=0) return 0;
+    take(); int n=star_count<capacity ? star_count : capacity;
+    if(n) memcpy(keys,star_keys,n*sizeof(*keys));
+    give(); return n;
+}
+static int star_position(uint64_t key) {
+    for(int i=0;i<star_count;i++) if(star_keys[i]==key) return i;
+    return -1;
+}
 esp_err_t mpd_client_queue_jump(int index) {
     command_t c={.kind=CMD_JUMP};
     take();
@@ -255,11 +284,12 @@ static bool uri_insert(const char *uri) {
 typedef struct {
     player_media_item_t item;
     char uri[2048];
-    bool library, queue, stored;
+    bool library, queue, stored, catalog_changed, stars, failed;
     uint32_t modified, song_id;
     uint64_t first_key;
     int playlist;
     int count;
+    int capacity;
     uint64_t *keys;
     uint32_t *ids;
 } song_parser_t;
@@ -283,6 +313,18 @@ static bool song_finish(song_parser_t *p) {
         artwork_register(p->item.album_pid,p->item.pid);
 #endif
         player_library_update(&p->item);
+        p->catalog_changed=true;
+    }
+    if(p->stars && !p->failed) {
+        if(p->count>=TRACK_LIMIT) p->failed=true;
+        else if(p->count>=p->capacity) {
+            int capacity=p->capacity ? p->capacity*2 : 32;
+            if(capacity>TRACK_LIMIT) capacity=TRACK_LIMIT;
+            uint64_t *keys=heap_caps_realloc(p->keys,capacity*sizeof(*keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+            if(keys) { p->keys=keys; p->capacity=capacity; }
+            else p->failed=true; /* Drain the response; retain the last confirmed snapshot. */
+        }
+        if(!p->failed) p->keys[p->count]=p->item.pid;
     }
     if(p->stored && !uri_lookup(p->item.pid)) {
         if(!uri_insert(p->uri)) return false;
@@ -290,9 +332,15 @@ static bool song_finish(song_parser_t *p) {
         artwork_register(p->item.album_pid,p->item.pid);
 #endif
         player_library_update(&p->item);
+        p->catalog_changed=true;
     }
     if(p->queue) {
-        if(p->count>=QUEUE_LIMIT) return false;
+        /* A queue can grow between status and playlistinfo. Drain the reply
+         * and retry with its new size, without losing the control socket. */
+        if(p->count >= (p->capacity ? p->capacity : QUEUE_LIMIT)) {
+            p->count++;
+            return true;
+        }
         p->keys[p->count]=p->item.pid;
         if(p->ids) p->ids[p->count]=p->song_id;
         /* Queue-only streams have real metadata and remain selectable. */
@@ -302,9 +350,10 @@ static bool song_finish(song_parser_t *p) {
             artwork_register(p->item.album_pid,p->item.pid);
 #endif
             player_library_update(&p->item);
+            p->catalog_changed=true;
         }
     }
-    if(p->stored && p->count<1024) player_library_playlist_item(p->playlist,NULL,p->item.pid);
+    if(p->stored && !p->stars && p->count<1024) player_library_playlist_item(p->playlist,NULL,p->item.pid);
     p->count++; return true;
 }
 static bool song_field(const char *key,const char *value,void *ctx) {
@@ -400,36 +449,98 @@ static bool poll_state(void) {
     mpd_updating=false; remote_repeat=remote_single=false; reported_queue_size=0;
     if(!mpd_wire_command(&wire,"status",status_field,NULL,&next)) return false;
     next.repeat=remote_repeat ? (remote_single ? 1 : 2) : 0;
-    song_parser_t *p=calloc(1,sizeof(*p)); if(!p) return false;
+    song_parser_t parser={0};
+    song_parser_t *p=&parser;
     bool ok=mpd_wire_command(&wire,"currentsong",song_field,NULL,p) && song_finish(p);
     if(ok && p->uri[0]) {
         next.track_key=p->item.pid; next.album_pid=p->item.album_pid;
-        snprintf(next.title,sizeof(next.title),"%s",p->item.title);
-        snprintf(next.artist,sizeof(next.artist),"%s",p->item.artist);
-        snprintf(next.album,sizeof(next.album),"%s",p->item.album);
+        text_copy(next.title,sizeof(next.title),p->item.title);
+        text_copy(next.artist,sizeof(next.artist),p->item.artist);
+        text_copy(next.album,sizeof(next.album),p->item.album);
         if(!next.duration_ms) next.duration_ms=p->item.duration_ms;
     }
-    if(ok) snprintf(current_uri,sizeof(current_uri),"%s",p->uri);
-    free(p);
-    if(ok) publish(&next);
+    if(ok) text_copy(current_uri,sizeof(current_uri),p->uri);
+    if(ok) { take(); next.starred=star_position(next.track_key)>=0; give(); publish(&next); }
     return ok;
 }
 static bool sync_queue(void) {
-    song_parser_t *p=calloc(1,sizeof(*p)); if(!p) return false;
+    song_parser_t parser={0};
+    song_parser_t *p=&parser;
     p->queue=true;
-    p->ids=heap_caps_malloc(QUEUE_LIMIT*sizeof(uint32_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-    p->keys=heap_caps_malloc(QUEUE_LIMIT*sizeof(uint64_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-    if(!p->keys || !p->ids) { free(p->ids); free(p->keys); free(p); return false; }
+    p->capacity=reported_queue_size < 32 ? 32 : reported_queue_size;
+    if(p->capacity > QUEUE_LIMIT) p->capacity=QUEUE_LIMIT;
+    queue_refresh_pending=true;
+    p->ids=heap_caps_malloc(p->capacity*sizeof(uint32_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    p->keys=heap_caps_malloc(p->capacity*sizeof(uint64_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!p->keys || !p->ids) {
+        free(p->ids); free(p->keys);
+        message("Queue refresh deferred: not enough memory");
+        ESP_LOGW(TAG,"queue allocation failed: entries=%d, PSRAM free=%u largest=%u",
+            p->capacity, (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+        return true; /* A local allocation failure is not a lost connection. */
+    }
     bool ok=mpd_wire_command(&wire,"playlistinfo",song_field,NULL,p) && song_finish(p);
-    if(ok) player_library_complete();
-    if(ok) { take(); memcpy(queue_keys,p->keys,p->count*sizeof(uint64_t)); memcpy(queue_ids,p->ids,p->count*sizeof(uint32_t)); queue_size=p->count; queue_revision++; give(); }
-    free(p->ids); free(p->keys); free(p); return ok;
+    /* Playback/queue changes do not invalidate the library or its thumbnails.
+     * Only newly discovered queue-only tracks need a catalog publication. */
+    if(ok && p->catalog_changed) player_library_complete();
+    if(ok && p->count <= p->capacity) {
+        take(); memcpy(queue_keys,p->keys,p->count*sizeof(uint64_t)); memcpy(queue_ids,p->ids,p->count*sizeof(uint32_t)); queue_size=p->count; queue_revision++; give();
+        queue_refresh_pending=false;
+    }
+    free(p->ids); free(p->keys);
+    return ok || wire.fd>=0;
+}
+
+static bool sync_stars(void) {
+    song_parser_t parser={.stored=true,.stars=true};
+    stars_refresh_pending=true;
+    bool ok=mpd_wire_command(&wire,"listplaylistinfo \"Stared\"",song_field,NULL,&parser) && song_finish(&parser);
+    bool absent=!ok && wire.fd>=0 && strstr(wire.error,"ACK [50@");
+    if(ok && parser.catalog_changed) player_library_complete();
+    if((ok && !parser.failed) || absent) {
+        if(absent) { free(parser.keys); parser.keys=NULL; parser.count=0; }
+        take();
+        bool changed=star_count!=parser.count ||
+            (star_count && memcmp(star_keys,parser.keys,star_count*sizeof(*star_keys)));
+        uint64_t *old=star_keys; star_keys=parser.keys; star_count=parser.count;
+        if(changed) star_revision++;
+        bool starred=star_position(state.track_key)>=0;
+        if(state.starred!=starred) { state.starred=starred; state.revision++; }
+        give(); free(old);
+        stars_refresh_pending=false;
+    } else {
+        free(parser.keys);
+        message(parser.failed ? "Starred playlist refresh deferred: not enough memory or too many entries" : wire.error);
+    }
+    return ok || wire.fd>=0;
+}
+static bool change_star(uint64_t key,bool clear) {
+    /* Read immediately before a positional delete so external edits are seen.
+     * The requested track key is captured at input time, independent of next. */
+    if(!sync_stars()) return false;
+    if(stars_refresh_pending) return true;
+    char cmd[4160],quoted[4100];
+    if(clear) snprintf(cmd,sizeof(cmd),"playlistclear \"Stared\"");
+    else {
+        int position=star_position(key);
+        if(position>=0) snprintf(cmd,sizeof(cmd),"playlistdelete \"Stared\" %d",position);
+        else {
+            const char *uri=uri_lookup(key);
+            if(!uri || !mpd_quote(quoted,sizeof(quoted),uri)) {
+                message("Cannot star a track missing from the MPD catalog"); return true;
+            }
+            snprintf(cmd,sizeof(cmd),"playlistadd \"Stared\" %s",quoted);
+        }
+    }
+    if(!simple(cmd)) return false;
+    return sync_stars();
 }
 
 typedef struct { char names[32][256]; int count; } playlists_t;
 static bool playlist_field(const char *key,const char *value,void *ctx) {
     playlists_t *p=ctx;
-    if(!strcmp(key,"playlist") && p->count<32) {
+    if(!strcmp(key,"playlist") && strcasecmp(value,"Stared") && p->count<32) {
         if(strlen(value)>=sizeof(p->names[0])) return false;
         strcpy(p->names[p->count++],value);
     }
@@ -437,7 +548,7 @@ static bool playlist_field(const char *key,const char *value,void *ctx) {
 }
 static bool sync_playlists(void) {
     playlists_t *lists=calloc(1,sizeof(*lists)); if(!lists) return false;
-    bool ok=mpd_wire_command(&wire,"listplaylists",playlist_field,NULL,lists);
+    bool ok=mpd_wire_command(&wire,"listplaylists",playlist_field,NULL,lists), catalog_changed=false;
     if(ok) player_library_playlists_reset();
     for(int i=0;ok && i<lists->count;i++) {
         char quoted[520],cmd[560];
@@ -448,11 +559,12 @@ static bool sync_playlists(void) {
         if(!p) { ok=false; break; }
         p->stored=true; p->playlist=i;
         ok=mpd_wire_command(&wire,cmd,song_field,NULL,p) && song_finish(p);
+        catalog_changed|=p->catalog_changed;
         free(p);
     }
     free(lists);
-    if(ok) player_library_complete();
-    return ok;
+    if(ok && catalog_changed) player_library_complete();
+    return ok && sync_stars();
 }
 typedef struct { FILE *file; unsigned total, received, chunk; } art_transfer_t;
 static bool art_field(const char *key,const char *value,void *ctx) {
@@ -503,6 +615,8 @@ static bool play_selection(const uint64_t *keys,int count,int start) {
     return simple(cmd);
 }
 static bool run_command(command_t *c) {
+    if(c->kind==CMD_STAR) return c->keys && change_star(c->keys[0],false);
+    if(c->kind==CMD_CLEAR_STARS) return change_star(0,true);
     if(c->kind==CMD_PLAY) return play_selection(c->keys,c->count,c->start);
     if(c->kind==CMD_ALL) {
         uint64_t *keys=heap_caps_malloc(uri_count*sizeof(*keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
@@ -534,7 +648,9 @@ static void disconnected(void) {
     mpd_wire_close(&wire);
     mpd_wire_close(&events);
     take(); state.connected=state.identified=false; state.library_syncing=false; state.play_status=0; state.revision++;
-    queue_size=0; queue_revision++; art_valid=false; art_revision++; give();
+    queue_size=0; queue_revision++; art_valid=false; art_revision++;
+    uint64_t *old_stars=star_keys; star_keys=NULL; star_count=0; star_revision++; state.starred=false;
+    give(); free(old_stars);
     command_t c; while(xQueueReceive(commands,&c,0)==pdPASS) free(c.keys);
 }
 /* Tracks implements idle notifications even though its stats db_update is
@@ -594,6 +710,7 @@ static void worker_task(void *arg) {
 
         int loops=0; last_playlist=-1;
         int64_t next_event_retry=esp_timer_get_time()+30000000;
+        int64_t next_stars_poll=esp_timer_get_time()+10000000;
         while(ok && !generation_changed(generation)) {
             event_flags=poll_events();
             if(events.fd<0 && esp_timer_get_time()>=next_event_retry) {
@@ -611,10 +728,11 @@ static void worker_task(void *arg) {
                 if(!ok) break;
             }
             if(!ok || !poll_state()) { ok=false; break; }
-            if(mpd_playlist_version!=last_playlist) {
+            if(mpd_playlist_version!=last_playlist || queue_refresh_pending) {
                 if(reported_queue_size>QUEUE_LIMIT) {
                     message("Queue exceeds 24000 entries; showing current track");
                     take(); queue_size=0; queue_revision++; give();
+                    queue_refresh_pending=false;
                 }
                 else if(!sync_queue()) { ok=false; break; }
                 last_playlist=mpd_playlist_version;
@@ -624,6 +742,12 @@ static void worker_task(void *arg) {
             if(requested || (event_flags&1)) {
                 ok=sync_library() && sync_playlists(); last_playlist=-1;
             } else if(event_flags&2) ok=sync_playlists();
+            else if(stars_refresh_pending) ok=sync_stars();
+            /* Tracks UI edits do not always emit stored_playlist idle events. */
+            if(ok && esp_timer_get_time()>=next_stars_poll) {
+                ok=sync_stars();
+                next_stars_poll=esp_timer_get_time()+10000000;
+            }
             if(ok && loops++%30==0) {
                 char db[64]={0}; unsigned previous_songs=database_songs;
                 if(!mpd_wire_command(&wire,"stats",stat_field,NULL,db)) { ok=false; break; }

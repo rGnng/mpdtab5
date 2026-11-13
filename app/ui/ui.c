@@ -1171,6 +1171,142 @@ static lv_obj_t * make_panel_content(lv_obj_t * panel, int pad)
     return content;
 }
 
+/* Sibling overlays keep virtual row counts, flex layout and scroll extents
+ * unchanged. Each viewport owns its controls, including the inactive pane. */
+typedef struct {
+    lv_obj_t *list, *controls, *up, *down;
+    int size;
+} pagination_t;
+#define PAGINATION_BUTTON_GAP 8
+static pagination_t g_pagination[12];
+static bool g_touch_navigation;
+
+static const char *pagination_value_text(void)
+{
+    return g_system_config.pagination_size == 96 ? "On touch 96" :
+           g_system_config.pagination_size == 64 ? "On touch 64" : "Off";
+}
+
+static void pagination_update(pagination_t *p)
+{
+    if(!p->list || !p->controls) return;
+    int size = g_system_config.pagination_size == 96 ? 96 : 64;
+    int height = 2 * size + PAGINATION_BUTTON_GAP;
+    if(p->size != size) {
+        p->size = size;
+        lv_obj_set_size(p->controls, size, height);
+        lv_obj_t *buttons[] = {p->up, p->down};
+        for(int i=0;i<2;i++) {
+            lv_obj_set_size(buttons[i], size, size);
+            lv_obj_set_pos(buttons[i], 0, i * (size + PAGINATION_BUTTON_GAP));
+            lv_obj_t *arrow = lv_obj_get_child(buttons[i], 0);
+            lv_obj_set_style_text_font(arrow, size == 96 ? &bootstrap_icons_48 : &bootstrap_icons_40, 0);
+            lv_obj_center(arrow);
+        }
+    }
+    lv_obj_set_hidden(p->controls, !g_system_config.pagination_size ||
+        !g_touch_navigation || !g_system_config.touch_enabled ||
+        lv_obj_get_height(p->list) < height);
+    lv_obj_align_to(p->controls, p->list, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_state(p->up, LV_STATE_DISABLED, lv_obj_get_scroll_top(p->list) <= 0);
+    lv_obj_set_state(p->down, LV_STATE_DISABLED, lv_obj_get_scroll_bottom(p->list) <= 0);
+}
+
+static void pagination_refresh(void)
+{
+    for(unsigned i=0;i<sizeof(g_pagination)/sizeof(g_pagination[0]);i++)
+        pagination_update(&g_pagination[i]);
+}
+
+static void pagination_touch_mode(bool touch)
+{
+    if(g_touch_navigation == touch) return;
+    g_touch_navigation = touch;
+    pagination_refresh();
+}
+
+static void pagination_click_cb(lv_event_t *event)
+{
+    pagination_t *p = lv_event_get_user_data(event);
+    if(!p->list) return;
+    ui_user_activity();
+    int direction = lv_event_get_current_target(event) == p->up ? -1 : 1;
+    int page = lv_obj_get_content_height(p->list);
+    int y = lv_obj_get_scroll_y(p->list);
+    int limit = y + lv_obj_get_scroll_bottom(p->list);
+    int target = y + direction * page;
+    if(target < 0) target = 0;
+    if(target > limit) target = limit > 0 ? limit : 0;
+    /* The normal scroll handlers still settle thumbnails and virtual rows. */
+    lv_obj_scroll_to_y(p->list, target, LV_ANIM_OFF);
+    pagination_update(p);
+}
+
+static void pagination_event_cb(lv_event_t *event)
+{
+    pagination_t *p = lv_event_get_user_data(event);
+    if(lv_event_get_code(event) == LV_EVENT_DELETE) {
+        if(lv_event_get_current_target(event) == p->controls) {
+            p->controls = p->up = p->down = NULL;
+        }
+        else {
+            lv_obj_remove_event_cb_with_user_data(lv_obj_get_parent(p->list),
+                pagination_event_cb, p);
+            if(p->controls) lv_obj_delete(p->controls);
+            memset(p, 0, sizeof(*p));
+        }
+        return;
+    }
+    pagination_update(p);
+}
+
+static void pagination_bind(lv_obj_t *list)
+{
+    pagination_t *p = NULL;
+    for(unsigned i=0;i<sizeof(g_pagination)/sizeof(g_pagination[0]);i++) {
+        if(g_pagination[i].list == list) return;
+        if(!g_pagination[i].list) p = &g_pagination[i];
+    }
+    if(!p) return;
+    p->list = list;
+    lv_obj_t *parent = lv_obj_get_parent(list);
+    p->controls = lv_obj_create(parent);
+    lv_obj_remove_style_all(p->controls);
+    lv_obj_set_size(p->controls, 64, 136);
+    lv_obj_set_floating(p->controls, true);
+    lv_obj_set_scrollable(p->controls, false);
+    lv_obj_set_clickable(p->controls, false);
+    lv_obj_set_style_opa(p->controls, (lv_opa_t)89, 0); /* 65% transparent */
+    for(int i=0;i<2;i++) {
+        lv_obj_t *button = lv_obj_create(p->controls);
+        lv_obj_remove_style_all(button);
+        lv_obj_set_size(button, 64, 64);
+        lv_obj_set_pos(button, 0, i * (64 + PAGINATION_BUTTON_GAP));
+        lv_obj_set_scrollable(button, false);
+        lv_obj_set_clickable(button, true);
+        lv_obj_set_scroll_chain(button, false);
+        lv_obj_set_style_bg_color(button, lv_color_hex(COL_TEXT), 0);
+        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(button, 8, 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(COL_ACCENT), LV_STATE_PRESSED);
+        lv_obj_set_style_opa(button, LV_OPA_40, LV_STATE_DISABLED);
+        lv_obj_t *arrow = make_label(button, i ? ICON_CHEVRON_DOWN : ICON_CHEVRON_UP,
+            &bootstrap_icons_40, COL_PANEL);
+        lv_obj_center(arrow);
+        lv_obj_set_clickable(arrow, false);
+        lv_obj_add_event_cb(button, feedback_touch_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_event_cb(button, pagination_click_cb, LV_EVENT_CLICKED, p);
+        if(i) p->down = button;
+        else p->up = button;
+    }
+    lv_obj_add_event_cb(p->controls, pagination_event_cb, LV_EVENT_DELETE, p);
+    lv_obj_add_event_cb(list, pagination_event_cb, LV_EVENT_DELETE, p);
+    lv_obj_add_event_cb(list, pagination_event_cb, LV_EVENT_SCROLL, p);
+    lv_obj_add_event_cb(list, pagination_event_cb, LV_EVENT_LAYOUT_CHANGED, p);
+    lv_obj_add_event_cb(parent, pagination_event_cb, LV_EVENT_LAYOUT_CHANGED, p);
+    pagination_update(p);
+}
+
 static lv_obj_t * make_scroll(lv_obj_t * parent, int pad_right)
 {
     lv_obj_t * list = lv_obj_create(parent);
@@ -1193,6 +1329,7 @@ static lv_obj_t * make_scroll(lv_obj_t * parent, int pad_right)
     lv_obj_set_scroll_elastic(list, true);
     lv_obj_set_scrollable(list, true);
     lv_obj_set_scroll_chain(list, false);
+    pagination_bind(list);
     return list;
 }
 
@@ -2785,6 +2922,7 @@ void ui_set_system_config(const ui_system_config_t * cfg)
     snprintf(ip, sizeof(ip), "%s", g_system_config.wifi_ip);
 
     g_system_config = *cfg;
+    if(cfg->pagination_size != 64 && cfg->pagination_size != 96) g_system_config.pagination_size = 0;
     g_system_config.fast_scroll_trigger_window_ms = fast_scroll_trigger_window_normalize(cfg->fast_scroll_trigger_window_ms);
     g_system_config.fast_scroll_hold_ms = fast_scroll_hold_normalize(cfg->fast_scroll_hold_ms);
     if(cfg->fast_scroll_pages < 1 || cfg->fast_scroll_pages > 5) g_system_config.fast_scroll_pages = 2;
@@ -2797,6 +2935,7 @@ void ui_set_system_config(const ui_system_config_t * cfg)
     if(cfg->wifi_ip[0] == '\0') {
         snprintf(g_system_config.wifi_ip, sizeof(g_system_config.wifi_ip), "%s", ip);
     }
+    pagination_refresh();
     if(g_album_sort_dirty || g_song_sort_dirty) settings_update_sort_labels();
 }
 
@@ -3195,6 +3334,7 @@ static void screen_touch_cb(lv_event_t * event)
 {
     /* Input-device events run before widget callbacks, even in scroll lists. */
     lv_indev_t * indev = lv_event_get_target(event);
+    pagination_touch_mode(true);
     if(ui_user_activity()) {
         lv_indev_wait_release(indev);
         lv_indev_stop_processing(indev);
@@ -3230,6 +3370,8 @@ void ui_attach_touch(lv_indev_t * indev)
 void ui_set_touch_enabled(bool enabled)
 {
     g_touch_enabled = enabled;
+    g_system_config.touch_enabled = enabled;
+    pagination_refresh();
     if(g_touch_indev) lv_indev_enable(g_touch_indev, enabled);
 }
 
@@ -3409,6 +3551,7 @@ static void ui_dispatch_key(ui_key_t key)
 
 static void ui_handle_key_single(ui_key_t key)
 {
+    pagination_touch_mode(false);
     if(ui_user_activity()) return;
     /* Page and modal handlers can consume Enter/Back before the generic
      * focus code. Emit here, then suppress duplicate action/preview sounds
@@ -4649,10 +4792,34 @@ static void albums_save_position(void)
     }
 }
 
+static void albums_render_detail(lv_obj_t * parent, bool interactive);
+static void albums_apply_row_style(lv_obj_t *row, int index);
+static void albums_apply_shuffle_row_style(void);
+
 static void albums_rebuild(void)
 {
     albums_save_position();
-    ui_rebuild_page();
+    if(!albums_right_content) { ui_rebuild_page(); return; }
+    /* Switching album/detail focus must retain the virtual list, loaded
+     * covers and its settling timers. Only the right pane changes widgets. */
+    ui_exit_edit();
+    focus_clear();
+    if(albums_detail_timer) lv_timer_pause(albums_detail_timer);
+    if(g_page_detail_timer == albums_detail_timer) g_page_detail_timer = NULL;
+    albums_detail_dirty = false;
+    albums_render_detail(albums_right_content, albums_detail_open);
+    albums_apply_shuffle_row_style();
+    for(int slot=0;slot<ALBUMS_POOL;slot++) {
+        int index=albums_row_indices[slot];
+        if(index<0) continue;
+        albums_row_selected[slot] = index == albums_selected;
+        albums_apply_row_style(albums_rows[slot], index);
+    }
+    if(albums_detail_open) {
+        focus_select(albums_play_focus >= 0 ? albums_play_focus : 0);
+        ui_set_hint("UP/DOWN Select   ENTER Play   7 Play/Pause");
+    }
+    else ui_set_hint("UP/DOWN Select   ENTER Open   7 Play/Pause");
 }
 
 /* Snap touch scrolling to whole track rows without forcing the focused row
@@ -5453,6 +5620,7 @@ static void albums_create(lv_obj_t * parent)
     lv_obj_add_event_cb(list, albums_scroll_cb, LV_EVENT_SCROLL, NULL);
     lv_obj_add_event_cb(list, albums_scroll_cb, LV_EVENT_SCROLL_END, NULL);
     albums_left_list = list;
+    pagination_bind(list);
 
     int count = player_album_count();
     if(albums_selected >= count) albums_selected = 0;
@@ -7066,6 +7234,7 @@ static void songs_create(lv_obj_t * parent)
     lv_obj_set_gesture_bubble(songs_list, false);
     lv_obj_set_clickable(songs_list, true);
     lv_obj_add_event_cb(songs_list, songs_scroll_cb, LV_EVENT_SCROLL, NULL);
+    pagination_bind(songs_list);
 
     int count = player_song_count();
     lv_obj_t * spacer = lv_obj_create(songs_list);
@@ -7892,6 +8061,7 @@ enum {
 };
 static int settings_time_segment;
 static lv_obj_t * settings_detail_touch_value;
+static lv_obj_t * settings_pagination_value;
 static lv_obj_t * settings_detail_menubar_value;
 static lv_obj_t * settings_detail_sort_value;
 static lv_obj_t * settings_detail_order_value;
@@ -7943,6 +8113,7 @@ static void settings_clear_detail_widgets(void)
     settings_time_up_icon = NULL;
     settings_time_down_icon = NULL;
     settings_detail_touch_value = NULL;
+    settings_pagination_value = NULL;
     settings_detail_menubar_value = NULL;
     settings_detail_sort_value = NULL;
     settings_detail_order_value = NULL;
@@ -7971,6 +8142,7 @@ void ui_apply_saved_settings(const ui_system_config_t * cfg)
     if(cfg == NULL) return;
 
     g_system_config = *cfg;
+    if(cfg->pagination_size != 64 && cfg->pagination_size != 96) g_system_config.pagination_size = 0;
     g_system_config.fast_scroll_trigger_window_ms = fast_scroll_trigger_window_normalize(cfg->fast_scroll_trigger_window_ms);
     g_system_config.fast_scroll_hold_ms = fast_scroll_hold_normalize(cfg->fast_scroll_hold_ms);
     if(cfg->fast_scroll_pages < 1 || cfg->fast_scroll_pages > 5) g_system_config.fast_scroll_pages = 2;
@@ -8032,7 +8204,7 @@ static int settings_initial_focus(int index)
             if(abs(g_system_config.brightness - settings_brightness_values[i]) <
                abs(g_system_config.brightness - settings_brightness_values[nearest])) nearest = i;
         }
-        return nearest;
+        return nearest + 1; /* Pagination precedes the brightness presets. */
     }
     if(index == SETTING_NOW_PLAYING_BG) {
         return g_np_bg_mode == NP_BG_THEME ? 0 : 1;
@@ -8176,6 +8348,8 @@ static void settings_update_menubar_labels(void)
 
 static void settings_update_screen_checks(void)
 {
+    if(settings_pagination_value) lv_label_set_text(settings_pagination_value,
+        pagination_value_text());
     for(int i = 0; i < 3; i++) {
         const char * brightness = g_system_config.brightness == settings_brightness_values[i]
                                     ? ICON_CHECK : "";
@@ -8901,6 +9075,22 @@ static void settings_fast_hold_action(void * user)
 static void settings_fast_hold_touch_cb(lv_event_t * event)
 {
     settings_fast_hold_action(lv_event_get_user_data(event));
+}
+
+static void settings_pagination_action(void *user)
+{
+    LV_UNUSED(user);
+    g_system_config.pagination_size = g_system_config.pagination_size == 0 ? 64 :
+        g_system_config.pagination_size == 64 ? 96 : 0;
+    settings_update_screen_checks();
+    pagination_refresh();
+    settings_system_changed();
+}
+
+static void settings_pagination_touch_cb(lv_event_t *event)
+{
+    LV_UNUSED(event);
+    settings_pagination_action(NULL);
 }
 
 static void settings_screen_off_action(void * user)
@@ -9629,6 +9819,11 @@ static void settings_render_detail(lv_obj_t * parent, bool interactive)
             break;
         }
         case SETTING_SCREEN: {
+            lv_obj_t *pagination = settings_make_value_row(parent, "Pagination",
+                pagination_value_text(),
+                COL_MUTED, SETTINGS_ROW_H, FONT_H2, FONT_H2, &settings_pagination_value);
+            if(interactive) focus_add_clickable(pagination, settings_pagination_action, NULL, NULL, true);
+            else touch_add_clickable(pagination, settings_pagination_touch_cb, NULL);
             static const char * const brightness_labels[] = {"Low", "Mid", "High"};
             settings_section(parent, "Brightness");
             for(int i = 0; i < 3; i++) {
@@ -9963,6 +10158,7 @@ static void settings_create(lv_obj_t * parent)
     lv_obj_set_scrollbar_mode(settings_right_content, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_scroll_elastic(settings_right_content, true);
     lv_obj_set_scrollable(settings_right_content, true);
+    pagination_bind(settings_right_content);
     if(g_page_loading && !settings_detail_open) {
         make_label(settings_right_content, "Loading...", FONT_CAPTION, COL_MUTED);
         settings_schedule_detail();
@@ -10462,6 +10658,7 @@ static void ui_fast_scroll_visual_update(lv_timer_t * timer)
 void ui_handle_key_repeat_timed(ui_key_t key, int count, uint32_t first_ms, uint32_t last_ms)
 {
     if(count <= 0) return;
+    pagination_touch_mode(false);
     if(ui_user_activity()) { ui_fast_scroll_reset_reason("wake"); return; }
     if(key != UI_KEY_UP && key != UI_KEY_DOWN) {
         ui_fast_scroll_reset_reason("key_action"); ui_handle_key_repeat_raw(key, count); return;
@@ -10722,12 +10919,27 @@ static void ui_library_tick_cb(lv_timer_t *timer)
     if(player_playlist_get(playlists_selected,&previous_playlist))
         snprintf(playlist_name,sizeof(playlist_name),"%s",previous_playlist.name);
     bool library_changed=player_library_poll();
+    static uint32_t playlist_revision;
+    uint32_t current_playlists=player_playlist_revision();
+    bool playlists_changed=playlist_revision!=current_playlists;
+    playlist_revision=current_playlists;
 #ifdef ESP_PLATFORM
     ui_mpd_artwork_tick();
 #endif
     bool album_order_changed=library_changed || g_album_sort_dirty;
     bool song_order_changed=library_changed || g_song_sort_dirty;
-    if(!library_changed && !g_album_sort_dirty && !g_song_sort_dirty) return;
+    if(!library_changed && !g_album_sort_dirty && !g_song_sort_dirty) {
+        if(playlists_changed && g_current_screen==SCR_PLAYLISTS && !g_page_loading && !g_afc_sync_mode) {
+            for(int i=0;playlist_name[0] && i<player_playlist_count();i++) {
+                player_playlist_t playlist;
+                if(player_playlist_get(i,&playlist) && !strcmp(playlist.name,playlist_name)) { playlists_selected=i; break; }
+            }
+            int focus=g_focus_index;
+            ui_rebuild_page();
+            if(focus>=0 && g_focus_count) focus_select(focus<g_focus_count ? focus : g_focus_count-1);
+        }
+        return;
+    }
     g_album_sort_dirty=g_song_sort_dirty=false;
     if(library_changed) {
         if(artist_id) for(int i=0;i<player_artist_count();i++) {

@@ -21,7 +21,7 @@ typedef struct {
     char device_name[64];
     uint32_t elapsed_ms, duration_ms;
     int queue_index, queue_count;
-    bool shuffle;
+    bool shuffle, starred;
     uint8_t repeat; /* 0 off, 1 one, 2 all */
     int volume; /* 0..100, -1 if MPD has no mixer */
     /* Compatibility with the shared device UI: MPD has no battery. */
@@ -59,6 +59,12 @@ esp_err_t mpd_client_hid_press_bit(uint8_t bit);
 esp_err_t mpd_client_hid_release(void);
 esp_err_t mpd_client_seek_ms(uint32_t elapsed_ms);
 esp_err_t mpd_client_set_shuffle(bool on);
+esp_err_t mpd_client_toggle_star(uint64_t key);
+esp_err_t mpd_client_clear_stars(void);
+int mpd_client_star_count(void);
+bool mpd_client_star_get(int index, uint64_t *key);
+int mpd_client_star_copy(uint64_t *keys, int capacity);
+uint32_t mpd_client_star_revision(void);
 
 /* Replaces the MPD queue with the selected URI IDs, then starts at index. */
 esp_err_t mpd_client_play_track_keys(const uint64_t *keys, int count, int start_index);

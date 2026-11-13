@@ -8,7 +8,7 @@ typedef struct
 } live_track_t;
 static MOCK_LARGE_BSS live_track_t live_tracks[MAX_TRACKS];
 static media_index_t live_afc;
-static uint32_t live_revision = 1, live_batch;
+static uint32_t live_revision = 1, live_batch, live_playlist_revision;
 static bool live_in_batch, live_dirty;
 static bool live_publish;
 static bool live_suspended;
@@ -633,7 +633,7 @@ static void live_finish(void)
     track_id_index_build();
     membership_index_build();
 #ifdef ESP_PLATFORM
-    if(live_restore_stars && app_config_sd_ready()) {
+    if(live_restore_stars && !mpd_client_is_enabled() && app_config_sd_ready()) {
         star_store_load(app_config_library_stars_path(),tracks,track_count,track_starred);
         live_restore_stars=false;
     }
@@ -654,7 +654,7 @@ static void live_apply(const live_event_t *event)
     {
     case LIVE_PLAYLIST_RESET:
         playlist_count=0;
-        live_revision++; live_publish=true;
+        live_playlist_revision++; revision++;
         break;
     case LIVE_PLAYLIST_ITEM: {
         int i=event->playlist.index;
@@ -666,7 +666,7 @@ static void live_apply(const live_event_t *event)
         p->id=i+1;
         if(event->playlist.name[0]) copy_str(p->name,sizeof(p->name),event->playlist.name);
         if(event->playlist.key && p->track_count<MAX_PLAYLIST_TRACKS) p->track_ids[p->track_count++]=event->playlist.key;
-        live_revision++; live_publish=true;
+        live_playlist_revision++; revision++;
         break;
     }
     case LIVE_ITEM:
@@ -734,7 +734,8 @@ static void live_apply(const live_event_t *event)
         membership_index_build();
         thumb_cache_open(album_count);
         live_covers();
-        star_store_load(app_config_library_stars_path(), tracks, track_count, track_starred);
+        if(!mpd_client_is_enabled())
+            star_store_load(app_config_library_stars_path(), tracks, track_count, track_starred);
         if(g_app_config.iap2_mode)
             thumb_cache_preload();
         live_publish = true;

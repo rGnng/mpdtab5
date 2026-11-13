@@ -89,6 +89,12 @@ class ProtocolTest(unittest.TestCase):
         self.callbacks = (FIELD(field) if field else FIELD(), BINARY(binary) if binary else BINARY())
         return self.lib.mpd_wire_command(C.byref(self.w), cmd, *self.callbacks, None)
 
+    def test_failed_command_reports_verb_without_private_arguments(self):
+        self.serve(b'readpicture "private/album.flac" 0',b'invalid reply\n')
+        self.assertFalse(self.command(b'readpicture "private/album.flac" 0'))
+        self.assertTrue(self.w.error.startswith(b'readpicture: '))
+        self.assertNotIn(b'private',self.w.error)
+
     def test_idle_request_waits_without_blocking_other_work(self):
         self.assertTrue(self.lib.mpd_wire_send(C.byref(self.w),b'idle database stored_playlist update'))
         self.assertEqual(self.peer.recv(200),b'idle database stored_playlist update\n')

@@ -22,7 +22,12 @@ static int byte(mpd_wire_t *w) {
     if(w->pos == w->used) {
         int n;
         do { n = recv(w->fd, w->rx, sizeof(w->rx), 0); } while(n < 0 && errno == EINTR);
-        if(n <= 0) { fail(w, n == 0 ? "MPD disconnected" : "MPD receive timeout or error"); return -1; }
+        if(n <= 0) {
+            char error[96];
+            if(n == 0) snprintf(error,sizeof(error),"MPD disconnected");
+            else snprintf(error,sizeof(error),"MPD receive failed (errno %d)",errno);
+            fail(w,error); return -1;
+        }
         w->pos = 0; w->used = (unsigned)n;
     }
     return w->rx[w->pos++];
@@ -143,7 +148,17 @@ bool mpd_wire_response(mpd_wire_t *w, mpd_field_cb field, mpd_binary_cb binary, 
 }
 bool mpd_wire_command(mpd_wire_t *w, const char *command, mpd_field_cb field,
                       mpd_binary_cb binary, void *ctx) {
-    return mpd_wire_send(w,command) && mpd_wire_response(w,field,binary,ctx);
+    bool ok=mpd_wire_send(w,command) && mpd_wire_response(w,field,binary,ctx);
+    if(!ok) {
+        /* Only the verb is logged: URI arguments and passwords stay private. */
+        char error[sizeof(w->error)], operation[32];
+        size_t len=strcspn(command," \t\r\n");
+        if(len>=sizeof(operation)) len=sizeof(operation)-1;
+        memcpy(operation,command,len); operation[len]=0;
+        snprintf(error,sizeof(error),"%s: %.154s",operation,w->error);
+        snprintf(w->error,sizeof(w->error),"%s",error);
+    }
+    return ok;
 }
 bool mpd_quote(char *out, size_t cap, const char *value) {
     if(cap < 3) return false;

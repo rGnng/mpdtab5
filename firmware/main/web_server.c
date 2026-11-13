@@ -757,6 +757,7 @@ static esp_err_t config_get(httpd_req_t * req)
     cJSON_AddBoolToObject(root,"song_sort_desc",g_app_config.song_sort_desc);
     cJSON_AddNumberToObject(root, "volume", g_app_config.volume);
     cJSON_AddNumberToObject(root, "brightness", g_app_config.brightness);
+    cJSON_AddNumberToObject(root, "pagination_size", g_app_config.pagination_size);
     cJSON_AddNumberToObject(root, "screen_off_minutes", g_app_config.screen_off_minutes);
     cJSON_AddBoolToObject(root, "fast_scroll_enabled", g_app_config.fast_scroll_enabled);
     cJSON_AddNumberToObject(root, "fast_scroll_pages", g_app_config.fast_scroll_pages);
@@ -808,6 +809,12 @@ static esp_err_t config_post(httpd_req_t * req)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
     }
 
+    const cJSON *pagination = cJSON_GetObjectItemCaseSensitive(root, "pagination_size");
+    if(pagination && (!cJSON_IsNumber(pagination) || pagination->valuedouble != pagination->valueint ||
+       (pagination->valueint != 0 && pagination->valueint != 64 && pagination->valueint != 96))) {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Pagination must be 0, 64 or 96");
+    }
     const cJSON *usb_ip=cJSON_GetObjectItemCaseSensitive(root,"usb_net_ip");
     const cJSON *usb_client=cJSON_GetObjectItemCaseSensitive(root,"usb_net_client_ip");
     if((usb_ip && !cJSON_IsString(usb_ip)) || (usb_client && !cJSON_IsString(usb_client))) {
@@ -855,6 +862,7 @@ static esp_err_t config_post(httpd_req_t * req)
     }
     if(enabled != NULL) g_app_config.fast_scroll_enabled = cJSON_IsTrue(enabled);
     if(trigger != NULL) g_app_config.fast_scroll_trigger_window_ms = (uint16_t)trigger->valueint;
+    if(pagination) g_app_config.pagination_size = (uint8_t)pagination->valueint;
     item = cJSON_GetObjectItemCaseSensitive(root, "screen_off_minutes");
     if(item != NULL && (!cJSON_IsNumber(item) || item->valuedouble != item->valueint ||
        (item->valueint != 0 && item->valueint != 30 && item->valueint != 60))) {
@@ -1480,6 +1488,7 @@ static esp_err_t status_get(httpd_req_t * req)
             cJSON_AddStringToObject(catalog,"first_album_title",first_album.title);
         bsp_display_unlock();
     }
+    cJSON_AddNumberToObject(root, "pagination_size", g_app_config.pagination_size);
     cJSON_AddNumberToObject(root, "screen_off_minutes", g_app_config.screen_off_minutes);
     cJSON_AddBoolToObject(root, "fast_scroll_enabled", g_app_config.fast_scroll_enabled);
     cJSON_AddNumberToObject(root, "fast_scroll_pages", g_app_config.fast_scroll_pages);

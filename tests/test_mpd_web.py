@@ -38,7 +38,7 @@ class SetupFormTest(unittest.TestCase):
         fixtures={
             '/api/mpd':{'host':'music.local','port':6601,'password_set':True},
             '/api/status':{'mpd_status':'MPD connected','mpd_host':'music.local','mpd_port':6601,'mpd_connected':True,'sd_ready':True,'mpd_volume':45,'catalog':{'albums':2,'tracks':4},'storage_root':'/sdcard/mpd/'},
-            '/api/config':{'volume':65,'brightness':70,'usb_mode':0,'usb_net_ip':'172.32.30.1','usb_net_client_ip':'172.32.30.2'},'/api/power':{},
+            '/api/config':{'pagination_size':64,'volume':65,'brightness':70,'usb_mode':0,'usb_net_ip':'172.32.30.1','usb_net_client_ip':'172.32.30.2'},'/api/power':{},
         }
         if path in fixtures:
             route.fulfill(status=200,content_type='application/json',body=json.dumps(fixtures[path])); return
@@ -68,6 +68,18 @@ class SetupFormTest(unittest.TestCase):
         self.assertEqual(self.posts,[])
         self.page.locator('#mpd_port').fill('6600')
         self.assertEqual(self.submit()['host'],'')
+
+    def test_pagination_options_submit_sizes_as_numbers(self):
+        options=self.page.locator('#pagination_size option')
+        self.assertEqual(options.all_text_contents(),['Off','On touch 64','On touch 96'])
+        self.assertEqual(self.page.locator('#pagination_size').input_value(),'64')
+        for size in [96,0,64]:
+            before=len(self.posts)
+            self.page.locator('#pagination_size').select_option(str(size))
+            self.page.evaluate('saveConfig()')
+            self.page.wait_for_function("dirty.pagination_size === undefined")
+            self.assertGreater(len(self.posts),before)
+            self.assertEqual(self.posts[-1],('/api/config',{'pagination_size':size}))
 
     def test_usb_network_addresses_load_and_save_as_strings(self):
         self.assertEqual(self.page.locator('#usb_net_ip').input_value(),'172.32.30.1')

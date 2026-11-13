@@ -560,6 +560,15 @@ static void load_from_json(const char * text)
     if(cJSON_IsBool(item)) g_app_config.menubar_left = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(root, "touch_enabled");
     if(cJSON_IsBool(item)) g_app_config.touch_enabled = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(root, "pagination_size");
+    if(cJSON_IsNumber(item) && item->valuedouble == item->valueint &&
+       (item->valueint == 0 || item->valueint == 64 || item->valueint == 96)) {
+        g_app_config.pagination_size = (uint8_t)item->valueint;
+    } else if(!item) {
+        /* Migrate the original Off/On touch setting without disabling it. */
+        item = cJSON_GetObjectItemCaseSensitive(root, "pagination_on_touch");
+        if(cJSON_IsBool(item)) g_app_config.pagination_size = cJSON_IsTrue(item) ? 64 : 0;
+    }
     item = cJSON_GetObjectItemCaseSensitive(root, "np_bg_mode");
     if(cJSON_IsNumber(item)) {
         /* The removed album-seeded background now uses Cover gradient. */
@@ -729,6 +738,7 @@ esp_err_t app_config_save(void)
     cJSON_AddBoolToObject(root, "song_sort_desc", g_app_config.song_sort_desc);
     cJSON_AddBoolToObject(root, "menubar_left", g_app_config.menubar_left);
     cJSON_AddBoolToObject(root, "touch_enabled", g_app_config.touch_enabled);
+    cJSON_AddNumberToObject(root, "pagination_size", g_app_config.pagination_size);
     cJSON_AddNumberToObject(root, "np_bg_mode", g_app_config.np_bg_mode);
     cJSON_AddBoolToObject(root, "fast_scroll_enabled", g_app_config.fast_scroll_enabled);
     cJSON_AddNumberToObject(root, "fast_scroll_pages", g_app_config.fast_scroll_pages);

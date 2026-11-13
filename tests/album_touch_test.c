@@ -156,12 +156,14 @@ static void tap_title(void)
     ui_handle_key(UI_KEY_2);
     pump(300);
     check(selection_marks(album_list()) == 1, "Album list starts with a visible selection");
-    lv_obj_t * row = middle_row(album_list());
+    lv_obj_t * retained = album_list();
+    lv_obj_t * row = middle_row(retained);
     lv_obj_t * text = lv_obj_get_child(row, 1);
     lv_point_t p = centre(lv_obj_get_child(text, 0));
     pointer(p.x, p.y, true);
     pointer(p.x, p.y, false);
     pump(300);
+    check(album_list() == retained, "Opening an album must keep the left viewport and its artwork");
     check(selection_marks(album_list()) == 0, "A tap on an album title must open its detail view");
     ui_handle_key(UI_KEY_BACK);
     pump(300);

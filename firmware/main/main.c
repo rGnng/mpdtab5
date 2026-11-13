@@ -157,6 +157,7 @@ static void ui_system_config_changed(const ui_system_config_t * cfg)
     g_app_config.song_sort_desc = cfg->song_sort_desc != 0;
     g_app_config.menubar_left = cfg->menubar_left != 0;
     g_app_config.touch_enabled = cfg->touch_enabled != 0;
+    g_app_config.pagination_size = cfg->pagination_size;
     g_app_config.np_bg_mode = (uint8_t)cfg->np_bg_mode;
     g_app_config.fast_scroll_enabled = cfg->fast_scroll_enabled;
     g_app_config.fast_scroll_pages = (uint8_t)cfg->fast_scroll_pages;
@@ -217,6 +218,7 @@ static void fill_ui_config(ui_system_config_t * cfg)
     cfg->song_sort_desc = g_app_config.song_sort_desc ? 1 : 0;
     cfg->menubar_left = g_app_config.menubar_left ? 1 : 0;
     cfg->touch_enabled = g_app_config.touch_enabled ? 1 : 0;
+    cfg->pagination_size = g_app_config.pagination_size;
     cfg->np_bg_mode = g_app_config.np_bg_mode;
     cfg->fast_scroll_enabled = g_app_config.fast_scroll_enabled;
     cfg->fast_scroll_pages = g_app_config.fast_scroll_pages;

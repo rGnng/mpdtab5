@@ -24,9 +24,14 @@ static int track_index_by_id(uint64_t id) { return id==101 ? 0 : -1; }
 static int track_index_by_meta(const char *title,const char *album) { (void)title;(void)album;return -1; }
 '''
 SUFFIX=r'''
+int star_value(int remote,int local) {
+    mpd_state_t state={.track_key=101,.starred=remote};
+    track_starred[0]=local;player_snapshot_t out;iap2_snapshot(&out,&state);return out.starred;
+}
+
 unsigned long value(int which,int empty) {
     tracks[0]=(player_track_t){.id=101,.album_id=88,.artist_id=77,.track_no=3,.disc_no=2,.year=2024};
-    mpd_state_t state={.connected=true,.identified=true,.play_status=2,.volume=42,.battery=-1};
+    mpd_state_t state={.connected=true,.identified=true,.play_status=2,.volume=42,.battery=-1,.starred=true};
     if(!empty) { state.track_key=101;state.album_pid=88;strcpy(state.title,"Current track"); }
     player_snapshot_t s;iap2_snapshot(&s,&state);
     switch(which) {
@@ -53,6 +58,9 @@ class SnapshotTest(unittest.TestCase):
     def tearDownClass(cls):cls.tmp.cleanup()
     def test_current_track_preserves_catalog_relationships(self):
         self.assertEqual([self.lib.value(i,0) for i in range(6)],[77,88,3,2,2024,1])
+    def test_server_star_flag_overrides_local_file_state(self):
+        self.assertEqual(self.lib.star_value(0,1),0)
+        self.assertEqual(self.lib.star_value(1,0),1)
     def test_paused_track_keeps_its_artist_and_pause_state(self):
         self.assertEqual(self.lib.value(0,0),77)
         self.assertEqual(self.lib.value(6,0),2)

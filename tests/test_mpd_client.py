@@ -25,13 +25,27 @@ PREFIX=r'''
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <limits.h>
 #define TRACK_LIMIT 24000
 #define QUEUE_LIMIT 24000
 #define URI_BYTES (3*1024*1024)
 #define URI_SLOTS 65536
 #define MALLOC_CAP_SPIRAM 0
 #define MALLOC_CAP_8BIT 0
-#define heap_caps_malloc(n,caps) malloc(n)
+static size_t allocation_limit=SIZE_MAX, largest_allocation;
+static void *test_allocate(size_t size) {
+    if(size>largest_allocation) largest_allocation=size;
+    return size>allocation_limit ? NULL : malloc(size);
+}
+#define heap_caps_malloc(n,caps) test_allocate(n)
+static void *test_reallocate(void *ptr,size_t n) {
+    if(n>largest_allocation) largest_allocation=n;
+    return n>allocation_limit ? NULL : realloc(ptr,n);
+}
+#define heap_caps_realloc(p,n,caps) test_reallocate(p,n)
+#define heap_caps_get_free_size(caps) 0
+#define heap_caps_get_largest_free_block(caps) 0
+#define ESP_LOGW(...) ((void)0)
 #define vTaskDelay(n) ((void)(n))
 static mpd_wire_t wire;
 static mpd_state_t state;
@@ -41,18 +55,28 @@ static unsigned reported_queue_size, database_songs;
 static char database_revision[64];
 static bool unpaged_server;
 static player_media_item_t items[1000];
-static int item_count,playlist_count;
+static int item_count,playlist_count,complete_count;
 static uint64_t playlist_keys[1024];
 static uint32_t parsed_queue_ids[QUEUE_LIMIT];
+static uint64_t queue_keys[QUEUE_LIMIT];
+static uint32_t queue_ids[QUEUE_LIMIT], queue_revision;
+static int queue_size;
+static bool queue_refresh_pending,stars_refresh_pending;
+static uint64_t *star_keys;
+static int star_count;
+static uint32_t star_revision;
+static char playlist_name[256];
 static char diagnostic[200];
 static void take(void) {}
 static void give(void) {}
 void player_library_reset(void) { item_count=0; }
-void player_library_complete(void) {}
+void player_library_complete(void) { complete_count++; }
 static void message(const char *text) { snprintf(diagnostic,sizeof(diagnostic),"%s",text); }
 bool mpd_client_get_state(mpd_state_t *out) { *out=state; return true; }
 void player_library_update(const player_media_item_t *item) { if(item_count<1000) items[item_count++]=*item; }
+void player_library_playlists_reset(void) { playlist_count=0; }
 void player_library_playlist_item(int index,const char *name,uint64_t key) {
+    if(name) snprintf(playlist_name,sizeof(playlist_name),"%s",name);
     (void)index; (void)name;
     if(playlist_count<1024) playlist_keys[playlist_count++]=key;
 }
@@ -62,8 +86,28 @@ void test_init(int fd) {
     memset(uri_slots,0,sizeof(uri_slots)); uri_count=uri_used=0;
     memset(&state,0,sizeof(state)); item_count=playlist_count=0;
     unpaged_server=false; database_songs=0;
+    allocation_limit=SIZE_MAX;largest_allocation=0;queue_size=0;queue_refresh_pending=false;
+    free(star_keys);star_keys=NULL;star_count=0;star_revision=0;stars_refresh_pending=false;
+    complete_count=0;
     diagnostic[0]=0; mpd_wire_init(&wire); mpd_wire_attach(&wire,fd,1000);
 }
+int test_sync_queue(unsigned size,unsigned budget) {
+    reported_queue_size=size; allocation_limit=budget; largest_allocation=0;
+    return sync_queue();
+}
+unsigned test_allocation(void) { return largest_allocation; }
+int test_queue_count(void) { return queue_size; }
+int test_completions(void) { return complete_count; }
+int test_queue_pending(void) { return queue_refresh_pending; }
+int test_sync_stars(unsigned budget) { allocation_limit=budget;return sync_stars(); }
+int test_sync_playlists(void) { return sync_playlists(); }
+int test_star_count(void) { return star_count; }
+uint64_t test_star_key(int i) { return i>=0 && i<star_count ? star_keys[i] : 0; }
+void test_current_key(uint64_t key) { state.track_key=key; }
+int test_starred(void) { return state.starred; }
+int test_stars_pending(void) { return stars_refresh_pending; }
+unsigned test_star_revision(void) { return star_revision; }
+const char *test_playlist_name(void) { return playlist_name; }
 void test_close(void) { mpd_wire_close(&wire); }
 uint64_t test_insert(const char *uri) { return uri_insert(uri) ? mpd_id(uri) : 0; }
 int test_parse(int mode) {
@@ -105,7 +149,7 @@ class ClientTest(unittest.TestCase):
         command_type=SOURCE[start:SOURCE.index('} command_t;',start)+len('} command_t;')]
         start=SOURCE.index('typedef struct {\n    player_media_item_t item;')
         song_type=SOURCE[start:SOURCE.index('} song_parser_t;',start)+len('} song_parser_t;')]
-        globals_=uri_type+'''
+        globals_='typedef struct { char names[32][256]; int count; } playlists_t;\n'+uri_type+'''
 static uri_entry_t uris[TRACK_LIMIT];
 static uint16_t uri_slots[URI_SLOTS];
 static char uri_pool[URI_BYTES];
@@ -113,7 +157,8 @@ static unsigned uri_count,uri_used;
 '''
         functions='\n'.join(function(SOURCE,name) for name in [
             'uri_lookup','uri_insert','song_reset','song_finish','song_field',
-            'status_field','stat_field','simple','sync_library','play_selection','run_command'])
+            'status_field','stat_field','simple','sync_library','sync_queue','star_position',
+            'sync_stars','change_star','playlist_field','sync_playlists','play_selection','run_command'])
         (directory/'client.c').write_text(PREFIX+globals_+command_type+song_type+functions+SUFFIX)
         subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Wno-unused-function','-shared','-fPIC',
                         '-I'+str(directory),'-I'+str(ROOT/'app/mpd'),'-I'+str(ROOT/'app/backend'),
@@ -122,10 +167,12 @@ static unsigned uri_count,uri_used;
         cls.lib=C.CDLL(str(directory/'client.so'))
         cls.lib.test_insert.argtypes=[C.c_char_p]; cls.lib.test_insert.restype=C.c_uint64
         cls.lib.test_run.argtypes=[C.c_int,C.POINTER(C.c_uint64),C.c_int,C.c_int]
+        cls.lib.test_current_key.argtypes=[C.c_uint64]
+        cls.lib.test_star_key.restype=C.c_uint64
         cls.lib.test_toggle.argtypes=[C.c_char_p,C.c_int,C.c_int,C.c_int]
         for name in ['test_track_key','test_album_key']:
             getattr(cls.lib,name).restype=C.c_uint64
-        for name in ['test_title','test_artist','test_message']:
+        for name in ['test_title','test_artist','test_message','test_playlist_name']:
             getattr(cls.lib,name).restype=C.c_char_p
 
     @classmethod
@@ -153,6 +200,149 @@ static unsigned uri_count,uri_used;
     def metadata(self,data,mode=0):
         self.server([(b'test_metadata\n',data+b'OK\n')])
         return self.lib.test_parse(mode)
+
+    def star_reply(self,*uris):
+        return b''.join(b'file: '+uri+b'\nTitle: Song\nAlbum: Album\nArtist: Artist\n' for uri in uris)+b'OK\n'
+
+    def test_server_stars_are_read_in_playlist_order_and_publish_current_flag(self):
+        a=self.lib.test_insert(b'album/a.flac');b=self.lib.test_insert(b'album/b.flac')
+        self.lib.test_current_key(a)
+        self.server([(b'listplaylistinfo "Stared"\n',self.star_reply(b'album/b.flac',b'album/a.flac'))])
+        self.assertEqual(self.lib.test_sync_stars(100000),1)
+        self.assertEqual([self.lib.test_star_key(i) for i in range(2)],[b,a])
+        self.assertEqual(self.lib.test_starred(),1)
+        self.assertEqual(self.lib.test_completions(),0)
+
+    def test_star_add_is_confirmed_by_rereading_server(self):
+        key=self.lib.test_insert(b'album/a.flac');self.lib.test_current_key(key)
+        self.server([(b'listplaylistinfo "Stared"\n',b'OK\n'),
+                     (b'playlistadd "Stared" "album/a.flac"\n',b'OK\n'),
+                     (b'listplaylistinfo "Stared"\n',self.star_reply(b'album/a.flac'))])
+        keys=(C.c_uint64*1)(key)
+        self.assertEqual(self.lib.test_run(4,keys,1,0),1)
+        self.assertEqual(self.lib.test_starred(),1)
+        self.assertEqual(self.lib.test_completions(),0)
+
+    def test_star_delete_uses_fresh_server_position_and_captured_track(self):
+        a=self.lib.test_insert(b'album/a.flac');b=self.lib.test_insert(b'album/b.flac')
+        self.lib.test_current_key(b)
+        self.server([(b'listplaylistinfo "Stared"\n',self.star_reply(b'album/b.flac',b'album/a.flac')),
+                     (b'playlistdelete "Stared" 1\n',b'OK\n'),
+                     (b'listplaylistinfo "Stared"\n',self.star_reply(b'album/b.flac'))])
+        self.assertEqual(self.lib.test_run(4,(C.c_uint64*1)(a),1,0),1)
+        self.assertEqual(self.lib.test_starred(),1)
+        self.assertEqual(self.lib.test_star_count(),1)
+        self.assertEqual(self.lib.test_star_key(0),b)
+
+    def test_failed_star_write_does_not_change_confirmed_state_or_close_socket(self):
+        key=self.lib.test_insert(b'album/a.flac');self.lib.test_current_key(key)
+        self.server([(b'listplaylistinfo "Stared"\n',b'OK\n'),
+                     (b'playlistadd "Stared" "album/a.flac"\n',b'ACK [4@0] {playlistadd} permission denied\n'),
+                     (b'test_metadata\n',b'OK\n')])
+        self.assertEqual(self.lib.test_run(4,(C.c_uint64*1)(key),1,0),0)
+        self.assertEqual(self.lib.test_starred(),0)
+        self.assertEqual(self.lib.test_parse(0),0)
+
+    def test_star_collection_allocation_failure_drains_and_preserves_previous_state(self):
+        key=self.lib.test_insert(b'album/a.flac');self.lib.test_current_key(key)
+        self.server([(b'listplaylistinfo "Stared"\n',self.star_reply(b'album/a.flac')),
+                     (b'listplaylistinfo "Stared"\n',self.star_reply(b'album/a.flac')),
+                     (b'test_metadata\n',b'OK\n')])
+        self.assertEqual(self.lib.test_sync_stars(100000),1)
+        self.assertEqual(self.lib.test_sync_stars(1),1)
+        self.assertEqual(self.lib.test_stars_pending(),1)
+        self.assertEqual(self.lib.test_star_count(),1)
+        self.assertEqual(self.lib.test_starred(),1)
+        self.assertEqual(self.lib.test_parse(0),0)
+
+    def test_denied_star_read_does_not_send_a_write(self):
+        key=self.lib.test_insert(b'album/a.flac')
+        self.server([(b'listplaylistinfo "Stared"\n',b'ACK [4@0] {listplaylistinfo} permission denied\n')])
+        self.assertEqual(self.lib.test_run(4,(C.c_uint64*1)(key),1,0),1)
+        self.assertEqual(self.lib.test_stars_pending(),1)
+        self.assertEqual(self.lib.test_starred(),0)
+
+    def test_clear_stars_updates_server_playlist_only(self):
+        self.server([(b'listplaylistinfo "Stared"\n',self.star_reply(b'album/a.flac')),
+                     (b'playlistclear "Stared"\n',b'OK\n'),
+                     (b'listplaylistinfo "Stared"\n',b'OK\n')])
+        self.assertEqual(self.lib.test_run(5,None,0,0),1)
+        self.assertEqual(self.lib.test_star_count(),0)
+
+    def test_missing_star_playlist_is_empty_server_state(self):
+        self.server([(b'listplaylistinfo "Stared"\n',b'ACK [50@0] {listplaylistinfo} No such playlist\n')])
+        self.assertEqual(self.lib.test_sync_stars(100000),1)
+        self.assertEqual(self.lib.test_star_count(),0)
+        self.assertEqual(self.lib.test_stars_pending(),0)
+
+    def test_star_playlist_exceeds_normal_stored_playlist_limit(self):
+        uris=[f'album/{i}.flac'.encode() for i in range(1200)]
+        self.server([(b'listplaylistinfo "Stared"\n',self.star_reply(*uris))])
+        self.assertEqual(self.lib.test_sync_stars(100000),1)
+        self.assertEqual(self.lib.test_star_count(),1200)
+        self.assertEqual(self.lib.test_playlist_count(),0)
+        self.assertTrue(self.lib.test_star_key(1199))
+
+    def test_stared_is_not_duplicated_in_regular_playlists_or_catalog_updates(self):
+        self.lib.test_insert(b'album/a.flac')
+        self.server([(b'listplaylists\n',b'playlist: Mix\nplaylist: Stared\nOK\n'),
+                     (b'listplaylistinfo "Mix"\n',self.star_reply(b'album/a.flac')),
+                     (b'listplaylistinfo "Stared"\n',self.star_reply(b'album/a.flac'))])
+        self.assertEqual(self.lib.test_sync_playlists(),1)
+        self.assertEqual(self.lib.test_playlist_name(),b'Mix')
+        self.assertEqual(self.lib.test_playlist_count(),2)
+        self.assertEqual(self.lib.test_star_count(),1)
+        self.assertEqual(self.lib.test_completions(),0)
+
+    def test_known_album_queue_changes_do_not_republish_library(self):
+        self.assertTrue(self.lib.test_insert(b'album/a.flac'))
+        self.assertTrue(self.lib.test_insert(b'album/b.flac'))
+        self.server([(b'playlistinfo\n',b'file: album/a.flac\nId: 1\nOK\n'),
+                     (b'playlistinfo\n',b'file: album/b.flac\nId: 2\nOK\n')])
+        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
+        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
+        self.assertEqual(self.lib.test_completions(),0)
+        self.assertEqual(self.lib.test_item_count(),0)
+
+    def test_new_queue_only_tracks_publish_catalog_once(self):
+        self.server([(b'playlistinfo\n',b'file: stream/new\nTitle: New stream\nId: 3\nOK\n'),
+                     (b'playlistinfo\n',b'file: stream/new\nTitle: New stream\nId: 3\nOK\n')])
+        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
+        self.assertEqual(self.lib.test_completions(),1)
+        self.assertEqual(self.lib.test_item_count(),1)
+        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
+        self.assertEqual(self.lib.test_completions(),1)
+
+    def test_album_queue_refresh_uses_actual_queue_size(self):
+        data=b''.join(f'file: album/{i}.flac\nId: {i+1}\n'.encode() for i in range(12))
+        self.server([(b'playlistinfo\n',data+b'OK\n')])
+        self.assertEqual(self.lib.test_sync_queue(12,1024),1)
+        self.assertEqual(self.lib.test_queue_count(),12)
+        self.assertEqual(self.lib.test_queue_pending(),0)
+        self.assertLessEqual(self.lib.test_allocation(),256)
+
+    def test_low_memory_queue_refresh_preserves_connection_and_retries(self):
+        self.server([(b'playlistinfo\n',b'file: old/a.flac\nId: 1\nfile: old/b.flac\nId: 2\nOK\n')])
+        self.assertEqual(self.lib.test_sync_queue(2,1024),1)
+        self.assertEqual(self.lib.test_queue_count(),2)
+        self.assertEqual(self.lib.test_sync_queue(200,16),1)
+        self.assertEqual(self.lib.test_queue_count(),2)
+        self.assertEqual(self.lib.test_queue_pending(),1)
+        self.assertIn(b'not enough memory',self.lib.test_message())
+        self.server([(b'playlistinfo\n',b'file: album/a.flac\nId: 7\nOK\n')])
+        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
+        self.assertEqual(self.lib.test_queue_count(),1)
+        self.assertEqual(self.lib.test_queue_pending(),0)
+
+    def test_queue_growth_between_status_and_reply_is_drained_then_retried(self):
+        data=b''.join(f'file: album/{i}.flac\nId: {i+1}\n'.encode() for i in range(40))
+        self.server([(b'playlistinfo\n',data+b'OK\n'),(b'playlistinfo\n',data+b'OK\n')])
+        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
+        self.assertEqual(self.lib.test_queue_count(),0)
+        self.assertEqual(self.lib.test_queue_pending(),1)
+        self.assertEqual(self.lib.test_sync_queue(40,1024),1)
+        self.assertEqual(self.lib.test_queue_count(),40)
+        self.assertEqual(self.lib.test_queue_pending(),0)
 
     def test_database_import_is_paginated_and_flushes_each_page(self):
         first=b''.join(f'file: music/{i}.flac\nTitle: Song {i}\n'.encode() for i in range(256))

@@ -63,7 +63,7 @@ typedef struct {
     uint64_t id;
     char name[64];
     uint16_t track_count;
-    bool local; /* Starred is the local playlist */
+    bool local; /* false for MPD server playlists, including Stared */
 } player_playlist_t;
 
 /* Metadata supplied by an MPD server, including its per-file added date. */
@@ -170,6 +170,7 @@ bool player_artist_song_get(uint64_t artist_id, int index, player_track_t *out);
 
 void player_library_playlists_reset(void);
 void player_library_playlist_item(int index, const char *name, uint64_t key);
+uint32_t player_playlist_revision(void);
 int player_playlist_count(void);
 bool player_playlist_get(int index, player_playlist_t *out);
 int player_playlist_track_count(int index);
@@ -191,7 +192,7 @@ void player_seek_sec(uint32_t sec);
 void player_step_volume(int direction);
 void player_mute_toggle(void);
 void player_toggle_star(void);
-/* Clear all local stars and remove stars.csv (debug/reset). */
+/* Clear server Stared in MPD mode, or local stars for the simulator. */
 void player_clear_stars(void);
 void player_set_shuffle(bool on);
 void player_cycle_repeat(void);
