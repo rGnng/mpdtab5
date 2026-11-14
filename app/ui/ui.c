@@ -145,7 +145,6 @@ static const lv_font_t * FONT_QUEUE = &inter_20;
 static const lv_font_t * FONT_QUEUE_SUB = &inter_16;
 static const lv_font_t * FONT_NUM = &inter_tabular_18;
 static const lv_font_t * FONT_CLOCK = &inter_tabular_28;
-static const lv_font_t * FONT_CLOCK_12 = &inter_tabular_24;
 static const lv_font_t * FONT_CLOCK_LG = &inter_tabular_36;
 
 enum {
@@ -3276,9 +3275,7 @@ static void update_clock(void)
     }
     if(strcmp(text, lv_label_get_text(g_status_time)) != 0 || g_clock_12h != last_12h) {
         last_12h = g_clock_12h;
-        lv_obj_set_style_text_font(g_status_time,
-                                   g_clock_12h ? FONT_CLOCK_12
-                                               : FONT_CLOCK, 0);
+        lv_obj_set_style_text_font(g_status_time, FONT_CLOCK, 0);
         lv_label_set_text(g_status_time, text);
     }
 }
