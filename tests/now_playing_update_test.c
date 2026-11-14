@@ -29,6 +29,8 @@ static bool test_artist_song_get(uint64_t id, int index, player_track_t *out);
 
 static player_snapshot_t injected;
 static bool inject, art_ready;
+static bool publish_art_after_copy, publish_art_on_revision;
+static unsigned fail_art_copies;
 static unsigned art_variant;
 static artwork_quality_t art_quality={360,360};
 static uint32_t queue_rev, art_rev;
@@ -44,13 +46,23 @@ static void test_snapshot(player_snapshot_t *out)
 static uint32_t test_queue_revision(void)
 { return player_queue_revision()+queue_rev; }
 static uint32_t test_artwork_revision(void)
-{ return art_rev; }
+{
+    if(publish_art_on_revision) {
+        publish_art_on_revision=false;art_ready=true;art_rev++;
+    }
+    return art_rev;
+}
 static int test_queue_count(void)
 { return force_empty_queue?0:player_queue_count(); }
 static bool test_artwork_copy(uint8_t *dst, size_t size, artwork_quality_t minimum,
                               artwork_quality_t *actual)
 {
     copies++;
+    if(publish_art_after_copy) {
+        publish_art_after_copy=false;publish_art_on_revision=true;
+        *actual=(artwork_quality_t){0};return false;
+    }
+    if(fail_art_copies) {fail_art_copies--;*actual=(artwork_quality_t){0};return false;}
     *actual=art_ready?art_quality:(artwork_quality_t){0};
     if(!artwork_quality_at_least(*actual,minimum)) return false;
     if(art_ready) {
@@ -248,6 +260,21 @@ static void gradient_lifecycle(void)
     settings_np_bg_action((void *)(intptr_t)NP_BG_THEME); ui_rebuild_page(); pump(100);
 }
 
+static void artwork_arrival_during_build(void)
+{
+    injected.track.id+=100000;art_ready=false;art_quality=(artwork_quality_t){360,360};
+    art_rev++;publish_art_after_copy=true;
+    np_tick();pump(800);np_tick();
+    check(art_ready && lv_image_get_src(np_cover_widget)!=NULL,
+          "Artwork published during Now Playing construction must not leave a permanent blank cover");
+
+    injected.track.id++;art_rev++;fail_art_copies=3;
+    unsigned before=copies;uint32_t published=art_rev;
+    np_tick();pump(2000);np_tick();
+    check(art_rev==published && copies>=before+4 && lv_image_get_src(np_cover_widget)!=NULL,
+          "A transient artwork-copy failure must retry without waiting for another artwork revision");
+}
+
 static void artwork_upgrades(void)
 {
     injected.track.id+=200000; art_ready=true; art_quality=(artwork_quality_t){120,120};
@@ -433,6 +460,7 @@ int main(int argc, char **argv)
     check(deleted==old_deleted+1,"Visible queue changes must refresh queue rows");
     np_toggle_queue(); pump(600);
     text(np_album,"Queue album"); text(np_star_icon,ICON_STAR_FILL);
+    artwork_arrival_during_build();
     artwork_upgrades();
     stopped_empty_queue();
     gradient_lifecycle();

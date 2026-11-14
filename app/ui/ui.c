@@ -2295,13 +2295,13 @@ static const lv_image_dsc_t * iap2_cover_src(uint64_t track_id)
     }
 
     uint32_t rev = player_artwork_revision();
-    if(rev != g_iap2_cover_rev) {
-        g_iap2_cover_rev = rev;
+    if(rev != g_iap2_cover_rev || !g_iap2_cover_ready) {
         artwork_quality_t received = {0};
         if(g_iap2_cover_buf != NULL &&
            player_artwork_copy(g_iap2_cover_buf, NP_ART_BYTES,
                                 g_iap2_cover_quality, &received)) {
             g_iap2_cover_ready = true;
+            g_iap2_cover_rev = rev;
             g_iap2_cover_quality = received;
             lv_image_cache_drop(&g_iap2_cover_dsc);
             np_cover_dsc_init();
@@ -2312,6 +2312,7 @@ static const lv_image_dsc_t * iap2_cover_src(uint64_t track_id)
             }
         }
         else if(g_iap2_cover_ready && artwork_quality_rank(received) != 0) {
+            g_iap2_cover_rev = rev;
             UI_PERF_LOG("np_art track=%016llx retained=%ux%u rejected=%ux%u",
                         (unsigned long long)track_id,
                         g_iap2_cover_quality.width, g_iap2_cover_quality.height,
@@ -4094,16 +4095,21 @@ static void np_refresh_snapshot(const player_snapshot_t * snapshot)
     if(snapshot->real_device && np_cover_widget != NULL) {
         uint32_t art_rev = player_artwork_revision();
         bool track_changed = (snapshot->track.id != g_np_cover_track_id);
-        if(art_rev != g_np_cover_rev || track_changed) {
+        bool missing = snapshot->track.id && lv_image_get_src(np_cover_widget) == NULL;
+        if(art_rev != g_np_cover_rev || track_changed || missing) {
             g_np_cover_rev = art_rev;
             g_np_cover_track_id = snapshot->track.id;
             const void * src = iap2_cover_src(snapshot->track.id);
-            lv_image_set_src(np_cover_widget, src);
-            lv_obj_set_style_bg_color(np_cover_widget,
-                lv_color_hex(src ? COL_PANEL : COL_PANEL_ALT), 0);
-            lv_obj_set_style_bg_opa(np_cover_widget,
-                                    src ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
-            np_gradient_source(src);
+            /* Keep retrying an empty result without invalidating a blank
+             * 360px cover and background on every playback tick. */
+            if(src || lv_image_get_src(np_cover_widget) != NULL) {
+                lv_image_set_src(np_cover_widget, src);
+                lv_obj_set_style_bg_color(np_cover_widget,
+                    lv_color_hex(src ? COL_PANEL : COL_PANEL_ALT), 0);
+                lv_obj_set_style_bg_opa(np_cover_widget,
+                                        src ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+                np_gradient_source(src);
+            }
         }
     }
 
@@ -4643,6 +4649,9 @@ static void np_create(lv_obj_t * parent)
     player_album_t now_album;
     bool has_now_album = !snapshot.real_device &&
                          find_album(snapshot.track.album_id, &now_album);
+    /* A worker can publish while the widgets below are being constructed.
+     * Acknowledge only the revision sampled before resolving this cover. */
+    uint32_t now_cover_revision = player_artwork_revision();
     const lv_image_dsc_t * iap2_cover =
         (snapshot.real_device && snapshot.track.title[0] != '\0')
             ? iap2_cover_src(snapshot.track.id) : NULL;
@@ -4950,7 +4959,7 @@ static void np_create(lv_obj_t * parent)
     }
 
     if(np_queue_visible && g_focus_count > 0) focus_select(np_queue_focus_start);
-    g_np_cover_rev = player_artwork_revision();
+    g_np_cover_rev = now_cover_revision;
     g_np_cover_track_id = snapshot.track.id;
     np_gradient_source(now_cover);
     np_refresh_snapshot(&snapshot);
