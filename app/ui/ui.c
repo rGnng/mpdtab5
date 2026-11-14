@@ -921,6 +921,7 @@ static void ui_text_clip(lv_obj_t * label)
 }
 
 static lv_obj_t * g_marquee_label;
+static lv_obj_t * g_marquee_key_label;
 
 static void marquee_exec(void * obj, int32_t v)
 {
@@ -935,11 +936,23 @@ static void ui_marquee_stop(void)
 {
     if(g_marquee_label == NULL) return;
     lv_anim_delete(g_marquee_label, marquee_exec);
-    if(lv_obj_is_in_widget_tree(g_marquee_label)) {
+    if(lv_obj_is_valid(g_marquee_label) && lv_obj_check_type(g_marquee_label, &lv_label_class)) {
         ((lv_label_t *)g_marquee_label)->offset.x = 0;
         lv_obj_invalidate(g_marquee_label);
     }
     g_marquee_label = NULL;
+}
+
+static void ui_marquee_detach(lv_obj_t *root)
+{
+    if(!g_marquee_label || !lv_obj_is_valid(g_marquee_label)) return;
+    for(lv_obj_t *obj=g_marquee_label;obj;obj=lv_obj_get_parent(obj)) {
+        if(obj==root) {
+            ui_marquee_stop();
+            g_marquee_key_label=NULL;
+            return;
+        }
+    }
 }
 
 /* Idle-triggered marquee: after MARQUEE_IDLE_MS the overflowing text scrolls
@@ -5036,6 +5049,7 @@ static lv_timer_t * albums_cover_timer;
 static bool albums_refresh_pending;
 static uint32_t albums_last_scroll_tick;
 static lv_obj_t * albums_detail_title;
+static lv_obj_t * albums_detail_cover;
 static lv_obj_t * artists_detail_name;
 static lv_obj_t * playlists_detail_title;
 static lv_obj_t * playlists_name_labels[64];
@@ -5409,7 +5423,25 @@ static void albums_detail_timer_cb(lv_timer_t * timer)
     if(albums_detail_dirty && albums_right_content != NULL) {
         albums_detail_dirty = false;
         uint32_t perf_t0 = g_ui_trace ? perf_now() : 0;
+        focus_activate_fn action = NULL;
+        void *user = NULL;
+        if(albums_detail_open) {
+            if(g_focus_index>=0 && g_focus_index<g_focus_count) {
+                action=g_focus[g_focus_index].activate;
+                user=g_focus[g_focus_index].user;
+            }
+            /* Old focus objects must still be alive while removing their
+             * highlight. The render below deletes the entire right pane. */
+            focus_clear();
+        }
         albums_render_detail(albums_right_content, albums_detail_open);
+        if(albums_detail_open) {
+            int selected=albums_play_focus>=0 ? albums_play_focus : 0;
+            for(int i=0;action && i<g_focus_count;i++) {
+                if(g_focus[i].activate==action && g_focus[i].user==user) { selected=i;break; }
+            }
+            focus_select(selected);
+        }
         perf_log_us("albums_detail", perf_t0);
     }
 }
@@ -5675,6 +5707,8 @@ static void albums_same_key(void)
 static void albums_render_detail(lv_obj_t * parent, bool interactive)
 {
     if(parent == NULL) return;
+    ui_marquee_detach(parent);
+    albums_detail_cover = NULL;
     lv_obj_clean(parent);
     albums_shuffle_icon = NULL;
     albums_play_focus = -1;
@@ -5696,7 +5730,7 @@ static void albums_render_detail(lv_obj_t * parent, bool interactive)
     lv_obj_set_scrollable(detail_head, false);
 
     const void * detail_cover_src = detail_thumb_for_album(&album);
-    make_cover(detail_head, detail_cover_src, album.color, 80);
+    albums_detail_cover = make_cover(detail_head, detail_cover_src, album.color, 80);
 
     lv_obj_t * detail_text = lv_obj_create(detail_head);
     lv_obj_set_width(detail_text, 0);
@@ -5841,6 +5875,7 @@ static void albums_create(lv_obj_t * parent)
     albums_detail_title = NULL;
     albums_cancel_work();
     albums_right_content = NULL;
+    albums_detail_cover = NULL;
     albums_left_list = NULL;
     albums_shuffle_row = NULL;
     albums_counter.group = NULL;
@@ -6404,6 +6439,7 @@ static void artists_same_key(void)
 static void artists_render_detail(lv_obj_t * parent, bool interactive)
 {
     if(parent == NULL) return;
+    ui_marquee_detach(parent);
     lv_obj_clean(parent);
     artists_shuffle_icon = NULL;
     artists_play_focus = -1;
@@ -7768,6 +7804,7 @@ static void playlists_shuffle_touch_cb(lv_event_t * event)
 static void playlists_render_detail(lv_obj_t * parent, bool interactive)
 {
     if(parent == NULL) return;
+    ui_marquee_detach(parent);
     lv_obj_clean(parent);
     playlists_play_focus = -1;
 
@@ -10267,6 +10304,7 @@ static void ui_page_teardown(void)
     if(albums_detail_timer) lv_timer_pause(albums_detail_timer);
     albums_detail_dirty = false;
     albums_right_content = NULL;
+    albums_detail_cover = NULL;
 
     if(artists_left_list) artists_left_scroll_y = lv_obj_get_scroll_y(artists_left_list);
     artists_left_list = NULL;
@@ -11079,7 +11117,6 @@ static lv_obj_t * marquee_target_label(void)
     }
 }
 
-static lv_obj_t * g_marquee_key_label;
 static int g_marquee_key_screen = -1;
 static int g_marquee_key_index = -1;
 static bool g_marquee_key_detail;
@@ -11200,9 +11237,12 @@ static void ui_mpd_artwork_tick(void)
     }
     albums_schedule_covers();
     player_album_t selected;
-    if(player_album_get(albums_selected,&selected) && !album_thumb_missing(&selected) &&
-       detail_thumb_slot.id!=selected.cover_index-PLAYER_REAL_COVER_BASE)
-        albums_schedule_detail();
+    if(albums_detail_cover && player_album_get(albums_selected,&selected) &&
+       !album_thumb_missing(&selected) &&
+       detail_thumb_slot.id!=selected.cover_index-PLAYER_REAL_COVER_BASE) {
+        const void *src=detail_thumb_for_album(&selected);
+        if(src) lv_image_set_src(albums_detail_cover,src);
+    }
 }
 #endif
 

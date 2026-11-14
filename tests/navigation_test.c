@@ -197,6 +197,43 @@ static void now_playing_keys(void)
     check(!np_queue_visible,"Back still closes Up Next");
 }
 
+static void context_album_delayed_refresh(void)
+{
+    ui_select_screen(SCR_NOW_PLAYING);pump(400);
+    ui_handle_key(UI_KEY_CONTEXT);ui_handle_key(UI_KEY_ENTER);pump(500);
+    check(g_current_screen==SCR_ALBUMS && albums_detail_open &&
+          g_focus_index==albums_play_focus,"Go to album must open the current album with Play focused");
+    lv_obj_t *left=albums_left_list;
+    int count=g_focus_count;
+    for(int pass=0;pass<3;pass++) {
+        if(pass) {
+            for(int i=0;i<g_focus_count;i++) if(g_focus[i].activate==albums_track_action) {
+                focus_select(i);break;
+            }
+        }
+        focus_activate_fn action=g_focus[g_focus_index].activate;
+        void *user=g_focus[g_focus_index].user;
+        lv_obj_set_flex_grow(albums_detail_title,0);
+        lv_obj_set_width(albums_detail_title,32);
+        lv_obj_update_layout(albums_detail_title);
+        ui_marquee_start(albums_detail_title);
+        check(g_marquee_label==albums_detail_title,"Crash fixture must own an animated detail title");
+        /* A completed thumbnail used to schedule this timer while detail
+         * controls were focused. Exercise that deferred path explicitly. */
+        albums_schedule_detail();pump(200);
+        check(g_focus_count==count,"Delayed album detail refresh must replace, not append, focus entries");
+        check(g_focus_index>=0 && g_focus[g_focus_index].activate==action &&
+              g_focus[g_focus_index].user==user,"Delayed refresh must retain the focused Play/track action");
+        for(int i=0;i<g_focus_count;i++)
+            check(lv_obj_is_valid(g_focus[i].obj),"Every focus target must refer to a live widget after artwork refresh");
+        check(albums_left_list==left,"Artwork/detail refresh must retain the left album viewport");
+        check(!g_marquee_label || lv_obj_is_valid(g_marquee_label),
+              "Detail replacement must retire the previous marquee before deleting its label");
+        ui_handle_key(UI_KEY_ENTER);pump(300);
+        ui_handle_key(UI_KEY_DOWN);ui_handle_key(UI_KEY_UP);pump(100);
+    }
+}
+
 static void mini_unchanged_poll(void)
 {
     ui_select_screen(SCR_SONGS);pump(600);
@@ -879,7 +916,7 @@ int main(int argc,char **argv)
     ui_apply_saved_settings(&config);ui_init();pump(600);
     check(g_system_config.fast_scroll_hold_ms==300,"Missing hold configuration must default to 300 ms");
     check(g_system_config.fast_scroll_trigger_window_ms==550,"Missing trigger configuration must default to 550 ms");
-    alpha_fade();now_playing_keys();mini_unchanged_poll();artist_viewport();scrollbar_views();pressed_controls();fast_navigation();
+    alpha_fade();now_playing_keys();context_album_delayed_refresh();mini_unchanged_poll();artist_viewport();scrollbar_views();pressed_controls();fast_navigation();
     cursor_band_views();settings_widget_lifetime();rapid_tab_navigation();sort_order_settings();
     album_pane_retention();
     pagination_views();
