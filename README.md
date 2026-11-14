@@ -48,6 +48,11 @@ The screen wakes when MPD starts or resumes playback, including after a manual
 screen-off. Blanking it while playback is already running stays effective until
 a subsequent pause/stop and playback start, or touch/key input.
 
+On Now Playing with the queue closed, **Down** skips to the next track,
+**Up** uses Previous/Restart (Tracks restarts after three seconds), and **Enter**
+toggles Play/Pause. This includes ColoPlay knob navigation and presses. Up Next
+and the context menu retain Up/Down selection and Enter activation.
+
 Stars use Tracks’ server-side **Stared** playlist. The Tab5 reads its membership,
 adds songs with `playlistadd`, and removes them with `playlistdelete`. The star
 icon and Stared view reflect confirmed server state; MPD mode does not read or

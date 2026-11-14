@@ -3946,6 +3946,19 @@ static void np_next_action(void * user)
     if(g_pages[SCR_NOW_PLAYING].tick) g_pages[SCR_NOW_PLAYING].tick();
 }
 
+static bool np_key(ui_key_t key)
+{
+    /* An open queue keeps its normal focus/activation controls. Context menus
+     * are dispatched before page keys and retain their own navigation too. */
+    if(np_queue_visible) return false;
+    switch(key) {
+        case UI_KEY_UP: np_prev_action(NULL); return true;
+        case UI_KEY_DOWN: np_next_action(NULL); return true;
+        case UI_KEY_ENTER: np_play_action(NULL); return true;
+        default: return false;
+    }
+}
+
 static void np_shuffle_action(void * user)
 {
     LV_UNUSED(user);
@@ -4169,7 +4182,8 @@ static void np_same_key(void)
     if(g_focus_count > 0 && np_queue_focus_start < g_focus_count) {
         focus_select(np_queue_focus_start);
     }
-    ui_set_hint("UP/DOWN Select   ENTER Play/Jump   7 Play/Pause");
+    ui_set_hint(np_queue_visible ? "UP/DOWN Select   ENTER Play/Jump   7 Play/Pause"
+                               : "UP Previous/Restart   DOWN Next   ENTER Play/Pause");
 }
 
 static bool np_back(void)
@@ -4940,7 +4954,8 @@ static void np_create(lv_obj_t * parent)
     g_np_cover_track_id = snapshot.track.id;
     np_gradient_source(now_cover);
     np_refresh_snapshot(&snapshot);
-    ui_set_hint("UP/DOWN Select   ENTER Play/Jump   7 Play/Pause");
+    ui_set_hint(np_queue_visible ? "UP/DOWN Select   ENTER Play/Jump   7 Play/Pause"
+                               : "UP Previous/Restart   DOWN Next   ENTER Play/Pause");
     if(g_ui_trace) UI_PERF_LOG("np_build: open=%d left=%u lookup=%u widgets=%u total=%u us rows=%d",
         np_queue_visible, (unsigned)(left_done - create_start),
         (unsigned)np_queue_lookup_us, (unsigned)np_queue_widget_us,
@@ -10486,6 +10501,7 @@ static const page_t g_pages[SCR_COUNT] = {
     [SCR_NOW_PLAYING] = {
         .create = np_create,
         .tick = np_tick,
+        .key = np_key,
         .back = np_back,
         .same_key = np_same_key,
     },

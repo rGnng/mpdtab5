@@ -147,6 +147,56 @@ static void alpha_fade(void)
     lv_obj_delete(panel);pump(100);
 }
 
+static void now_playing_keys(void)
+{
+    player_album_t album;
+    player_track_t first,second;
+    check(player_album_get(0,&album) && player_album_track_get(album.id,0,&first) &&
+          player_album_track_get(album.id,1,&second),"Playback key fixture needs two album tracks");
+    player_set_shuffle(false);
+    player_play_album(album.id);
+    player_queue_jump(1);
+    player_seek_sec(10);
+    ui_select_screen(SCR_NOW_PLAYING);pump(500);
+    if(np_queue_visible) {np_toggle_queue();pump(400);}
+    player_snapshot_t snap;
+    ui_handle_key(UI_KEY_UP);player_get_snapshot(&snap);
+    check(snap.track.id==second.id && snap.elapsed_sec==0,
+          "Now Playing Up must restart a track after the restart threshold");
+    ui_handle_key(UI_KEY_UP);pump(400);player_get_snapshot(&snap);
+    check(snap.track.id==first.id,"Now Playing Up near the start must select the previous track");
+    ui_handle_key(UI_KEY_DOWN);pump(400);player_get_snapshot(&snap);
+    check(snap.track.id==second.id,"Now Playing Down must skip to the next track");
+    ui_handle_key(UI_KEY_ENTER);player_get_snapshot(&snap);
+    check(snap.status==PLAYER_PAUSED && snap.track.id==second.id,"Now Playing Enter must pause the current track");
+    ui_handle_key(UI_KEY_ENTER);player_get_snapshot(&snap);
+    check(snap.status==PLAYER_PLAYING,"Now Playing Enter must resume playback");
+
+    bool starred=snap.starred;
+    ui_handle_key(UI_KEY_CONTEXT);
+    ui_handle_key(UI_KEY_DOWN);ui_handle_key(UI_KEY_DOWN);
+    check(g_ctx_menu_open && g_ctx_menu_focus==g_ctx_star_item,"Context arrows must retain menu navigation");
+    ui_handle_key(UI_KEY_ENTER);player_get_snapshot(&snap);
+    check(snap.starred!=starred && snap.status==PLAYER_PLAYING && snap.track.id==second.id,
+          "Context Enter must activate Star rather than pause playback");
+    ui_handle_key(UI_KEY_ENTER);ui_handle_key(UI_KEY_BACK);
+
+    ui_handle_key(UI_KEY_PAGE_UP);pump(600);
+    check(np_queue_visible,"Page Up still opens Up Next");
+    focus_select(np_queue_focus_start);
+    ui_handle_key(UI_KEY_DOWN);player_get_snapshot(&snap);
+    check(g_focus_index==np_queue_focus_start+1 && snap.track.id==second.id,
+          "Up Next Down must move selection without changing the playing track");
+    ui_handle_key(UI_KEY_UP);
+    check(g_focus_index==np_queue_focus_start,"Up Next Up must move selection to the previous row");
+    player_track_t queued;
+    check(player_queue_at((int)(intptr_t)g_focus[g_focus_index].user,&queued),"Selected Up Next row must resolve a queue track");
+    ui_handle_key(UI_KEY_ENTER);pump(400);player_get_snapshot(&snap);
+    check(snap.track.id==queued.id && snap.status==PLAYER_PLAYING,"Up Next Enter must play the selected queue row");
+    ui_handle_key(UI_KEY_BACK);pump(400);
+    check(!np_queue_visible,"Back still closes Up Next");
+}
+
 static void mini_unchanged_poll(void)
 {
     ui_select_screen(SCR_SONGS);pump(600);
@@ -829,7 +879,7 @@ int main(int argc,char **argv)
     ui_apply_saved_settings(&config);ui_init();pump(600);
     check(g_system_config.fast_scroll_hold_ms==300,"Missing hold configuration must default to 300 ms");
     check(g_system_config.fast_scroll_trigger_window_ms==550,"Missing trigger configuration must default to 550 ms");
-    alpha_fade();mini_unchanged_poll();artist_viewport();scrollbar_views();pressed_controls();fast_navigation();
+    alpha_fade();now_playing_keys();mini_unchanged_poll();artist_viewport();scrollbar_views();pressed_controls();fast_navigation();
     cursor_band_views();settings_widget_lifetime();rapid_tab_navigation();sort_order_settings();
     album_pane_retention();
     pagination_views();
