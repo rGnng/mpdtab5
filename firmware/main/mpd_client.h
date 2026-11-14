@@ -43,6 +43,12 @@ esp_err_t mpd_client_configure(const mpd_config_t *config);
 void mpd_client_library_id(char *out, size_t cap);
 void mpd_client_rescan(void);
 bool mpd_client_get_state(mpd_state_t *out);
+/* ColoPlay uses confirmed raw mixer state; the Tab5 UI retains its selected grid. */
+bool mpd_client_get_remote_state(mpd_state_t *out);
+esp_err_t mpd_client_coloplay_command(const uint8_t *command);
+void mpd_client_coloplay_release(void);
+void mpd_client_coloplay_begin(uint32_t session);
+uint8_t mpd_client_coloplay_seek_state(void);
 bool mpd_client_is_enabled(void);
 bool mpd_client_is_connected(void);
 bool mpd_client_is_identified(void);

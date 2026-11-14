@@ -5,6 +5,8 @@
 #include "player.h"
 #include "text_util.h"
 #include "volume_grid.h"
+#include "coloplay_ble.h"
+#include "coloplay_ble_protocol.h"
 #include "app_config.h"
 #include "jpeg_thumbnail.h"
 #include "thumb_cache.h"
@@ -67,14 +69,17 @@ static int mpd_playlist_version;
 static bool mpd_updating;
 static unsigned reported_queue_size;
 static bool remote_repeat, remote_single;
-static int muted_volume=50, server_volume=-1;
+static int muted_volume=50, server_volume=-1, confirmed_server_volume=-1;
+static uint8_t coloplay_seek;
+static uint32_t coloplay_session;
+static int64_t coloplay_seek_deadline,coloplay_next_seek;
 static char current_uri[2048];
 static char library_id[64];
 static void artwork_register(uint64_t album, uint64_t track);
 static void artwork_reset(void);
 static void artwork_step(uint32_t generation);
 
-typedef enum { CMD_TEXT, CMD_PLAY, CMD_ALL, CMD_JUMP, CMD_STAR, CMD_CLEAR_STARS } command_kind_t;
+typedef enum { CMD_TEXT, CMD_PLAY, CMD_ALL, CMD_JUMP, CMD_STAR, CMD_CLEAR_STARS, CMD_COLOPLAY } command_kind_t;
 typedef struct {
     command_kind_t kind;
     uint32_t generation;
@@ -82,12 +87,14 @@ typedef struct {
     uint32_t queue_id;
     uint64_t *keys;
     char text[80];
+    uint8_t coloplay[CP_BLE_BYTES];
+    uint8_t remote_result;
 } command_t;
 static void take(void) { xSemaphoreTake(mutex,portMAX_DELAY); }
 static void give(void) { xSemaphoreGive(mutex); }
 static void message(const char *s) { take(); snprintf(status_text,sizeof(status_text),"%s",s); give(); }
 static void publish(const mpd_state_t *s) {
-    take(); uint32_t revision=state.revision+1; state=*s; state.revision=revision; give();
+    take(); uint32_t revision=state.revision+1; state=*s; state.revision=revision;confirmed_server_volume=server_volume;give();
 }
 static void identity(const mpd_config_t *c, char *out, size_t cap) {
     char address[144]; snprintf(address,sizeof(address),"%s:%u",c->host,c->port);
@@ -151,6 +158,10 @@ const char *mpd_client_status(void) {
     return status_text;
 }
 bool mpd_client_get_state(mpd_state_t *out) { if(!mutex || !out) return false; take(); *out=state; give(); return true; }
+bool mpd_client_get_remote_state(mpd_state_t *out){if(!mutex||!out)return false;take();*out=state;out->volume=confirmed_server_volume;give();return true;}
+void mpd_client_coloplay_begin(uint32_t session){if(!mutex)return;take();coloplay_session=session;coloplay_seek=0;give();}
+void mpd_client_coloplay_release(void){if(!mutex)return;take();coloplay_session=0;coloplay_seek=0;give();}
+uint8_t mpd_client_coloplay_seek_state(void){if(!mutex)return 0;take();uint8_t value=esp_timer_get_time()<coloplay_seek_deadline?coloplay_seek:0;give();return value;}
 bool mpd_client_is_enabled(void) { return true; }
 bool mpd_client_is_connected(void) { mpd_state_t s={0}; return mpd_client_get_state(&s) && s.connected; }
 bool mpd_client_is_identified(void) { return mpd_client_is_connected(); }
@@ -160,6 +171,10 @@ static esp_err_t enqueue(command_t *c) {
     if(!online) { free(c->keys); return ESP_ERR_INVALID_STATE; }
     if(xQueueSend(commands,c,0)!=pdPASS) { free(c->keys); message("MPD command queue full"); return ESP_ERR_NO_MEM; }
     return ESP_OK;
+}
+esp_err_t mpd_client_coloplay_command(const uint8_t *packet){
+    if(!cp_command_valid(packet,CP_BLE_BYTES))return ESP_ERR_INVALID_ARG;
+    command_t command={.kind=CMD_COLOPLAY,.remote_result=CP_APPLIED};memcpy(command.coloplay,packet,CP_BLE_BYTES);return enqueue(&command);
 }
 static esp_err_t text_command(const char *text) {
     command_t c={.kind=CMD_TEXT}; snprintf(c.text,sizeof(c.text),"%s",text); return enqueue(&c);
@@ -617,6 +632,28 @@ static bool play_selection(const uint64_t *keys,int count,int start) {
     return simple(cmd);
 }
 static bool run_command(command_t *c) {
+    if(c->kind==CMD_COLOPLAY){
+        const uint8_t *p=c->coloplay;take();bool current=coloplay_session&&coloplay_session==cp_u32(p+4);give();
+        if(!current){c->remote_result=CP_FAILED;return true;}
+        const uint16_t usage=cp_u16(p+8),count=cp_u16(p+10),parameter=cp_u16(p+12);
+        if(p[1]==CP_RELEASE){take();coloplay_seek=0;give();return true;}
+        if(p[1]==CP_VOLUME){
+            if(server_volume<0){c->remote_result=CP_UNSUPPORTED;return true;}
+            const int steps=parameter==1?player_volume_steps():parameter;
+            const int value=volume_grid_step(server_volume,(usage==0xe9?1:-1)*(int)count,steps);
+            if(value==server_volume)c->remote_result=CP_NO_CHANGE;
+            char command[32];snprintf(command,sizeof(command),"setvol %d",value);return simple(command);
+        }
+        if(usage==0xb3||usage==0xb4){
+            const int64_t now=esp_timer_get_time();take();coloplay_seek=usage==0xb3?1:2;coloplay_next_seek=now+1000000;coloplay_seek_deadline=now+(parameter==1?10000000:(int64_t)(cp_u16(p+14)?cp_u16(p+14):200)*1000);give();
+            return simple(usage==0xb3?"seekcur +5":"seekcur -5");
+        }
+        mpd_state_t latest={0};mpd_client_get_state(&latest);
+        const char *operation=usage==0xb0?"play":usage==0xb1?"pause 1":usage==0xb7?"stop":usage==0xb5?"next":usage==0xb6?"previous":usage==0xe2?"@mute":usage==0xcd?(latest.play_status==1?"pause 1":"pause 0"):NULL;
+        if(!operation){c->remote_result=CP_UNSUPPORTED;return true;}
+        if(usage==0xb5||usage==0xb6)for(unsigned n=1;n<count;++n)if(!simple(operation))return false;
+        snprintf(c->text,sizeof(c->text),"%s",operation);
+    }
     if(c->kind==CMD_STAR) return c->keys && change_star(c->keys[0],false);
     if(c->kind==CMD_CLEAR_STARS) return change_star(0,true);
     if(c->kind==CMD_PLAY) return play_selection(c->keys,c->count,c->start);
@@ -654,7 +691,7 @@ static bool generation_changed(uint32_t generation) { take(); bool changed=gener
 static void disconnected(void) {
     mpd_wire_close(&wire);
     mpd_wire_close(&events);
-    take(); state.connected=state.identified=false; state.library_syncing=false; state.play_status=0; state.revision++;
+    take(); state.connected=state.identified=false; state.library_syncing=false; state.play_status=0; state.revision++;confirmed_server_volume=-1;coloplay_seek=0;
     queue_size=0; queue_revision++; art_valid=false; art_revision++;
     uint64_t *old_stars=star_keys; star_keys=NULL; star_count=0; star_revision++; state.starred=false;
     give(); free(old_stars);
@@ -727,9 +764,11 @@ static void worker_task(void *arg) {
             command_t c;
             for(int n=0;n<8 && xQueueReceive(commands,&c,0)==pdPASS;n++) {
                 if(c.generation==generation) {
-                    if(!run_command(&c)) { message(wire.error[0] ? wire.error : "MPD command failed"); if(wire.fd<0) ok=false; }
+                    const bool applied=run_command(&c);
+                    if(!applied) { message(wire.error[0] ? wire.error : "MPD command failed"); if(wire.fd<0) ok=false; }
                     /* Poll after each action so successive toggles use live state. */
                     if(ok) ok=poll_state();
+                    if(c.kind==CMD_COLOPLAY)coloplay_ble_result(c.coloplay,applied&&ok?c.remote_result:CP_FAILED);
                 }
                 free(c.keys);
                 if(!ok) break;
@@ -746,6 +785,10 @@ static void worker_task(void *arg) {
             }
             take(); bool requested=rescan; rescan=false; uint8_t held=hold_bit; give();
             if(held) simple(held==11 ? "seekcur -5" : "seekcur +5");
+            /* Dedicated ColoPlay seek lease; USB/D100H hold state is untouched. */
+            take();const int64_t seek_now=esp_timer_get_time();if(seek_now>=coloplay_seek_deadline)coloplay_seek=0;
+            const uint8_t remote_seek=!held&&seek_now>=coloplay_next_seek?coloplay_seek:0;if(remote_seek)coloplay_next_seek=seek_now+1000000;give();
+            if(remote_seek){simple(remote_seek==1?"seekcur +5":"seekcur -5");poll_state();}
             if(requested || (event_flags&1)) {
                 ok=sync_library() && sync_playlists(); last_playlist=-1;
             } else if(event_flags&2) ok=sync_playlists();

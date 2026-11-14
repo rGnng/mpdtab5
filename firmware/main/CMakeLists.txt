@@ -30,6 +30,7 @@ idf_component_register(
         "thumb_cache.c"
         "star_store.c"
         "mpd_client.c"
+        "coloplay_ble.c"
         "../../app/mpd/mpd_wire.c"
         "lvgl_ppa_idf_compat.c"
         "../../app/backend/mock_player.c"

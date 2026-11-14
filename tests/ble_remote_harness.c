@@ -142,6 +142,13 @@ static void usb_hid_input_post_side(int source,uint8_t id,bool down)
 #define usb_hid_input_post_rotary(...) ((void)0)
 #define usb_hid_input_post_key_state(...) ((void)0)
 #define usb_hid_input_post_key(...) ((void)0)
+static bool app_config_sd_ready(void) { return false; }
+static void coloplay_ble_reset(void) {}
+static void coloplay_ble_service(const ble_uuid_t *u,uint16_t a,uint16_t b) {(void)u;(void)a;(void)b;}
+static bool coloplay_ble_discover(uint16_t c,void(*r)(void),void(*f)(const char*)) {(void)c;(void)r;(void)f;return false;}
+static bool coloplay_ble_connected(void) { return false; }
+static bool coloplay_ble_notification(uint16_t c,uint16_t h,const uint8_t *p,unsigned n) {(void)c;(void)h;(void)p;(void)n;return false;}
+static void coloplay_ble_tick(int64_t now) {(void)now;}
 #include "backend_under_test.c"
 static void tick(int64_t now) { clock_us=now;heartbeat_callout(NULL); }
 static void reset(void)

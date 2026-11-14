@@ -27,6 +27,7 @@
 #include "store/config/ble_store_config.h"
 #include "ulanzi_d100h.h"
 #include "usb_hid_input.h"
+#include "coloplay_ble.h"
 
 static const char * TAG = "ble_remote";
 
@@ -379,7 +380,7 @@ static bool adv_name(const struct ble_gap_disc_desc * disc,
     }
     if(has_service) return true;
     if(name[0] == '\0') return false;
-    return strstr(name, "D100H") != NULL || strstr(name, "Ulanzi") != NULL;
+    return strstr(name, "D100H") != NULL || strstr(name, "Ulanzi") != NULL || strncmp(name, "ColoPlay", 8) == 0;
 }
 
 static int gap_event(struct ble_gap_event * event, void * arg);
@@ -397,6 +398,7 @@ static int on_write(uint16_t conn_handle, const struct ble_gatt_error * error,
                     struct ble_gatt_attr * attr, void * arg);
 static void clear_link(void)
 {
+    coloplay_ble_reset();
     s_probe_generation++;
     s_probe_phase = s_probe_failures = 0;
     s_vendor_ready = false;
@@ -429,6 +431,7 @@ static bool active_callback(uint16_t conn_handle)
 
 static void vendor_fail(const char * text)
 {
+    coloplay_ble_reset();
     ESP_LOGW(TAG, "%s", text);
     s_vendor_ready = false;
     s_sleep_phase = 0;
@@ -643,8 +646,21 @@ static void handle_vendor_status(const ulanzi_d100h_status_t * st)
 
 static void heartbeat_callout(struct ble_npl_event * ev);
 
+static void coloplay_ready(void)
+{
+    char addr[18],name[32];uint8_t type=BLE_ADDR_PUBLIC;
+    addr_to_str(&s_pending_addr,addr,sizeof(addr));lock();
+    const ble_remote_device_t *known=find_known_locked(addr,&type);
+    copy_name(name,sizeof(name),known?known->name:"ColoPlay");
+    copy_name(s_current,sizeof(s_current),name);copy_name(s_current_addr,sizeof(s_current_addr),addr);
+    memset(&s_info,0,sizeof(s_info));s_info.connected=true;s_setup_deadline=0;
+    set_state_locked(BLE_REMOTE_CONNECTED,"Connected · ColoPlay");unlock();
+    paired_add(addr,type,name);
+}
+
 static void start_discovery(void)
 {
+    coloplay_ble_reset();
     if(s_discovery_started) return;
     s_discovery_started = true;
     s_vendor_ready = false;
@@ -671,6 +687,7 @@ static int on_svc(uint16_t conn_handle, const struct ble_gatt_error * error,
         ble_uuid_to_str(&service->uuid.u, uuid);
         ESP_LOGI(TAG, "service %s handles %u-%u", uuid,
                  service->start_handle, service->end_handle);
+        coloplay_ble_service(&service->uuid.u,service->start_handle,service->end_handle);
         if(uuid_matches(&service->uuid.u, D100H_SERVICE_UUID16, NULL)) {
             s_vendor_start = service->start_handle;
             s_vendor_end = service->end_handle;
@@ -678,6 +695,7 @@ static int on_svc(uint16_t conn_handle, const struct ble_gatt_error * error,
         return 0;
     }
     if(error != NULL && error->status == BLE_HS_EDONE) {
+        if(coloplay_ble_discover(conn_handle,coloplay_ready,vendor_fail)) return 0;
         if(s_vendor_start == 0) {
             vendor_fail("D100H vendor service not found");
             return 0;
@@ -827,9 +845,9 @@ static int gap_event(struct ble_gap_event * event, void * arg)
             ESP_LOGI(TAG, "scan complete, reason=%d state=%d",
                      event->disc_complete.reason, (int)s_state);
             if(s_state == BLE_REMOTE_SCANNING) {
-                set_state(!s_enabled ? BLE_REMOTE_OFF : s_vendor_ready
+                set_state(!s_enabled ? BLE_REMOTE_OFF : (s_vendor_ready||coloplay_ble_connected())
                           ? BLE_REMOTE_CONNECTED : BLE_REMOTE_IDLE,
-                          !s_enabled ? "Bluetooth off" : s_vendor_ready ? "Connected" : "Idle");
+                          !s_enabled ? "Bluetooth off" : (s_vendor_ready||coloplay_ble_connected()) ? "Connected" : "Idle");
             }
             return 0;
         case BLE_GAP_EVENT_CONNECT:
@@ -879,7 +897,12 @@ static int gap_event(struct ble_gap_event * event, void * arg)
             schedule_reconnect();
             return 0;
         case BLE_GAP_EVENT_NOTIFY_RX: {
-            if(!active_callback(event->notify_rx.conn_handle) || !s_vendor_ready) return 0;
+            if(!active_callback(event->notify_rx.conn_handle)) return 0;
+            if(OS_MBUF_PKTLEN(event->notify_rx.om)==20){
+                uint8_t cp[20];
+                if(os_mbuf_copydata(event->notify_rx.om,0,20,cp)==0 && coloplay_ble_notification(event->notify_rx.conn_handle,event->notify_rx.attr_handle,cp,20))return 0;
+            }
+            if(!s_vendor_ready)return 0;
             uint16_t handle = event->notify_rx.attr_handle;
             uint16_t len = OS_MBUF_PKTLEN(event->notify_rx.om);
             /* Vendor FD00 (handle 77) and HID report 0xFB (handle 69) carry
@@ -1068,11 +1091,15 @@ static void heartbeat_callout(struct ble_npl_event * ev)
         int rc = ble_gap_disc(s_own_addr_type, 15000, &params, gap_event, NULL);
         if(rc != 0) {
             ESP_LOGW(TAG, "scan failed: %d", rc);
-            set_state(s_vendor_ready ? BLE_REMOTE_CONNECTED : BLE_REMOTE_IDLE, "Scan failed");
+            set_state((s_vendor_ready||coloplay_ble_connected()) ? BLE_REMOTE_CONNECTED : BLE_REMOTE_IDLE, "Scan failed");
         }
     }
     if(s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-        if(s_vendor_ready) {
+        if(coloplay_ble_connected()) {
+            if(target_matches_attempt())s_connect_pending=false;
+            coloplay_ble_tick(now);
+        }
+        else if(s_vendor_ready) {
             lock();
             if(target_matches_attempt()) {
                 s_connect_pending = false;

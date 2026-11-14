@@ -91,6 +91,12 @@ This follows the idle caching approach in
 [rGnng/headunit](https://github.com/rGnng/headunit), while retaining the original
 Tab5 list's two-cover / 4 ms loading budget after scrolling stops.
 
+## ColoPlay Bluetooth controller
+
+A separate ColoPlay peer driver supports MPD volume, playback/seek controls and
+returned state over the existing bonded BLE connection. D100H support remains
+available; one controller is active at a time. See [pairing, protocol and validation](docs/coloplay-ble.md).
+
 ## Storage
 
 All application files are under **`/sdcard/mpd/`**:

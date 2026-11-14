@@ -22,6 +22,7 @@ PREFIX=r'''
 #include "player.h"
 #include "text_util.h"
 #include "volume_grid.h"
+#include "coloplay_ble_protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,8 @@ static void *test_reallocate(void *ptr,size_t n) {
 static mpd_wire_t wire;
 static mpd_state_t state;
 static int muted_volume=50, server_volume=-1, mpd_playlist_version;
+static uint32_t coloplay_session=7;static uint8_t coloplay_seek;static int64_t coloplay_seek_deadline,coloplay_next_seek;
+static int64_t esp_timer_get_time(void) { return 1000000; }
 static bool remote_repeat,remote_single,mpd_updating;
 static unsigned reported_queue_size, database_songs;
 static char database_revision[64];
@@ -124,6 +127,13 @@ int test_sync(void) { return sync_library(); }
 int test_run(int kind,uint64_t *keys,int count,int start) {
     command_t c={.kind=kind,.keys=keys,.count=count,.start=start,.queue_id=(uint32_t)start}; return run_command(&c);
 }
+int test_coloplay(int kind,int usage,int count,int parameter,int level,int play,uint32_t session) {
+    command_t c={.kind=CMD_COLOPLAY,.remote_result=CP_APPLIED};
+    cp_header(c.coloplay,kind,1,session);cp_put16(c.coloplay+8,usage);cp_put16(c.coloplay+10,count);cp_put16(c.coloplay+12,parameter);
+    state.volume=server_volume=level;state.play_status=play;coloplay_session=7;
+    if(!run_command(&c)){return CP_FAILED;}return c.remote_result;
+}
+int test_coloplay_seeking(void) { return coloplay_seek; }
 void test_set_volume_steps(int n) { volume_steps=n; }
 int test_volume_mode_change(void) {
     server_volume=67;state.volume=69;volume_steps=64;
@@ -179,6 +189,7 @@ static unsigned uri_count,uri_used;
         cls.lib.test_current_key.argtypes=[C.c_uint64]
         cls.lib.test_star_key.restype=C.c_uint64
         cls.lib.test_toggle.argtypes=[C.c_char_p,C.c_int,C.c_int,C.c_int]
+        cls.lib.test_coloplay.argtypes=[C.c_int,C.c_int,C.c_int,C.c_int,C.c_int,C.c_int,C.c_uint32]
         for name in ['test_track_key','test_album_key']:
             getattr(cls.lib,name).restype=C.c_uint64
         for name in ['test_title','test_artist','test_message','test_playlist_name']:
@@ -457,6 +468,30 @@ static unsigned uri_count,uri_used;
             self.server([(f'command_list_begin\nrepeat {repeat}\nsingle {single}\ncommand_list_end\n'.encode(),b'OK\n')])
             self.assertEqual(self.lib.test_toggle(b'@repeat',mode,50,0),1)
             self.threads[-1].join()
+
+    def test_coloplay_reuses_raw_mpd_volume_grid_without_changing_setting(self):
+        for configured,requested,level,usage,count,expected in [(16,64,67,233,1,69),(64,16,67,233,1,75),(16,64,67,234,1,66),(64,16,0,234,1,0),(16,64,99,233,10,100),(64,1,67,233,1,69)]:
+            self.lib.test_set_volume_steps(configured)
+            self.server([(f'setvol {expected}\n'.encode(),b'OK\n')])
+            self.assertIn(self.lib.test_coloplay(2,usage,count,requested,level,1,7),(2,4))
+
+    def test_coloplay_rejects_old_session_and_unknown_mixer_without_wire_command(self):
+        self.assertEqual(self.lib.test_coloplay(2,233,1,64,50,1,999),3)
+        self.assertEqual(self.lib.test_coloplay(2,233,1,64,-1,1,7),5)
+        self.peer.setblocking(False)
+        with self.assertRaises(BlockingIOError):self.peer.recv(1)
+
+    def test_coloplay_media_controls_preserve_explicit_play_pause_semantics(self):
+        for usage,play,expected in [(205,1,b'pause 1\n'),(205,2,b'pause 0\n'),(176,0,b'play\n'),(177,1,b'pause 1\n'),(181,1,b'next\n'),(182,1,b'previous\n'),(183,1,b'stop\n')]:
+            self.server([(expected,b'OK\n')])
+            self.assertEqual(self.lib.test_coloplay(1,usage,1,0,50,play,7),2)
+
+    def test_coloplay_seek_release_does_not_touch_the_legacy_hold_path(self):
+        self.server([(b'seekcur +5\n',b'OK\n')])
+        self.assertEqual(self.lib.test_coloplay(1,179,1,1,50,1,7),2)
+        self.assertEqual(self.lib.test_coloplay_seeking(),1)
+        self.assertEqual(self.lib.test_coloplay(4,0,1,0,50,1,7),2)
+        self.assertEqual(self.lib.test_coloplay_seeking(),0)
 
     def test_volume_steps_snap_to_grid_before_one_notch(self):
         for steps,up,down in [(16,44,31),(64,39,36)]:

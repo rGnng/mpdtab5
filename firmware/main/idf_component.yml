@@ -10,8 +10,8 @@ dependencies:
     override_path: "../components/usb_host_hid"
   lvgl/lvgl: 9.6.0
   # IDF 5.5 provides the USB host stack and the FS/HS OTG controllers.
-  # Let the component manager resolve the matching espressif/usb version.
-  espressif/usb: '*'
+  # Preserve the tested USB stack while adding the ColoPlay BLE peer driver.
+  espressif/usb: ==1.6.0
   espressif/esp_hosted: ==2.13.1
   espressif/esp_wifi_remote: ==1.6.3
   espressif/libjpeg-turbo: "3.2.0~1"
