@@ -89,13 +89,24 @@ thumbnail pack on SD, using bounded row caches in RAM. **Resync library** retrie
 skipped albums.
 This follows the idle caching approach in
 [rGnng/headunit](https://github.com/rGnng/headunit), while retaining the original
-Tab5 list's two-cover / 4 ms loading budget after scrolling stops.
+Tab5 list's two-cover / 4 ms update budget after scrolling stops. Thumbnail SD
+reads run on a separate worker; LVGL only installs completed images. Playback
+polls update the mini-player only when visible fields change, and pagination
+geometry updates are deferred until row layout has finished.
+Text fades draw only the glyphs crossing the fading edge, while retaining the
+same appearance over gradients and translucent selections.
+The compiled Inter fonts handle supported characters; `JPFONT.TTF` supplies
+fallback glyphs instead of routing all Latin text through runtime font rendering.
 
 ## ColoPlay Bluetooth controller
 
 A separate ColoPlay peer driver supports MPD volume, playback/seek controls and
 returned state over the existing bonded BLE connection. D100H support remains
 available; one controller is active at a time. See [pairing, protocol and validation](docs/coloplay-ble.md).
+For Star/Unstar, bind a ColoPlay **Bluetooth HID key** action to keypad `*`
+(usage **85**, modifiers **0**). This toggles the currently playing song in the
+server's Stared playlist. Context menu is **C** (usage **6**, modifiers **0**)
+on Now Playing; turn the knob to choose an item and press it to confirm.
 
 ## Storage
 

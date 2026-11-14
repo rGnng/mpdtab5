@@ -19,7 +19,12 @@ keys. The raw MPD volume, playing/paused/stopped state, seek direction, position
 track identity and bounded title/artist are sent back. No mixer is reported as
 -1. Explicit grids do not modify the saved native grid. Existing local speaker
 volume is independent. Keyboard support is unmodified arrows, Return/Escape,
-Page Up/Down, brackets, C and digits 1–7; unsupported modifiers/keys are rejected.
+Page Up/Down, brackets, C and digits 1–7. `*` toggles the currently playing song's
+server star from any playback/library screen. Bind **Bluetooth HID key** to
+**usage 85 (`0x55`, keypad multiply), modifiers 0** in ColoPlay's scene editor.
+Shift+8 is also accepted: usage 37 (`0x25`), modifier 2 (left Shift) or 32 (right
+Shift). These are HID usages, not ASCII codes. C is usage 6, modifiers 0, and
+opens/closes the context menu on Now Playing. Other modified keys are rejected.
 
 Commands enter the existing MPD worker queue. Results follow backend processing
 and polling; initial Accepted means queued. State publishes approximately every

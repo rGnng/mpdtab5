@@ -118,7 +118,11 @@ void coloplay_ble_result(const uint8_t *command,uint8_t result){
     if(xQueueSend(s_results,&out,0)!=pdTRUE)ESP_LOGW(TAG,"result queue full");
     else ble_npl_eventq_put(nimble_port_get_dflt_eventq(),&s_result_event);
 }
-static bool key(uint16_t usage,ui_key_t *out){
+static bool key(uint16_t usage,uint16_t modifiers,ui_key_t *out){
+    /* Both keyboard spellings of '*': keypad multiply, or Shift+8. */
+    if((usage==0x55&&!modifiers)||
+       (usage==0x25&&(modifiers==0x02||modifiers==0x20))){*out=UI_KEY_STAR;return true;}
+    if(modifiers)return false;
     switch(usage){case 0x52:*out=UI_KEY_UP;break;case 0x51:*out=UI_KEY_DOWN;break;case 0x28:*out=UI_KEY_ENTER;break;case 0x29:*out=UI_KEY_BACK;break;case 0x4b:*out=UI_KEY_PAGE_UP;break;case 0x4e:*out=UI_KEY_PAGE_DOWN;break;case 0x2f:*out=UI_KEY_SCREEN_PREV;break;case 0x30:*out=UI_KEY_SCREEN_NEXT;break;case 0x06:*out=UI_KEY_CONTEXT;break;
       default:if(usage>=0x1e&&usage<=0x24){*out=(ui_key_t)(UI_KEY_1+usage-0x1e);break;}return false;}return true;
 }
@@ -128,7 +132,7 @@ bool coloplay_ble_notification(uint16_t conn,uint16_t handle,const uint8_t *data
     for(unsigned i=0;i<16;++i)if(s_recent[i]==id){state_packet(state,id,s_recent_result[i]);queue(state);return true;}
     s_last_id=id;s_last_result=CP_ACCEPTED;
     if(data[1]==CP_KEY){
-        ui_key_t value;if(cp_u16(data+12)||!key(cp_u16(data+8),&value))s_last_result=CP_UNSUPPORTED;
+        ui_key_t value;if(!key(cp_u16(data+8),cp_u16(data+12),&value))s_last_result=CP_UNSUPPORTED;
         else {for(int n=0;n<cp_u16(data+10);++n)usb_hid_input_post_key(value);s_last_result=CP_APPLIED;}
     }else{
         const esp_err_t err=mpd_client_coloplay_command(data);

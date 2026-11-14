@@ -94,7 +94,25 @@ static void take(void) { xSemaphoreTake(mutex,portMAX_DELAY); }
 static void give(void) { xSemaphoreGive(mutex); }
 static void message(const char *s) { take(); snprintf(status_text,sizeof(status_text),"%s",s); give(); }
 static void publish(const mpd_state_t *s) {
-    take(); uint32_t revision=state.revision+1; state=*s; state.revision=revision;confirmed_server_volume=server_volume;give();
+    take();
+    /* Elapsed time is sampled separately by the UI. A successful poll alone
+     * must not invalidate playback chrome on every library screen. */
+#define CHANGED(field) (state.field != s->field)
+    bool changed = CHANGED(connected) || CHANGED(identified) || CHANGED(library_syncing) ||
+        CHANGED(play_status) || CHANGED(track_key) || CHANGED(album_pid) ||
+        CHANGED(duration_ms) || CHANGED(queue_index) || CHANGED(queue_count) ||
+        CHANGED(shuffle) || CHANGED(starred) || CHANGED(repeat) || CHANGED(volume) ||
+        CHANGED(battery) || CHANGED(charging) || CHANGED(max_current_ma) ||
+        CHANGED(device_will_charge) || CHANGED(accessory_power_mode) ||
+        CHANGED(external_charger) || CHANGED(charging_state) ||
+        strcmp(state.title, s->title) || strcmp(state.artist, s->artist) ||
+        strcmp(state.album, s->album) || strcmp(state.device_name, s->device_name);
+#undef CHANGED
+    uint32_t revision = state.revision + changed;
+    state = *s;
+    state.revision = revision;
+    confirmed_server_volume = server_volume;
+    give();
 }
 static void identity(const mpd_config_t *c, char *out, size_t cap) {
     char address[144]; snprintf(address,sizeof(address),"%s:%u",c->host,c->port);

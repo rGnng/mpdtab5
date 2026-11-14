@@ -44,8 +44,9 @@ static void mpd_client_coloplay_begin(uint32_t session){backend_session=session;
 static void mpd_client_coloplay_release(void){backend_session=0;releases++;}
 static uint8_t mpd_client_coloplay_seek_state(void){return 0;}
 static int mpd_client_coloplay_command(const uint8_t *p){assert(cp_command_valid(p,20));commands++;return backend_error;}
-typedef enum {UI_KEY_UP,UI_KEY_DOWN,UI_KEY_ENTER,UI_KEY_BACK,UI_KEY_PAGE_UP,UI_KEY_PAGE_DOWN,UI_KEY_SCREEN_PREV,UI_KEY_SCREEN_NEXT,UI_KEY_CONTEXT,UI_KEY_1=20} ui_key_t;
-static void usb_hid_input_post_key(ui_key_t k){(void)k;key_events++;}
+typedef enum {UI_KEY_UP,UI_KEY_DOWN,UI_KEY_ENTER,UI_KEY_BACK,UI_KEY_PAGE_UP,UI_KEY_PAGE_DOWN,UI_KEY_SCREEN_PREV,UI_KEY_SCREEN_NEXT,UI_KEY_CONTEXT,UI_KEY_STAR,UI_KEY_1=20} ui_key_t;
+static ui_key_t last_key;
+static void usb_hid_input_post_key(ui_key_t k){last_key=k;key_events++;}
 struct ble_npl_event {void(*callback)(struct ble_npl_event*);};
 static void ble_npl_event_init(struct ble_npl_event *e,void(*callback)(struct ble_npl_event*),void *arg){(void)arg;e->callback=callback;}
 static void *nimble_port_get_dflt_eventq(void){return NULL;}
@@ -89,6 +90,22 @@ int main(void){
  cp_put32(request+4,999);coloplay_ble_notification(7,s_command,request,20);assert(commands==1);
  cp_header(request,CP_KEY,2,123);cp_put16(request+8,0x4b);cp_put16(request+10,1);coloplay_ble_notification(7,s_command,request,20);assert(key_events==1);drain();
  cp_put16(request+2,3);cp_put16(request+12,1);coloplay_ble_notification(7,s_command,request,20);assert(key_events==1&&last_write[11]==CP_UNSUPPORTED);drain();
+ // '*' toggles the existing server-backed star action, with no context-menu steps.
+ cp_header(request,CP_KEY,4,123);cp_put16(request+8,0x55);cp_put16(request+10,1);
+ coloplay_ble_notification(7,s_command,request,20);assert(key_events==2&&last_key==UI_KEY_STAR&&last_write[11]==CP_APPLIED);drain();
+ coloplay_ble_notification(7,s_command,request,20);assert(key_events==2);drain();
+ cp_put16(request+2,5);cp_put16(request+8,0x25);cp_put16(request+12,0x02);
+ coloplay_ble_notification(7,s_command,request,20);assert(key_events==3&&last_key==UI_KEY_STAR);drain();
+ cp_put16(request+2,6);cp_put16(request+12,0x20);
+ coloplay_ble_notification(7,s_command,request,20);assert(key_events==4&&last_key==UI_KEY_STAR);drain();
+ cp_put16(request+2,7);cp_put16(request+12,0);
+ coloplay_ble_notification(7,s_command,request,20);assert(key_events==4&&last_write[11]==CP_UNSUPPORTED);drain();
+ cp_put16(request+2,8);cp_put16(request+12,0x03);
+ coloplay_ble_notification(7,s_command,request,20);assert(key_events==4&&last_write[11]==CP_UNSUPPORTED);drain();
+ cp_put16(request+2,9);cp_put16(request+8,0x55);cp_put16(request+12,0x02);
+ coloplay_ble_notification(7,s_command,request,20);assert(key_events==4&&last_write[11]==CP_UNSUPPORTED);drain();
+ cp_put16(request+2,10);cp_put16(request+8,0x06);cp_put16(request+12,0);
+ coloplay_ble_notification(7,s_command,request,20);assert(key_events==5&&last_key==UI_KEY_CONTEXT);drain();
  // Delayed write callbacks and MPD results from the old session cannot mutate a new connection.
  uint32_t old_generation=s_generation;connect_peer(456,true);unsigned before=writes;struct ble_gatt_error bad={99};wrote(7,&bad,NULL,(void*)(uintptr_t)old_generation);assert(writes==before&&!failed_calls);
  cp_header(request,CP_VOLUME,1,123);cp_put16(request+8,233);cp_put16(request+10,1);cp_put16(request+12,64);coloplay_ble_result(request,CP_APPLIED);coloplay_ble_tick(clock_us);drain();assert(coloplay_ble_connected());

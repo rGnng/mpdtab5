@@ -101,6 +101,7 @@ void setup(const char *dir,const char *id) {
         cls.lib.thumb_cache_write.argtypes=[C.c_uint32,C.c_void_p]
         cls.lib.thumb_cache_replace.argtypes=[C.c_uint64,C.c_uint64,C.c_void_p]
         cls.lib.thumb_cache_read.argtypes=[C.c_uint32,C.c_void_p]
+        cls.lib.thumb_cache_read_scoped.argtypes=[C.c_uint32,C.c_void_p,C.c_char_p]
 
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory()
@@ -200,6 +201,23 @@ void setup(const char *dir,const char *id) {
         with ThreadPoolExecutor(max_workers=3) as executor:
             for future in [executor.submit(writer),executor.submit(reader),executor.submit(reader)]:
                 future.result()
+
+    def test_background_read_rejects_a_stale_namespace(self):
+        self.assertEqual(self.lib.thumb_cache_open(0),0)
+        slot=self.lib.thumb_cache_slot(123,True)
+        image=(C.c_uint8*THUMB)(*([17]*THUMB))
+        self.assertEqual(self.lib.thumb_cache_write(slot,image),0)
+        output=(C.c_uint8*THUMB)()
+        self.assertFalse(self.lib.thumb_cache_read_scoped(slot,output,b'MPD-old'))
+        self.assertTrue(self.lib.thumb_cache_read_scoped(slot,output,b'A'))
+        self.assertEqual(bytes(output),bytes(image))
+        other=self.root/'other';other.mkdir()
+        self.lib.setup(str(other).encode(),b'B')
+        self.assertEqual(self.lib.thumb_cache_open(0),0)
+        slot=self.lib.thumb_cache_slot(456,True)
+        self.assertEqual(self.lib.thumb_cache_write(slot,image),0)
+        self.assertFalse(self.lib.thumb_cache_read_scoped(slot,output,b'A'))
+        self.assertTrue(self.lib.thumb_cache_read_scoped(slot,output,b'B'))
 
     def test_mpd_pack_stays_on_sd_while_iap2_preload_remains_available(self):
         self.lib.setup(str(self.root).encode(),b'MPD-test')

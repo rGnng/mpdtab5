@@ -45,6 +45,8 @@ extern "C"
     bool thumb_cache_matches(uint32_t slot, uint64_t artwork_version);
     void thumb_cache_version(uint32_t slot, uint64_t artwork_version);
     bool thumb_cache_read(uint32_t slot, uint8_t *rgb565);
+    /* Background readers retain their namespace across library switches. */
+    bool thumb_cache_read_scoped(uint32_t slot, uint8_t *rgb565, const char *library);
     uint32_t thumb_cache_revision(void);
     void thumb_cache_preload(void);
     /* Called by the artwork worker with identity captured from the same transfer. */

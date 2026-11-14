@@ -1,9 +1,10 @@
 /* Real LVGL rendering and navigation, with the production mock library. */
 #include "../app/ui/ui.c"
+#include "src/display/lv_display_private.h"
 
 static uint32_t frame[720][1280];
 static uint8_t draw_buffer[1280 * 40 * 4];
-static int fast_cues,exit_cues;
+static int fast_cues,exit_cues,click_cues;
 static lv_indev_t *touch;
 static lv_point_t touch_point;
 static bool touch_down;
@@ -18,7 +19,7 @@ static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
 }
 static void pump(int ms)
 { for(int i=0;i<ms;i+=10) { lv_tick_inc(10);lv_timer_handler(); } }
-static void feedback(int type) { if(type==UI_FEEDBACK_FAST_SCROLL) fast_cues++;else if(type==UI_FEEDBACK_FAST_SCROLL_EXIT)exit_cues++; }
+static void feedback(int type) { if(type==UI_FEEDBACK_FAST_SCROLL) fast_cues++;else if(type==UI_FEEDBACK_FAST_SCROLL_EXIT)exit_cues++;else if(type==UI_FEEDBACK_CLICK)click_cues++; }
 
 static void read_touch(lv_indev_t *indev, lv_indev_data_t *data)
 { LV_UNUSED(indev);data->point=touch_point;data->state=touch_down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED; }
@@ -114,28 +115,48 @@ static void alpha_fade(void)
     lv_obj_set_style_bg_grad_color(panel,lv_color_hex(0x30a060),0);
     lv_obj_set_style_bg_grad_dir(panel,LV_GRAD_DIR_HOR,0);
     lv_obj_set_style_bg_opa(panel,LV_OPA_COVER,0);
-    lv_obj_t *label=make_label(panel,"MMMMMMMMMMMMMMMMMMMM",FONT_H1,0xffffff);
-    lv_obj_set_pos(label,10,5);lv_obj_set_width(label,120);ui_text_fade(label);
-    lv_obj_remove_flag(label,LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);pump(100);
-    lv_area_t bounds;lv_obj_get_content_coords(label,&bounds);
-    uint32_t normal[60][16],background[60][16];
-    int h=LV_MIN(60,lv_area_get_height(&bounds));
-    for(int y=0;y<h;y++)for(int x=0;x<16;x++)normal[y][x]=frame[bounds.y1+y][bounds.x2-15+x];
-    lv_obj_set_hidden(label,true);pump(100);
-    for(int y=0;y<h;y++)for(int x=0;x<16;x++)background[y][x]=frame[bounds.y1+y][bounds.x2-15+x];
-    lv_obj_set_hidden(label,false);lv_obj_add_flag(label,LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);pump(100);
-    int ink=0;
-    for(int y=0;y<h;y++)for(int x=0;x<16;x++) {
-        uint32_t actual=frame[bounds.y1+y][bounds.x2-15+x];
-        if(normal[y][x]!=background[y][x]) ink++;
-        for(int shift=0;shift<24;shift+=8) {
-            int bg=(background[y][x]>>shift)&255,fg=(normal[y][x]>>shift)&255;
-            int expected=bg+(fg-bg)*(15-x)/15;
+    const char *texts[]={"MMMMMMMMMMMMMMMMMMMM",
+        "An album with wide W and narrow iii letters and several words",
+        "Été — déjà vu • café / Straße — 日本語 and more metadata"};
+    for(unsigned sample=0;sample<sizeof(texts)/sizeof(texts[0]);sample++) {
+        lv_obj_t *label=make_label(panel,texts[sample],FONT_H1,0xffffff);
+        lv_obj_set_pos(label,10,5);lv_obj_set_width(label,120);ui_text_fade(label);
+        if(sample==1) ((lv_label_t*)label)->offset.x=-37;
+        if(sample==2) lv_obj_set_style_text_letter_space(label,1,0);
+        lv_obj_remove_flag(label,LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);pump(100);
+        lv_area_t bounds;lv_obj_get_content_coords(label,&bounds);
+        uint32_t normal[60][16],background[60][16];
+        int h=LV_MIN(60,lv_area_get_height(&bounds));
+        for(int y=0;y<h;y++)for(int x=0;x<16;x++)normal[y][x]=frame[bounds.y1+y][bounds.x2-15+x];
+        lv_obj_set_hidden(label,true);pump(100);
+        for(int y=0;y<h;y++)for(int x=0;x<16;x++)background[y][x]=frame[bounds.y1+y][bounds.x2-15+x];
+        lv_obj_set_hidden(label,false);lv_obj_add_flag(label,LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);pump(100);
+        int ink=0;
+        for(int y=0;y<h;y++)for(int x=0;x<16;x++) {
+            uint32_t actual=frame[bounds.y1+y][bounds.x2-15+x];
+            if(normal[y][x]!=background[y][x]) ink++;
+            for(int shift=0;shift<24;shift+=8) {
+                int bg=(background[y][x]>>shift)&255,fg=(normal[y][x]>>shift)&255;
+                int expected=bg+(fg-bg)*(15-x)/15;
             check(abs((int)((actual>>shift)&255)-expected)<=4,
-                  "Fading glyphs must blend into the live colored background, without a solid mask");
+                      "Fading glyphs must blend into the live colored background, without a solid mask");
+            }
         }
+        check(ink>20,"Fade oracle must include real glyph pixels");lv_obj_delete(label);pump(100);
     }
-    check(ink>20,"Fade oracle must include real glyph pixels");lv_obj_delete(panel);pump(100);
+    lv_obj_delete(panel);pump(100);
+}
+
+static void mini_unchanged_poll(void)
+{
+    ui_select_screen(SCR_SONGS);pump(600);
+    lv_refr_now(lv_display_get_default());
+    check(lv_display_get_default()->inv_p==0,"Mini-player fixture must start with a clean frame");
+    /* Force a transport revision through the slow path, while all visible
+     * fields remain unchanged. No labels or styles should be invalidated. */
+    g_mini_rev=UINT32_MAX;
+    ui_mini_update();
+    check(lv_display_get_default()->inv_p==0,"Unchanged MPD fields must not repaint the mini-player");
 }
 
 static void artist_viewport(void)
@@ -637,6 +658,22 @@ static void pagination_views(void)
     }
     int before=lv_obj_get_scroll_y(albums_left_list);
     int selected=albums_selected;
+    lv_area_t button_bounds,arrow_before,arrow_after;
+    lv_obj_get_coords(left->down,&button_bounds);
+    lv_obj_t *arrow=lv_obj_get_child(left->down,0);
+    lv_obj_get_coords(arrow,&arrow_before);
+    int clicks=click_cues;
+    pointer((button_bounds.x1+button_bounds.x2)/2,(button_bounds.y1+button_bounds.y2)/2,true);
+    check(lv_obj_has_state(left->down,LV_STATE_USER_2) && lv_obj_has_state(arrow,LV_STATE_USER_2),
+          "Pagination buttons and arrows must share the normal touch press feedback");
+    lv_obj_get_coords(arrow,&arrow_after);
+    check(lv_area_is_equal(&arrow_before,&arrow_after) && lv_obj_get_style_opa(left->controls,0)==89,
+          "Pagination press feedback preserves geometry and transparency");
+    check(lv_color_eq(lv_obj_get_style_text_color(arrow,0),lv_color_hex(g_theme->on_selection)),
+          "Pressed pagination arrows must use the normal readable feedback color");
+    lv_indev_wait_release(touch);pointer(touch_point.x,touch_point.y,false);
+    check(!lv_obj_has_state(left->down,LV_STATE_USER_2) && !lv_obj_has_state(arrow,LV_STATE_USER_2) && click_cues==clicks,
+          "Cancelling pagination must clear feedback without a click tone");
     check(lv_obj_has_state(left->up,LV_STATE_DISABLED),"Page up is disabled at the top");
     tap_pager(left->down);
     check(lv_obj_get_scroll_y(albums_left_list)>before,"Page down must scroll the virtual album list");
@@ -647,6 +684,16 @@ static void pagination_views(void)
           "Pagination follows the list's existing right and bottom margins");
     tap_pager(left->up);
     check(lv_obj_get_scroll_y(albums_left_list)==0,"Page up must return one viewport without overscrolling");
+    int saved_mode=g_system_config.sound_mode;
+    bool saved_sound=g_system_config.sound_enabled;
+    for(int mode=0;mode<=2;mode++) {
+        g_system_config.sound_mode=mode;g_system_config.sound_enabled=mode!=0;
+        clicks=click_cues;tap_pager(left->down);tap_pager(left->up);
+        check(click_cues==clicks+(mode?2:0),"Each page tap emits exactly one enabled tone; None remains silent");
+        clicks=click_cues;tap_pager(left->up);
+        check(click_cues==clicks,"Disabled pagination buttons must not produce feedback tones");
+    }
+    g_system_config.sound_mode=saved_mode;g_system_config.sound_enabled=saved_sound;
     lv_obj_scroll_to_y(albums_left_list,1000000,LV_ANIM_OFF);pump(150);
     check(lv_obj_has_state(left->down,LV_STATE_DISABLED),"Page down is disabled at the final viewport");
     int bottom=lv_obj_get_scroll_y(albums_left_list);
@@ -782,7 +829,7 @@ int main(int argc,char **argv)
     ui_apply_saved_settings(&config);ui_init();pump(600);
     check(g_system_config.fast_scroll_hold_ms==300,"Missing hold configuration must default to 300 ms");
     check(g_system_config.fast_scroll_trigger_window_ms==550,"Missing trigger configuration must default to 550 ms");
-    alpha_fade();artist_viewport();scrollbar_views();pressed_controls();fast_navigation();
+    alpha_fade();mini_unchanged_poll();artist_viewport();scrollbar_views();pressed_controls();fast_navigation();
     cursor_band_views();settings_widget_lifetime();rapid_tab_navigation();sort_order_settings();
     album_pane_retention();
     pagination_views();

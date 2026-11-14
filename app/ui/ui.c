@@ -21,6 +21,7 @@
 #include "src/widgets/label/lv_label_private.h"
 #include "src/draw/lv_draw_private.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
+#include "src/misc/lv_text_private.h"
 
 /* TinyTTF is enabled in lv_conf.h. Some ESP-IDF component builds do not
  * propagate the public declaration through lvgl.h, so declare it here. */
@@ -35,9 +36,11 @@ lv_font_t * lv_tiny_ttf_create_data_ex(const void * data, size_t data_size,
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <stdatomic.h>
 
 #ifdef ESP_PLATFORM
 #include "thumb_cache.h"
+#include "app_config.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -158,6 +161,7 @@ static bool g_song_sort_desc = true;
 static bool g_album_sort_dirty, g_song_sort_dirty;
 
 static uint8_t * jp_font_data;
+static lv_font_t jp_fallback_faces[12];
 
 static void fonts_init(void)
 {
@@ -202,13 +206,21 @@ static void fonts_init(void)
         return;
     }
     fclose(f);
+    unsigned face_index = 0;
 
 #define MAKE_JP(px, target)                                                        \
     do {                                                                           \
         lv_font_t * jp = lv_tiny_ttf_create_data_ex(                               \
             jp_font_data, (size_t)size, (px), LV_FONT_KERNING_NORMAL,              \
             LV_TINY_TTF_CACHE_GLYPH_CNT);                                          \
-        if(jp != NULL) target = jp;                                                \
+        if(jp != NULL) {                                                           \
+            /* Keep compiled Inter glyphs on the common path. TinyTTF is only  \
+             * needed for characters absent from the built-in face. */          \
+            lv_font_t * face = &jp_fallback_faces[face_index++];                   \
+            *face = *target;                                                       \
+            face->fallback = jp;                                                   \
+            target = face;                                                        \
+        }                                                                         \
     } while(0)
 
     MAKE_JP(16, FONT_QUEUE_SUB);
@@ -818,6 +830,44 @@ static void enable_event_bubble(lv_obj_t * obj)
 #define MARQUEE_HOLD_MS  1000
 #define MARQUEE_BACK_MS  400
 
+/* Keep the UTF-8 span whose glyphs actually cross the fade strip. Preserving
+ * its measured starting advance retains kerning and marquee positioning. */
+static bool text_fade_span(lv_draw_label_dsc_t *dsc, lv_area_t *area, int left, int right)
+{
+#if !LV_USE_BIDI
+    if(dsc->align == LV_TEXT_ALIGN_LEFT && !dsc->rotation && !dsc->decor &&
+       !dsc->outline_stroke_width && !(dsc->flag & LV_TEXT_FLAG_RECOLOR) &&
+       dsc->sel_start == LV_DRAW_LABEL_NO_TXT_SEL &&
+       dsc->sel_end == LV_DRAW_LABEL_NO_TXT_SEL &&
+       !strpbrk(dsc->text, "\r\n\t")) {
+        uint32_t pos = 0, first = UINT32_MAX, end = 0;
+        int32_t advance = 0, first_advance = 0;
+        while(dsc->text[pos] && pos < dsc->text_length) {
+            uint32_t start = pos, letter, next;
+            lv_text_encoded_letter_next_2(dsc->text, &letter, &next, &pos);
+            lv_font_glyph_dsc_t glyph = {0};
+            lv_font_get_glyph_dsc(dsc->font, &glyph, letter, next);
+            if(glyph.is_placeholder) return true;
+            int32_t x = area->x1 + dsc->ofs_x + advance + glyph.ofs_x;
+            if(glyph.box_w && x <= right && x + glyph.box_w > left) {
+                if(first == UINT32_MAX) { first = start; first_advance = advance; }
+                end = pos;
+            }
+            if(glyph.adv_w && !lv_text_is_marker(letter)) advance += glyph.adv_w + dsc->letter_space;
+        }
+        if(first == UINT32_MAX) return false;
+        dsc->text += first;
+        dsc->text_length = end - first;
+        dsc->hint = NULL;
+        dsc->flag = (dsc->flag & ~LV_TEXT_FLAG_EXPAND) | LV_TEXT_FLAG_FIT;
+        int32_t origin = area->x1 + first_advance + dsc->ofs_x;
+        area->x1 = LV_MIN(origin, left);
+        dsc->ofs_x = origin - area->x1;
+    }
+#endif
+    return true;
+}
+
 /* Apply alpha to glyphs, never paint the background: gradients and translucent
  * selections must remain visible through the fading edge. Only the 16-pixel
  * strip needs extra drawing; no full-width intermediate bitmap is allocated. */
@@ -835,16 +885,25 @@ static void text_fade_cb(lv_event_t * e)
     lv_area_t original = task->clip_area;
     if(original.x2 < edge) return;
     lv_draw_label_dsc_t dsc = *(lv_draw_label_dsc_t *)lv_draw_task_get_draw_dsc(task);
+    lv_area_t fade_area = task->area;
+    if(dsc.flag & LV_TEXT_FLAG_EXPAND) {
+        /* LVGL remeasures EXPAND text for every draw-task-event label. The
+         * label already measured its full width: reuse it for all 15 strips
+         * instead of scanning the entire title once per pixel of the fade. */
+        fade_area.x2 = fade_area.x1 + ((lv_label_t *)obj)->text_size.x - 1;
+        dsc.flag &= ~LV_TEXT_FLAG_EXPAND;
+    }
     lv_layer_t * layer = task->target_layer;
     lv_area_t saved = layer->_clip_area;
     task->clip_area.x2 = edge - 1;
+    if(!text_fade_span(&dsc, &fade_area, edge, bounds.x2)) return;
     for(int x = LV_MAX(edge, original.x1); x < bounds.x2 && x <= original.x2; x++) {
         layer->_clip_area = original;
         layer->_clip_area.x1 = layer->_clip_area.x2 = x;
         dsc.opa = (uint32_t)((lv_draw_label_dsc_t *)task->draw_dsc)->opa *
                   (bounds.x2 - x) / (width - 1);
         /* LVGL defers dispatch and suppresses nested draw-task events here. */
-        lv_draw_label(layer, &dsc, &task->area);
+        lv_draw_label(layer, &dsc, &fade_area);
     }
     layer->_clip_area = saved;
 }
@@ -1187,6 +1246,7 @@ typedef struct {
 #define PAGINATION_BUTTON_GAP 8
 static pagination_t g_pagination[12];
 static bool g_touch_navigation;
+static lv_timer_t *g_pagination_timer;
 
 static const char *pagination_value_text(void)
 {
@@ -1197,6 +1257,9 @@ static const char *pagination_value_text(void)
 static void pagination_update(pagination_t *p)
 {
     if(!p->list || !p->controls) return;
+    bool hidden = !g_system_config.pagination_size || !g_touch_navigation ||
+                  !g_system_config.touch_enabled;
+    if(hidden) lv_obj_set_hidden(p->controls, true);
     int size = g_system_config.pagination_size == 96 ? 96 : 64;
     int height = 2 * size + PAGINATION_BUTTON_GAP;
     if(p->size != size) {
@@ -1211,6 +1274,7 @@ static void pagination_update(pagination_t *p)
             lv_obj_center(arrow);
         }
     }
+    if(hidden) return;
     lv_obj_set_hidden(p->controls, !g_system_config.pagination_size ||
         !g_touch_navigation || !g_system_config.touch_enabled ||
         lv_obj_get_height(p->list) < height);
@@ -1223,6 +1287,19 @@ static void pagination_refresh(void)
 {
     for(unsigned i=0;i<sizeof(g_pagination)/sizeof(g_pagination[0]);i++)
         pagination_update(&g_pagination[i]);
+}
+
+static void pagination_timer_cb(lv_timer_t *timer)
+{
+    lv_timer_pause(timer);
+    pagination_refresh();
+}
+
+static void pagination_schedule(void)
+{
+    if(!g_pagination_timer)
+        g_pagination_timer = lv_timer_create(pagination_timer_cb, 16, NULL);
+    if(g_pagination_timer) lv_timer_resume(g_pagination_timer);
 }
 
 static void pagination_touch_mode(bool touch)
@@ -1246,7 +1323,9 @@ static void pagination_click_cb(lv_event_t *event)
     if(target > limit) target = limit > 0 ? limit : 0;
     /* The normal scroll handlers still settle thumbnails and virtual rows. */
     lv_obj_scroll_to_y(p->list, target, LV_ANIM_OFF);
-    pagination_update(p);
+    /* Alignment and scroll extent queries can force a complete LVGL layout.
+     * Coalesce layout/scroll events until row setters have all unwound. */
+    pagination_schedule();
 }
 
 static void pagination_event_cb(lv_event_t *event)
@@ -1264,7 +1343,7 @@ static void pagination_event_cb(lv_event_t *event)
         }
         return;
     }
-    pagination_update(p);
+    pagination_schedule();
 }
 
 static void pagination_bind(lv_obj_t *list)
@@ -1301,6 +1380,7 @@ static void pagination_bind(lv_obj_t *list)
             &bootstrap_icons_40, COL_PANEL);
         lv_obj_center(arrow);
         lv_obj_set_clickable(arrow, false);
+        ui_touch_pressed_bind(button);
         lv_obj_add_event_cb(button, feedback_touch_cb, LV_EVENT_CLICKED, NULL);
         lv_obj_add_event_cb(button, pagination_click_cb, LV_EVENT_CLICKED, p);
         if(i) p->down = button;
@@ -1580,11 +1660,25 @@ void ui_set_thumb_pack_path(const char * path, int album_count)
 }
 
 static char s_artwork_dir[64] = "/sdcard/mpd/covers";
+static const lv_image_dsc_t * real_thumb_cached(uint16_t id);
+#ifdef ESP_PLATFORM
+static void thumb_io_request(uint16_t id);
+static void thumb_io_poll(void);
+static bool thumb_io_busy(uint16_t id);
+static uint32_t thumb_io_epoch, thumb_io_revision;
+static atomic_bool thumb_io_active;
+#endif
 
 static bool real_thumb_read(uint16_t id, uint8_t * dst)
 {
 #ifdef ESP_PLATFORM
-    return thumb_cache_read(id, dst);
+    const lv_image_dsc_t *cached = real_thumb_cached(id);
+    if(cached) {
+        memcpy(dst, cached->data, cached->data_size);
+        return true;
+    }
+    thumb_io_request(id);
+    return false;
 #endif
     const size_t one = (size_t)REAL_THUMB_SIZE * REAL_THUMB_SIZE * 2;
     if(id == 0) return false;
@@ -1652,6 +1746,10 @@ static const lv_image_dsc_t * real_thumb_for_album(uint16_t id)
     if(id == 0) return NULL;
     const lv_image_dsc_t * cached = real_thumb_cached(id);
     if(cached != NULL) return cached;
+#ifdef ESP_PLATFORM
+    thumb_io_request(id);
+    return NULL;
+#endif
 
     cover_cache_slot_t * slot = &cover_cache[cover_cache_next++ % COVER_CACHE_SLOTS];
     const size_t one = (size_t)REAL_THUMB_SIZE * REAL_THUMB_SIZE * 2;
@@ -1675,6 +1773,90 @@ static const lv_image_dsc_t * real_thumb_for_album(uint16_t id)
     return &slot->dsc;
 }
 
+#ifdef ESP_PLATFORM
+/* One bounded SD request at a time. The worker owns the staging pixels until
+ * it posts a result; only LVGL installs descriptors or touches its image cache.
+ * A namespace epoch prevents a late read from entering a different library. */
+typedef struct { uint16_t id; uint32_t epoch; bool ok; char library[128]; } thumb_io_job_t;
+static QueueHandle_t thumb_io_jobs, thumb_io_results;
+static uint8_t *thumb_io_pixels;
+static uint16_t thumb_io_pending, thumb_io_failed;
+static uint32_t thumb_io_failed_tick;
+
+static void thumb_io_worker(void *unused)
+{
+    LV_UNUSED(unused);
+    thumb_io_job_t job;
+    for(;;) {
+        if(xQueueReceive(thumb_io_jobs, &job, portMAX_DELAY) != pdTRUE) continue;
+        while(atomic_load(&thumb_io_active)) vTaskDelay(pdMS_TO_TICKS(20));
+        job.ok = thumb_cache_read_scoped(job.id, thumb_io_pixels, job.library);
+        xQueueSend(thumb_io_results, &job, portMAX_DELAY);
+    }
+}
+
+static bool thumb_io_start(void)
+{
+    if(thumb_io_jobs) return true;
+    thumb_io_pixels = ui_alloc_aligned(THUMB_CACHE_THUMB_SIZE);
+    thumb_io_jobs = xQueueCreate(1, sizeof(thumb_io_job_t));
+    thumb_io_results = xQueueCreate(1, sizeof(thumb_io_job_t));
+    if(thumb_io_pixels && thumb_io_jobs && thumb_io_results &&
+       xTaskCreateWithCaps(thumb_io_worker, "ui-thumb", 4096, NULL, 1, NULL,
+                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == pdPASS) return true;
+    if(thumb_io_jobs) vQueueDelete(thumb_io_jobs);
+    if(thumb_io_results) vQueueDelete(thumb_io_results);
+    free(thumb_io_pixels);
+    thumb_io_pixels = NULL;
+    thumb_io_jobs = thumb_io_results = NULL;
+    return false;
+}
+
+static void thumb_io_request(uint16_t id)
+{
+    if(!id || thumb_io_pending || atomic_load(&thumb_io_active)) return;
+    if(thumb_io_failed == id && lv_tick_elaps(thumb_io_failed_tick) < 250) return;
+    if(!thumb_io_start()) return;
+    thumb_io_job_t job = {.id = id, .epoch = thumb_io_epoch};
+    snprintf(job.library, sizeof(job.library), "%s", app_config_library_id());
+    if(xQueueSend(thumb_io_jobs, &job, 0) == pdTRUE) thumb_io_pending = id;
+}
+
+static bool thumb_io_busy(uint16_t id)
+{
+    LV_UNUSED(id);
+    return thumb_io_pending || atomic_load(&thumb_io_active);
+}
+
+static void thumb_io_poll(void)
+{
+    thumb_io_job_t result;
+    if(!thumb_io_results || xQueueReceive(thumb_io_results, &result, 0) != pdTRUE) return;
+    if(result.epoch == thumb_io_epoch) {
+        cover_cache_slot_t *slot = &cover_cache[cover_cache_next % COVER_CACHE_SLOTS];
+        if(result.ok && !slot->data) slot->data = ui_alloc_aligned(THUMB_CACHE_THUMB_SIZE);
+        if(result.ok && slot->data) {
+            slot->id = 0;
+            memcpy(slot->data, thumb_io_pixels, THUMB_CACHE_THUMB_SIZE);
+            slot->dsc = (lv_image_dsc_t){
+                .header = {.magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RGB565,
+                           .w = REAL_THUMB_SIZE, .h = REAL_THUMB_SIZE,
+                           .stride = REAL_THUMB_SIZE * 2},
+                .data_size = THUMB_CACHE_THUMB_SIZE, .data = slot->data,
+            };
+            slot->id = result.id;
+            cover_cache_next++;
+            thumb_io_revision++;
+            thumb_io_failed = 0;
+        } else {
+            thumb_io_failed = result.id;
+            thumb_io_failed_tick = lv_tick_get();
+        }
+    }
+    thumb_io_pending = 0;
+}
+#endif
+
 #define REAL_COVER_SIZE 360
 
 static uint8_t * real_cover_buf;
@@ -1682,6 +1864,10 @@ static lv_image_dsc_t real_cover_dsc;
 static uint16_t real_cover_id;
 static bool real_cover_valid;
 static void artwork_cache_reset(void) {
+#ifdef ESP_PLATFORM
+    thumb_io_epoch++;
+    thumb_io_failed = 0;
+#endif
     real_cover_valid=false;
     for(unsigned i=0;i<COVER_CACHE_SLOTS;i++) cover_cache[i].id=0;
 }
@@ -2160,6 +2346,8 @@ static uint64_t g_mini_track_id;
 static uint32_t g_mini_art_rev;
 static uint32_t g_mini_rev = 0xffffffffu;
 static uint32_t g_mini_elapsed = 0xffffffffu;
+static player_snapshot_t g_mini_snapshot;
+static bool g_mini_valid;
 static lv_obj_t * g_status_time;
 static lv_obj_t * g_status_icon;
 static lv_obj_t * g_status_caption;
@@ -2416,11 +2604,13 @@ static void ui_mini_update(void)
     player_snapshot_t snapshot;
     player_get_snapshot(&snapshot);
 
+    bool first = !g_mini_valid;
+    const player_snapshot_t *old = &g_mini_snapshot;
     bool has_track = snapshot.track.title[0] != '\0';
-    if(g_mini_star != NULL) {
+    if(g_mini_star != NULL && (first || has_track != (old->track.title[0] != '\0'))) {
         lv_obj_set_hidden(g_mini_star, !has_track);
     }
-    if(!has_track && g_mini_title != NULL) {
+    if(!has_track && g_mini_title != NULL && (first || old->track.title[0])) {
         lv_label_set_text(g_mini_title, "");
         if(g_mini_artist != NULL) lv_obj_set_hidden(g_mini_artist, true);
     }
@@ -2429,7 +2619,7 @@ static void ui_mini_update(void)
     /* The mini player lives on every non-Now-Playing screen.  Re-writing its
      * labels and styles every 500 ms invalidates a large part of the screen
      * even when nothing changed, which makes the lists feel sluggish. */
-    if(snapshot.revision == g_mini_rev && art_rev == g_mini_art_rev) {
+    if(!first && snapshot.revision == g_mini_rev && art_rev == g_mini_art_rev) {
         if(g_mini_time != NULL && snapshot.elapsed_sec != g_mini_elapsed) {
             g_mini_elapsed = snapshot.elapsed_sec;
             char current[16];
@@ -2437,6 +2627,7 @@ static void ui_mini_update(void)
             format_time(snapshot.elapsed_sec, current, sizeof(current));
             format_time(snapshot.duration_sec, total, sizeof(total));
             lv_label_set_text_fmt(g_mini_time, "%s / %s", current, total);
+            g_mini_snapshot.elapsed_sec = snapshot.elapsed_sec;
         }
         return;
     }
@@ -2445,7 +2636,10 @@ static void ui_mini_update(void)
     bool art_changed = (art_rev != g_mini_art_rev);
     g_mini_art_rev = art_rev;
 
-    if(snapshot.track.id != g_mini_track_id || art_changed) {
+    if(first || snapshot.track.id != g_mini_track_id || art_changed ||
+       strcmp(snapshot.track.title, old->track.title) ||
+       strcmp(snapshot.track.artist, old->track.artist) ||
+       strcmp(snapshot.track.album, old->track.album)) {
         g_mini_track_id = snapshot.track.id;
         lv_label_set_text(g_mini_title, has_track ? snapshot.track.title : "");
         const char * artist = snapshot.track.artist;
@@ -2493,35 +2687,34 @@ static void ui_mini_update(void)
         }
     }
 
-    lv_obj_set_style_text_color(g_mini_shuffle,
-                                lv_color_hex(snapshot.shuffle ? COL_MINI_FG
-                                                              : COL_DIM), 0);
-    lv_obj_set_style_text_color(g_mini_repeat,
-                                lv_color_hex(snapshot.repeat != PLAYER_REPEAT_OFF
-                                             ? COL_MINI_FG : COL_DIM), 0);
-    lv_label_set_text(g_mini_repeat,
-                      snapshot.repeat == PLAYER_REPEAT_ONE ? ICON_REPEAT_ONE
-                                                           : ICON_REPEAT);
-
-    if(g_mini_time) {
-        char current[16];
-        char total[16];
+    if(first || snapshot.shuffle != old->shuffle)
+        lv_obj_set_style_text_color(g_mini_shuffle,
+            lv_color_hex(snapshot.shuffle ? COL_MINI_FG : COL_DIM), 0);
+    if(first || snapshot.repeat != old->repeat) {
+        lv_obj_set_style_text_color(g_mini_repeat,
+            lv_color_hex(snapshot.repeat != PLAYER_REPEAT_OFF ? COL_MINI_FG : COL_DIM), 0);
+        lv_label_set_text(g_mini_repeat,
+            snapshot.repeat == PLAYER_REPEAT_ONE ? ICON_REPEAT_ONE : ICON_REPEAT);
+    }
+    if(g_mini_time && (first || snapshot.elapsed_sec != old->elapsed_sec ||
+                      snapshot.duration_sec != old->duration_sec)) {
+        char current[16], total[16];
         format_time(snapshot.elapsed_sec, current, sizeof(current));
         format_time(snapshot.duration_sec, total, sizeof(total));
         lv_label_set_text_fmt(g_mini_time, "%s / %s", current, total);
     }
-
-    if(g_mini_star) {
-        lv_label_set_text(g_mini_star,
-                          snapshot.starred ? ICON_STAR_FILL : ICON_STAR);
+    if(g_mini_star && (first || snapshot.starred != old->starred)) {
+        lv_label_set_text(g_mini_star, snapshot.starred ? ICON_STAR_FILL : ICON_STAR);
         lv_obj_set_style_text_color(g_mini_star,
-                                    lv_color_hex(snapshot.starred ? COL_MINI_FG
-                                                                  : COL_MINI_MUTED), 0);
+            lv_color_hex(snapshot.starred ? COL_MINI_FG : COL_MINI_MUTED), 0);
     }
+    g_mini_snapshot = snapshot;
+    g_mini_valid = true;
 }
 
 static void build_mini_now(lv_obj_t * parent)
 {
+    g_mini_valid = false;
     g_mini = lv_obj_create(parent);
     lv_obj_set_size(g_mini, LV_PCT(100), MINI_NOW_H);
     lv_obj_set_pos(g_mini, 0, 0);
@@ -5101,6 +5294,13 @@ static void albums_cover_timer_cb(lv_timer_t * timer)
                 continue;
             }
             const void * src = thumb_for_album(&album, 54);
+#ifdef ESP_PLATFORM
+            if(!src && thumb_io_busy(album.cover_index - PLAYER_REAL_COVER_BASE)) {
+                /* Waiting for the worker is not a failed SD attempt. */
+                attempted++;
+                break;
+            }
+#endif
             albums_row_cover_attempts[slot]++;
             albums_row_cover_attempt_tick[slot] = lv_tick_get();
             if(src != NULL) {
@@ -5175,6 +5375,7 @@ static void albums_scroll_cb(lv_event_t * event)
     albums_last_scroll_tick = lv_tick_get();
 #ifdef ESP_PLATFORM
     mpd_client_artwork_pause();
+    atomic_store(&thumb_io_active, true);
 #endif
     albums_schedule_refresh();
     albums_schedule_covers();
@@ -10940,12 +11141,14 @@ static bool ui_apply_theme(void)
 #ifdef ESP_PLATFORM
 static void ui_mpd_artwork_tick(void)
 {
+    thumb_io_poll();
     bool scrolling=g_current_screen==SCR_ALBUMS && albums_left_list &&
         (lv_obj_is_scrolling(albums_left_list) ||
          lv_tick_elaps(albums_last_scroll_tick)<ALBUMS_COVER_IDLE_MS);
     bool active=scrolling ||
         (g_touch_indev && lv_indev_get_state(g_touch_indev)==LV_INDEV_STATE_PRESSED) ||
         lv_display_get_inactive_time(NULL)<ALBUMS_COVER_IDLE_MS;
+    atomic_store(&thumb_io_active, active);
     uint64_t visible[ALBUMS_POOL]; unsigned count=0;
     if(!active && g_current_screen==SCR_ALBUMS && albums_left_list) {
         for(int slot=0;slot<ALBUMS_POOL;slot++) {
@@ -10956,7 +11159,7 @@ static void ui_mpd_artwork_tick(void)
     }
     mpd_client_artwork_view(visible,count,active);
     static uint32_t revision;
-    uint32_t current=thumb_cache_revision();
+    uint32_t current=thumb_cache_revision() + thumb_io_revision;
     if(revision==current || active) return;
     revision=current;
     if(g_current_screen!=SCR_ALBUMS || !albums_left_list) return;

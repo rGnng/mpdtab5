@@ -536,9 +536,18 @@ done:
 }
 bool thumb_cache_read(uint32_t slot, uint8_t *dst)
 {
+    /* Preserve the synchronous API's serialized read/write contract. UI
+     * background jobs use the scoped API directly and can retry a busy write. */
+    lock();
+    bool ok = thumb_cache_read_scoped(slot, dst, NULL);
+    unlock();
+    return ok;
+}
+bool thumb_cache_read_scoped(uint32_t slot, uint8_t *dst, const char *library)
+{
     lock();
     bool ok = false;
-    if(dst && bit_get(s_valid, slot))
+    if(dst && (!library || !strcmp(library, s_namespace)) && bit_get(s_valid, slot))
     {
         size_t off = (size_t)thumb_cache_slot_offset(slot);
         if(s_ram && off + THUMB_CACHE_THUMB_SIZE <= s_ram_bytes)
@@ -546,9 +555,23 @@ bool thumb_cache_read(uint32_t slot, uint8_t *dst)
             memcpy(dst, s_ram + off, THUMB_CACHE_THUMB_SIZE);
             ok = true;
         }
-        else if(ensure_files())
-            ok = !fseek(s_pack, (long)off, SEEK_SET)
-                && fread(dst, 1, THUMB_CACHE_THUMB_SIZE, s_pack) == THUMB_CACHE_THUMB_SIZE;
+        else {
+            char path[sizeof(s_pack_path)];
+            memcpy(path, s_pack_path, sizeof(path));
+            uint32_t generation = s_generation, revision = s_revision;
+            /* A private handle keeps SD latency out of the metadata lock used
+             * by LVGL's validity/revision queries. Writers publish after fsync. */
+            unlock();
+            FILE *f = fopen(path, "rb");
+            if(f) {
+                ok = !fseek(f, (long)off, SEEK_SET) &&
+                     fread(dst, 1, THUMB_CACHE_THUMB_SIZE, f) == THUMB_CACHE_THUMB_SIZE;
+                fclose(f);
+            }
+            lock();
+            ok = ok && generation == s_generation && revision == s_revision &&
+                 bit_get(s_valid, slot);
+        }
     }
     unlock();
     return ok;

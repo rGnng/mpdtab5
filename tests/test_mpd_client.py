@@ -52,6 +52,7 @@ static void *test_reallocate(void *ptr,size_t n) {
 static mpd_wire_t wire;
 static mpd_state_t state;
 static int muted_volume=50, server_volume=-1, mpd_playlist_version;
+static int confirmed_server_volume;
 static uint32_t coloplay_session=7;static uint8_t coloplay_seek;static int64_t coloplay_seek_deadline,coloplay_next_seek;
 static int64_t esp_timer_get_time(void) { return 1000000; }
 static bool remote_repeat,remote_single,mpd_updating;
@@ -88,6 +89,12 @@ void player_library_playlist_item(int index,const char *name,uint64_t key) {
 }
 '''
 SUFFIX=r'''
+unsigned test_publish(int elapsed,int level,int starred,const char *title) {
+    mpd_state_t next=state; next.elapsed_ms=elapsed; next.volume=level;
+    next.starred=starred; snprintf(next.title,sizeof(next.title),"%s",title);
+    publish(&next); return state.revision;
+}
+unsigned test_elapsed(void) { return state.elapsed_ms; }
 void test_init(int fd) {
     memset(uri_slots,0,sizeof(uri_slots)); uri_count=uri_used=0;
     memset(&state,0,sizeof(state)); item_count=playlist_count=0;
@@ -175,7 +182,7 @@ static char uri_pool[URI_BYTES];
 static unsigned uri_count,uri_used;
 '''
         functions='\n'.join(function(SOURCE,name) for name in [
-            'uri_lookup','uri_insert','song_reset','song_finish','song_field',
+            'publish','uri_lookup','uri_insert','song_reset','song_finish','song_field',
             'status_field','stat_field','simple','sync_library','sync_queue','star_position',
             'sync_stars','change_star','playlist_field','sync_playlists','play_selection','run_command'])
         (directory/'client.c').write_text(PREFIX+globals_+command_type+song_type+functions+SUFFIX)
@@ -223,6 +230,14 @@ static unsigned uri_count,uri_used;
 
     def star_reply(self,*uris):
         return b''.join(b'file: '+uri+b'\nTitle: Song\nAlbum: Album\nArtist: Artist\n' for uri in uris)+b'OK\n'
+
+    def test_elapsed_polls_preserve_revision_but_publish_real_changes(self):
+        revision=self.lib.test_publish(1000,50,0,b"Song")
+        self.assertEqual(self.lib.test_publish(2000,50,0,b"Song"),revision)
+        self.assertEqual(self.lib.test_elapsed(),2000)
+        self.assertEqual(self.lib.test_publish(2000,51,0,b"Song"),revision+1)
+        self.assertEqual(self.lib.test_publish(2000,51,1,b"Song"),revision+2)
+        self.assertEqual(self.lib.test_publish(2000,51,1,b"Renamed"),revision+3)
 
     def test_server_stars_are_read_in_playlist_order_and_publish_current_flag(self):
         a=self.lib.test_insert(b'album/a.flac');b=self.lib.test_insert(b'album/b.flac')
