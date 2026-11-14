@@ -12,6 +12,7 @@
 #include "screen_idle.h"
 #include "fast_scroll.h"
 #include "screen_brightness.h"
+#include "volume_grid.h"
 #include "cover_gradient.h"
 #include "ble_remote.h"
 #include "thumb_cache_format.h"
@@ -283,6 +284,7 @@ static ui_system_config_t g_system_config = {
     .sound_enabled = true,
     .sound_mode = 2,
     .volume = 65,
+    .volume_steps = 16,
     .sort_desc = 1,
     .song_sort_desc = 1,
     .np_bg_mode = 2,
@@ -2160,7 +2162,10 @@ static uint32_t g_mini_rev = 0xffffffffu;
 static uint32_t g_mini_elapsed = 0xffffffffu;
 static lv_obj_t * g_status_time;
 static lv_obj_t * g_status_icon;
-static lv_obj_t * g_status_np_caption;
+static lv_obj_t * g_status_caption;
+static lv_obj_t * g_status_volume_icon;
+static bool g_status_volume_seen;
+static int g_status_volume;
 static bool g_library_syncing;
 static np_battery_status_t g_np_battery = {.percent=-1};
 static bool g_np_battery_seen;
@@ -2173,6 +2178,7 @@ typedef enum {
     STATUS_NP_UNPLUGGED,
     STATUS_NP_FULL,
     STATUS_NP_LOW,
+    STATUS_VOLUME,
     STATUS_COUNT,
 } status_content_t;
 typedef enum { STATUS_HOLD, STATUS_FADE_OUT, STATUS_FADE_IN } status_phase_t;
@@ -2606,16 +2612,31 @@ static void status_area_opacity(lv_opa_t opacity)
     if(lv_obj_get_style_opa(g_status_time, 0) == opacity) return;
     lv_obj_set_style_opa(g_status_time, opacity, 0);
     lv_obj_set_style_opa(g_status_icon, opacity, 0);
-    lv_obj_set_style_opa(g_status_np_caption, opacity, 0);
+    lv_obj_set_style_opa(g_status_caption, opacity, 0);
+    lv_obj_set_style_opa(g_status_volume_icon, opacity, 0);
 }
 
 static void status_area_show(status_content_t content)
 {
     g_status_content = content;
     lv_obj_set_hidden(g_status_time, content != STATUS_CLOCK);
-    lv_obj_set_hidden(g_status_icon, content == STATUS_CLOCK);
+    lv_obj_set_hidden(g_status_icon, content == STATUS_CLOCK || content == STATUS_VOLUME);
+    lv_obj_set_hidden(g_status_volume_icon, content != STATUS_VOLUME);
     bool battery=content>=STATUS_NP_CHARGING && content<=STATUS_NP_LOW;
-    lv_obj_set_hidden(g_status_np_caption,!battery);
+    lv_obj_set_hidden(g_status_caption, !battery && content != STATUS_VOLUME);
+    if(content == STATUS_VOLUME) {
+        lv_label_set_text(g_status_volume_icon, g_status_volume == 0 ? ICON_VOLUME_MUTE :
+            g_status_volume <= 50 ? ICON_VOLUME_DOWN : ICON_VOLUME_UP);
+        lv_label_set_text_fmt(g_status_caption, "%d%%", g_status_volume);
+        lv_obj_set_style_text_font(g_status_caption, FONT_NUM, 0);
+        lv_obj_align(g_status_caption, LV_ALIGN_BOTTOM_MID, 0, -6);
+        return;
+    }
+    if(battery) {
+        lv_label_set_text(g_status_caption, "NP Battery");
+        lv_obj_set_style_text_font(g_status_caption, &inter_14, 0);
+        lv_obj_align(g_status_caption, LV_ALIGN_BOTTOM_MID, 0, -6);
+    }
     if(content == STATUS_CLOCK) return;
     const lv_image_dsc_t * image = &notification_arrow_repeat;
     if(content == STATUS_BLUETOOTH_CONNECTED) image = &notification_bluetooth_connecting;
@@ -2692,6 +2713,24 @@ static void status_area_tick(lv_timer_t * timer)
 static void status_area_update(void)
 {
     uint32_t now = lv_tick_get();
+    player_snapshot_t snapshot;
+    player_get_snapshot(&snapshot);
+    bool volume_available = snapshot.connected && snapshot.volume >= 0 && snapshot.volume <= 100;
+    if(!volume_available) {
+        g_status_volume_seen = false;
+        g_status_events[STATUS_VOLUME].active = false;
+    }
+    else {
+        int level = snapshot.muted ? 0 : volume_grid_snap(snapshot.volume, player_volume_steps());
+        bool changed = g_status_volume_seen && level != g_status_volume;
+        g_status_volume = level;
+        g_status_volume_seen = true;
+        if(changed) {
+            status_area_event_start(STATUS_VOLUME, now);
+            /* Knob bursts update the visible value without replaying its fade. */
+            if(g_status_content == STATUS_VOLUME) status_area_show(STATUS_VOLUME);
+        }
+    }
     if(g_library_syncing && !g_status_events[STATUS_LIBRARY_SYNC].active) {
         status_area_event_start(STATUS_LIBRARY_SYNC, now);
     }
@@ -2762,7 +2801,9 @@ static void status_area_update_color(void)
 {
     lv_obj_set_style_image_recolor(g_status_icon,
                                    lv_obj_get_style_text_color(g_status_time, 0), 0);
-    lv_obj_set_style_text_color(g_status_np_caption,
+    lv_obj_set_style_text_color(g_status_caption,
+                               lv_obj_get_style_text_color(g_status_time,0),0);
+    lv_obj_set_style_text_color(g_status_volume_icon,
                                lv_obj_get_style_text_color(g_status_time,0),0);
 }
 
@@ -2816,10 +2857,14 @@ static void build_menubar(lv_obj_t * parent)
     lv_obj_set_style_image_recolor_opa(g_status_icon, LV_OPA_COVER, 0);
     lv_obj_set_style_image_recolor(g_status_icon, lv_color_hex(COL_MENU_TOP_FG), 0);
     lv_obj_set_hidden(g_status_icon, true);
-    g_status_np_caption=make_label(time_area,"NP Battery",&inter_14,COL_MENU_TOP_FG);
-    lv_obj_set_clickable(g_status_np_caption,false);
-    lv_obj_align(g_status_np_caption,LV_ALIGN_BOTTOM_MID,0,-6);
-    lv_obj_set_hidden(g_status_np_caption,true);
+    g_status_volume_icon=make_label(time_area,ICON_VOLUME_UP,&bootstrap_icons_32,COL_MENU_TOP_FG);
+    lv_obj_set_clickable(g_status_volume_icon,false);
+    lv_obj_align(g_status_volume_icon,LV_ALIGN_TOP_MID,0,5);
+    lv_obj_set_hidden(g_status_volume_icon,true);
+    g_status_caption=make_label(time_area,"NP Battery",&inter_14,COL_MENU_TOP_FG);
+    lv_obj_set_clickable(g_status_caption,false);
+    lv_obj_align(g_status_caption,LV_ALIGN_BOTTOM_MID,0,-6);
+    lv_obj_set_hidden(g_status_caption,true);
     lv_obj_add_event_cb(g_status_time, status_area_color_cb, LV_EVENT_STATE_CHANGED, NULL);
     g_status_content = g_status_target = STATUS_CLOCK;
     g_status_phase = STATUS_HOLD;
@@ -2927,6 +2972,8 @@ void ui_set_system_config(const ui_system_config_t * cfg)
     snprintf(ip, sizeof(ip), "%s", g_system_config.wifi_ip);
 
     g_system_config = *cfg;
+    g_system_config.volume_steps = volume_steps_normalize(cfg->volume_steps);
+    player_set_volume_steps(g_system_config.volume_steps);
     if(cfg->pagination_size != 64 && cfg->pagination_size != 96) g_system_config.pagination_size = 0;
     g_system_config.fast_scroll_trigger_window_ms = fast_scroll_trigger_window_normalize(cfg->fast_scroll_trigger_window_ms);
     g_system_config.fast_scroll_hold_ms = fast_scroll_hold_normalize(cfg->fast_scroll_hold_ms);
@@ -7998,6 +8045,7 @@ enum {
     SETTING_SORT_ORDER,
     SETTING_FAST_SCROLL,
     SETTING_KEY_FEEDBACK,
+    SETTING_VOLUME_STEP,
     SETTING_SCREEN,
     SETTING_THEME,
     SETTING_NOW_PLAYING_BG,
@@ -8067,6 +8115,7 @@ enum {
 static int settings_time_segment;
 static lv_obj_t * settings_detail_touch_value;
 static lv_obj_t * settings_pagination_value;
+static lv_obj_t * settings_volume_step_checks[2];
 static lv_obj_t * settings_detail_menubar_value;
 static lv_obj_t * settings_detail_sort_value;
 static lv_obj_t * settings_detail_order_value;
@@ -8119,6 +8168,7 @@ static void settings_clear_detail_widgets(void)
     settings_time_down_icon = NULL;
     settings_detail_touch_value = NULL;
     settings_pagination_value = NULL;
+    settings_volume_step_checks[0] = settings_volume_step_checks[1] = NULL;
     settings_detail_menubar_value = NULL;
     settings_detail_sort_value = NULL;
     settings_detail_order_value = NULL;
@@ -8147,6 +8197,8 @@ void ui_apply_saved_settings(const ui_system_config_t * cfg)
     if(cfg == NULL) return;
 
     g_system_config = *cfg;
+    g_system_config.volume_steps = volume_steps_normalize(cfg->volume_steps);
+    player_set_volume_steps(g_system_config.volume_steps);
     if(cfg->pagination_size != 64 && cfg->pagination_size != 96) g_system_config.pagination_size = 0;
     g_system_config.fast_scroll_trigger_window_ms = fast_scroll_trigger_window_normalize(cfg->fast_scroll_trigger_window_ms);
     g_system_config.fast_scroll_hold_ms = fast_scroll_hold_normalize(cfg->fast_scroll_hold_ms);
@@ -8191,6 +8243,7 @@ static const char * const settings_names[SETTING_COUNT] = {
     "Sort Order",
     "Fast Scroll",
     "Key Feedback",
+    "Volume Step",
     "Screen",
     "Theme",
     "Now Playing Background",
@@ -8203,6 +8256,7 @@ static const char * const settings_names[SETTING_COUNT] = {
 static int settings_initial_focus(int index)
 {
     if(index == SETTING_FAST_SCROLL) return 0;
+    if(index == SETTING_VOLUME_STEP) return g_system_config.volume_steps == 64 ? 1 : 0;
     if(index == SETTING_SCREEN) {
         int nearest = 0;
         for(int i = 1; i < 3; i++) {
@@ -9082,6 +9136,26 @@ static void settings_fast_hold_touch_cb(lv_event_t * event)
     settings_fast_hold_action(lv_event_get_user_data(event));
 }
 
+static void settings_update_volume_step(void)
+{
+    for(int i=0;i<2;i++) if(settings_volume_step_checks[i])
+        lv_label_set_text(settings_volume_step_checks[i],
+            g_system_config.volume_steps == (i ? 64 : 16) ? ICON_CHECK : "");
+}
+
+static void settings_volume_step_action(void *user)
+{
+    g_system_config.volume_steps = (intptr_t)user == 64 ? 64 : 16;
+    player_set_volume_steps(g_system_config.volume_steps);
+    settings_update_volume_step();
+    settings_system_changed();
+}
+
+static void settings_volume_step_touch_cb(lv_event_t *event)
+{
+    settings_volume_step_action(lv_event_get_user_data(event));
+}
+
 static void settings_pagination_action(void *user)
 {
     LV_UNUSED(user);
@@ -9275,6 +9349,7 @@ static void settings_tick(void)
     if(settings_selected==SETTING_AFC_IAP2) settings_update_mpd_cache(false);
     if(settings_selected==SETTING_ABOUT) settings_update_np_battery();
     if(settings_selected==SETTING_FAST_SCROLL) settings_update_fast_scroll_checks();
+    if(settings_selected==SETTING_VOLUME_STEP) settings_update_volume_step();
     if(settings_selected == SETTING_SCREEN) {
         settings_update_screen_checks();
         return;
@@ -9820,6 +9895,16 @@ static void settings_render_detail(lv_obj_t * parent, bool interactive)
                     &settings_fast_hold_checks[i]);
                 if(interactive) focus_add_clickable(row,settings_fast_hold_action,NULL,(void *)(intptr_t)i,true);
                 else touch_add_clickable(row,settings_fast_hold_touch_cb,(void *)(intptr_t)i);
+            }
+            break;
+        }
+        case SETTING_VOLUME_STEP: {
+            for(int i=0;i<2;i++) {
+                int steps=i ? 64 : 16;
+                lv_obj_t *row=settings_make_choice_row(parent,i ? "1/64" : "1/16",
+                    g_system_config.volume_steps==steps,&settings_volume_step_checks[i]);
+                if(interactive) focus_add_clickable(row,settings_volume_step_action,NULL,(void*)(intptr_t)steps,true);
+                else touch_add_clickable(row,settings_volume_step_touch_cb,(void*)(intptr_t)steps);
             }
             break;
         }

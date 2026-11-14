@@ -1,5 +1,6 @@
 /* Render the production clock/notification strip through real LVGL fades. */
 #include "ble_remote.h"
+#include "player.h"
 #include <stdio.h>
 #include <string.h>
 static bool bluetooth_enabled;
@@ -12,6 +13,10 @@ static void test_ble_status(ble_remote_state_t *state, char *text, size_t size)
     if(state) *state = bluetooth_state;
     if(text && size) snprintf(text, size, "Test controller");
 }
+static bool volume_override,volume_connected=true,volume_muted;
+static int volume_value=50;
+static void test_player_snapshot(player_snapshot_t *snapshot);
+#define player_get_snapshot test_player_snapshot
 #define ble_remote_enabled test_ble_enabled
 #define ble_remote_paired_count test_ble_paired_count
 #define ble_remote_status test_ble_status
@@ -19,6 +24,16 @@ static void test_ble_status(ble_remote_state_t *state, char *text, size_t size)
 #undef ble_remote_enabled
 #undef ble_remote_paired_count
 #undef ble_remote_status
+#undef player_get_snapshot
+
+static void test_player_snapshot(player_snapshot_t *snapshot)
+{
+    player_get_snapshot(snapshot);
+    if(volume_override) {
+        snapshot->volume=volume_value;snapshot->muted=volume_muted;
+        snapshot->connected=volume_connected;
+    }
+}
 
 static uint32_t frame[720][1280];
 static uint8_t draw_buffer[1280 * 40 * 4];
@@ -78,6 +93,58 @@ static void save_strip(const char *name)
         fwrite(rgb,1,3,file);
     }
     fclose(file);
+}
+
+static void volume_notifications(void)
+{
+    volume_override=true;volume_connected=false;
+    status_area_update();pump(600);
+    volume_value=34;volume_connected=true;volume_muted=false;player_set_volume_steps(16);
+    status_area_update();pump(1000);
+    check(g_status_content==STATUS_CLOCK,"Initial mixer state must seed a baseline without a popup");
+    volume_value=37;status_area_update();wait_for(STATUS_VOLUME);
+    check(lv_obj_is_visible(g_status_volume_icon) && lv_obj_is_visible(g_status_caption) &&
+          !lv_obj_is_visible(g_status_time) && !lv_obj_is_visible(g_status_icon),
+          "Volume notification must replace the clock with speaker and percentage");
+    check(!strcmp(lv_label_get_text(g_status_caption),"38%") &&
+          !strcmp(lv_label_get_text(g_status_volume_icon),ICON_VOLUME_DOWN),
+          "Off-grid server volume must display the nearest grid percentage");
+    lv_area_t icon,caption,area;
+    lv_obj_update_layout(g_menubar);
+    lv_obj_get_coords(g_status_volume_icon,&icon);lv_obj_get_coords(g_status_caption,&caption);
+    lv_obj_get_coords(lv_obj_get_parent(g_status_time),&area);
+    check(icon.y2<caption.y1 && icon.x1>=area.x1 && icon.x2<=area.x2 &&
+          caption.y2<=area.y2 && caption.x1>=area.x1 && caption.x2<=area.x2,
+          "The percentage must fit beneath the speaker inside the clock area");
+    check(lv_color_eq(lv_obj_get_style_text_color(g_status_volume_icon,0),lv_obj_get_style_text_color(g_status_time,0)),
+          "Speaker color must match the clock in every theme");
+    save_strip("volume");
+    for(int value=50;value<=94;value+=11) {
+        volume_value=value;status_area_update();pump(300);
+        check(g_status_content==STATUS_VOLUME && g_status_phase==STATUS_HOLD,
+              "Rapid changes update the visible percentage without restarting its fade");
+    }
+    stays_visible(STATUS_VOLUME,1200,"The last volume change must extend the notification");
+    wait_for(STATUS_CLOCK);
+    volume_value=100;status_area_update();wait_for(STATUS_VOLUME);
+    check(!strcmp(lv_label_get_text(g_status_caption),"100%") &&
+          !strcmp(lv_label_get_text(g_status_volume_icon),ICON_VOLUME_UP),"Full volume must show 100 percent");
+    save_strip("volume-full");
+    volume_muted=true;status_area_update();pump(50);
+    check(!strcmp(lv_label_get_text(g_status_caption),"0%") &&
+          !strcmp(lv_label_get_text(g_status_volume_icon),ICON_VOLUME_MUTE),"Mute must show the muted speaker and zero percent");
+    save_strip("volume-muted");
+    ui_set_library_syncing(true);status_area_update();wait_for(STATUS_LIBRARY_SYNC);
+    volume_muted=false;volume_value=50;status_area_update();wait_for(STATUS_VOLUME);
+    wait_for(STATUS_LIBRARY_SYNC);
+    ui_set_library_syncing(false);status_area_update();wait_for(STATUS_CLOCK);
+    ui_screen_off();volume_value=75;status_area_update();wait_for(STATUS_VOLUME);
+    check(!ui_screen_is_on(),"Remote volume notification must not wake a manually blanked screen");
+    ui_user_activity();volume_value=-1;status_area_update();wait_for(STATUS_CLOCK);
+    check(!g_status_volume_seen,"Unavailable mixers clear the baseline and do not display negative percentages");
+    volume_value=90;status_area_update();pump(1000);
+    check(g_status_content==STATUS_CLOCK,"Mixer reconnection must not create a fake volume change");
+    volume_connected=false;status_area_update();volume_override=false;status_area_update();pump(500);
 }
 
 int main(int argc, char **argv)
@@ -221,14 +288,15 @@ int main(int argc, char **argv)
     check(original.x1==final.x1 && original.x2==final.x2 && original.y1==final.y1 && original.y2==final.y2,
           "Notification transitions must not change the clock strip geometry");
     bluetooth_enabled=false;status_area_update();pump(600);wait_for(STATUS_CLOCK);
+    volume_notifications();
     np_battery_status_t battery={.available=true,.present=true,.percent=79,
         .voltage_mv=7871,.current_ma=300,.state=NP_BATTERY_DISCHARGING};
     ui_set_np_battery_status(&battery);pump(600);wait_for(STATUS_CLOCK);
     stays_visible(STATUS_CLOCK,3000,"Initial battery power must not invent an unplug event");
     battery.state=NP_BATTERY_CHARGING;battery.current_ma=-500;battery.charger_enabled=true;
     ui_set_np_battery_status(&battery);wait_for(STATUS_NP_CHARGING);
-    check(lv_obj_is_visible(g_status_np_caption) &&
-          !strcmp(lv_label_get_text(g_status_np_caption),"NP Battery"),"Battery notifications must name the NP battery explicitly");
+    check(lv_obj_is_visible(g_status_caption) &&
+          !strcmp(lv_label_get_text(g_status_caption),"NP Battery"),"Battery notifications must name the NP battery explicitly");
     check(lv_image_get_src(g_status_icon)==&notification_battery_charging,"Charging must use the battery bolt icon");
     save_strip("np-charging");wait_for(STATUS_CLOCK);
     for(int i=0;i<5;i++) {ui_set_np_battery_status(&battery);pump(1000);}

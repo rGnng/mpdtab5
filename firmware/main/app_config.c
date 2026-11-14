@@ -46,6 +46,7 @@ app_config_t g_app_config = {
     .sound_enabled = true,
     .sound_mode = 2,
     .volume = 65,
+    .volume_steps = 16,
     .ap_ssid = "MPDTAB5",
     .clock_12h = false,
     .sort_field = 0,
@@ -470,6 +471,7 @@ static void set_defaults(void)
     g_app_config.sound_enabled = true;
     g_app_config.sound_mode = 2;
     g_app_config.volume = 65;
+    g_app_config.volume_steps = 16;
     snprintf(g_app_config.ap_ssid, sizeof(g_app_config.ap_ssid), "MPDTAB5");
     g_app_config.clock_12h = false;
     g_app_config.sort_field = 0;
@@ -544,6 +546,10 @@ static void load_from_json(const char * text)
         snprintf(g_app_config.ap_ssid, sizeof(g_app_config.ap_ssid), "%s",
                  item->valuestring);
     }
+
+    item = cJSON_GetObjectItemCaseSensitive(root, "volume_steps");
+    if(cJSON_IsNumber(item) && item->valuedouble == item->valueint &&
+       (item->valueint == 16 || item->valueint == 64)) g_app_config.volume_steps = (uint8_t)item->valueint;
 
     item = cJSON_GetObjectItemCaseSensitive(root, "clock_12h");
     if(cJSON_IsBool(item)) g_app_config.clock_12h = cJSON_IsTrue(item);
@@ -730,6 +736,7 @@ esp_err_t app_config_save(void)
     cJSON_AddBoolToObject(root, "sound_enabled", g_app_config.sound_enabled);
     cJSON_AddNumberToObject(root, "sound_mode", g_app_config.sound_mode);
     cJSON_AddNumberToObject(root, "volume", g_app_config.volume);
+    cJSON_AddNumberToObject(root, "volume_steps", g_app_config.volume_steps);
     cJSON_AddStringToObject(root, "ap_ssid", g_app_config.ap_ssid);
     cJSON_AddBoolToObject(root, "clock_12h", g_app_config.clock_12h);
     cJSON_AddNumberToObject(root, "sort_field", g_app_config.sort_field);

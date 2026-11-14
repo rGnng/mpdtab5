@@ -150,6 +150,7 @@ static void ui_system_config_changed(const ui_system_config_t * cfg)
     g_app_config.sound_mode = (uint8_t)cfg->sound_mode;
     g_app_config.sound_enabled = g_app_config.sound_mode != 0;
     g_app_config.volume = (uint8_t)cfg->volume;
+    g_app_config.volume_steps = cfg->volume_steps == 64 ? 64 : 16;
     g_app_config.clock_12h = cfg->clock_12h != 0;
     g_app_config.sort_field = (uint8_t)cfg->sort_field;
     g_app_config.sort_desc = cfg->sort_desc != 0;
@@ -208,6 +209,7 @@ static void fill_ui_config(ui_system_config_t * cfg)
     cfg->sound_enabled = g_app_config.sound_enabled;
     cfg->sound_mode = g_app_config.sound_mode;
     cfg->volume = g_app_config.volume;
+    cfg->volume_steps = g_app_config.volume_steps;
     snprintf(cfg->ap_ssid, sizeof(cfg->ap_ssid), "%s", g_app_config.ap_ssid);
     cfg->wifi_status[0] = '\0';
     cfg->wifi_ip[0] = '\0';

@@ -190,6 +190,8 @@ void player_seek_sec(uint32_t sec);
 /* One native volume step: negative = down, positive = up, zero = no-op.
  * The iPod's absolute volume is not reported by the current iAP2 session. */
 void player_step_volume(int direction);
+void player_set_volume_steps(int steps);
+int player_volume_steps(void);
 void player_mute_toggle(void);
 void player_toggle_star(void);
 /* Clear server Stared in MPD mode, or local stars for the simulator. */

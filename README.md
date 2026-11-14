@@ -35,6 +35,15 @@ list. Controls use 65% transparency, follow the existing content margins, and
 hide when keyboard/knob navigation resumes or touch is disabled. The setting is
 saved in `/sdcard/mpd/config.json` and is also available on the web System page.
 
+**Settings → Volume Step** selects **1/16** (default, 6.25% per notch) or
+**1/64** (1.5625% per notch), following [Headunit](https://github.com/rGnng/headunit).
+Off-grid server levels map to the nearest position for display; each volume
+notch moves one position and sends an integer MPD percentage. The setting is
+saved on SD and is also available on the web System page.
+Volume changes briefly replace the clock with a speaker icon and percentage
+beneath it. Further changes update the value and extend the display for about
+two seconds. A muted speaker shows 0%; the clock or active sync icon then returns.
+
 The screen wakes when MPD starts or resumes playback, including after a manual
 screen-off. Blanking it while playback is already running stays effective until
 a subsequent pause/stop and playback start, or touch/key input.

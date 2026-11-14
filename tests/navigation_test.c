@@ -719,6 +719,34 @@ static void pagination_views(void)
     ui_set_system_config_changed_cb(NULL);ui_attach_touch(NULL);lv_indev_delete(touch);touch=NULL;
 }
 
+static int saved_volume_steps;
+static void volume_step_saved(const ui_system_config_t *config)
+{ saved_volume_steps=config->volume_steps; }
+static void volume_step_settings(void)
+{
+    ui_select_screen(SCR_SETTINGS);pump(400);
+    settings_open((void*)(intptr_t)SETTING_VOLUME_STEP);pump(300);
+    check(g_focus_count==2 && lv_obj_get_child_count(settings_right_content)==2,
+          "Volume Step settings must contain exactly 1/16 and 1/64");
+    check(g_system_config.volume_steps==16 && player_volume_steps()==16,
+          "Missing volume step configuration defaults to 1/16");
+    ui_set_system_config_changed_cb(volume_step_saved);
+    ui_handle_key(UI_KEY_DOWN);ui_handle_key(UI_KEY_ENTER);pump(200);
+    check(saved_volume_steps==64 && player_volume_steps()==64 &&
+          !strcmp(lv_label_get_text(settings_volume_step_checks[1]),ICON_CHECK),
+          "Keyboard selection must apply and persist 1/64");
+    ui_system_config_t config=g_system_config;config.volume_steps=16;
+    ui_set_system_config(&config);pump(600);
+    check(player_volume_steps()==16 && !strcmp(lv_label_get_text(settings_volume_step_checks[0]),ICON_CHECK),
+          "Web configuration changes must update the volume grid and checked option");
+    touch=lv_indev_create();lv_indev_set_type(touch,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(touch,read_touch);ui_set_touch_enabled(true);ui_attach_touch(touch);
+    tap_pager(lv_obj_get_child(settings_right_content,1));
+    check(saved_volume_steps==64 && player_volume_steps()==64,"Touch must select the same 1/64 grid");
+    ui_attach_touch(NULL);lv_indev_delete(touch);touch=NULL;
+    settings_volume_step_action((void*)(intptr_t)16);ui_set_system_config_changed_cb(NULL);
+}
+
 static bool playlist_view_deleted;
 static void playlist_view_delete_cb(lv_event_t *event)
 { LV_UNUSED(event);playlist_view_deleted=true; }
@@ -761,6 +789,7 @@ int main(int argc,char **argv)
     live_album_focus();
     live_song_focus();
     playlist_updates_retain_album_covers();
+    volume_step_settings();
     puts("PASS: transparent text fade, Artists viewport restoration, column scrollbar geometry, page scrolling and theme cursor feedback");
     return 0;
 }

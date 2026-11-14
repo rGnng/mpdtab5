@@ -756,6 +756,7 @@ static esp_err_t config_get(httpd_req_t * req)
     cJSON_AddNumberToObject(root,"song_sort_field",g_app_config.song_sort_field);
     cJSON_AddBoolToObject(root,"song_sort_desc",g_app_config.song_sort_desc);
     cJSON_AddNumberToObject(root, "volume", g_app_config.volume);
+    cJSON_AddNumberToObject(root, "volume_steps", g_app_config.volume_steps);
     cJSON_AddNumberToObject(root, "brightness", g_app_config.brightness);
     cJSON_AddNumberToObject(root, "pagination_size", g_app_config.pagination_size);
     cJSON_AddNumberToObject(root, "screen_off_minutes", g_app_config.screen_off_minutes);
@@ -809,6 +810,12 @@ static esp_err_t config_post(httpd_req_t * req)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
     }
 
+    const cJSON *volume_steps = cJSON_GetObjectItemCaseSensitive(root, "volume_steps");
+    if(volume_steps && (!cJSON_IsNumber(volume_steps) || volume_steps->valuedouble != volume_steps->valueint ||
+       (volume_steps->valueint != 16 && volume_steps->valueint != 64))) {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Volume Step must be 16 or 64");
+    }
     const cJSON *pagination = cJSON_GetObjectItemCaseSensitive(root, "pagination_size");
     if(pagination && (!cJSON_IsNumber(pagination) || pagination->valuedouble != pagination->valueint ||
        (pagination->valueint != 0 && pagination->valueint != 64 && pagination->valueint != 96))) {
@@ -863,6 +870,7 @@ static esp_err_t config_post(httpd_req_t * req)
     if(enabled != NULL) g_app_config.fast_scroll_enabled = cJSON_IsTrue(enabled);
     if(trigger != NULL) g_app_config.fast_scroll_trigger_window_ms = (uint16_t)trigger->valueint;
     if(pagination) g_app_config.pagination_size = (uint8_t)pagination->valueint;
+    if(volume_steps) g_app_config.volume_steps = (uint8_t)volume_steps->valueint;
     item = cJSON_GetObjectItemCaseSensitive(root, "screen_off_minutes");
     if(item != NULL && (!cJSON_IsNumber(item) || item->valuedouble != item->valueint ||
        (item->valueint != 0 && item->valueint != 30 && item->valueint != 60))) {
@@ -1496,6 +1504,7 @@ static esp_err_t status_get(httpd_req_t * req)
     cJSON_AddNumberToObject(root, "fast_scroll_hold_ms", g_app_config.fast_scroll_hold_ms);
     cJSON_AddNumberToObject(root, "screen_flip", g_app_config.screen_flip);
     cJSON_AddNumberToObject(root, "volume", g_app_config.volume);
+    cJSON_AddNumberToObject(root, "volume_steps", g_app_config.volume_steps);
     const esp_partition_t * ota = esp_ota_get_next_update_partition(NULL);
     cJSON *display = cJSON_AddObjectToObject(root, "display");
     if(display) display_diag_json(display);

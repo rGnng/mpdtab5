@@ -1,7 +1,7 @@
 'use strict';
 var T = window.Tab5, S = {}, C = {}, dirty = {}, pending = {};
 var $ = function (id) { return document.getElementById(id); };
-var configFields = ['volume','brightness','screen_off_minutes','theme','sound_mode',
+var configFields = ['volume','volume_steps','brightness','screen_off_minutes','theme','sound_mode',
   'pagination_size','debug_log','usb_mode','usb_net_ip','usb_net_client_ip','screen_flip','wifi_mode','ap_ssid'];
 function toast(msg, bad) {
   $('toast').textContent = msg; $('toast').className = 'on' + (bad ? ' bad' : '');
@@ -91,7 +91,7 @@ function render(s,c,p) {
   $('fw_rows').innerHTML=T.row('Firmware',s.firmware)+T.row('Build',s.build)+T.row('OTA slot',s.ota_partition)+T.row('USB mode',T.usb(s.usb_mode));
   $('clock_hint').textContent=(s.local_time || '—')+(s.rtc ? ' · RTC' : '');
   $('screen_state').textContent=s.screen_on===undefined ? '—' : s.screen_on ? 'Screen on' : 'Screen off';
-  configFields.forEach(function (id) { setVal(id,c[id] === undefined ? (['screen_off_minutes','pagination_size'].includes(id) ? 0 : '') : c[id]); });
+  configFields.forEach(function (id) { setVal(id,c[id] === undefined ? (id==='volume_steps' ? 16 : ['screen_off_minutes','pagination_size'].includes(id) ? 0 : '') : c[id]); });
   $('vol_v').textContent=value('volume'); $('bri_v').textContent=value('brightness');
 }
 var refresh=T.poll(render,function (e) { $('chips').innerHTML=T.chip('Device',e.message,'bad'); });

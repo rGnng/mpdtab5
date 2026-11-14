@@ -21,6 +21,7 @@ PREFIX=r'''
 #include "mpd_client.h"
 #include "player.h"
 #include "text_util.h"
+#include "volume_grid.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,11 +50,13 @@ static void *test_reallocate(void *ptr,size_t n) {
 #define vTaskDelay(n) ((void)(n))
 static mpd_wire_t wire;
 static mpd_state_t state;
-static int muted_volume=50, mpd_playlist_version;
+static int muted_volume=50, server_volume=-1, mpd_playlist_version;
 static bool remote_repeat,remote_single,mpd_updating;
 static unsigned reported_queue_size, database_songs;
 static char database_revision[64];
 static bool unpaged_server;
+static int volume_steps=16;
+int player_volume_steps(void) { return volume_steps; }
 static player_media_item_t items[1000];
 static int item_count,playlist_count,complete_count;
 static uint64_t playlist_keys[1024];
@@ -88,6 +91,7 @@ void test_init(int fd) {
     unpaged_server=false; database_songs=0;
     allocation_limit=SIZE_MAX;largest_allocation=0;queue_size=0;queue_refresh_pending=false;
     free(star_keys);star_keys=NULL;star_count=0;star_revision=0;stars_refresh_pending=false;
+    volume_steps=16;
     complete_count=0;
     diagnostic[0]=0; mpd_wire_init(&wire); mpd_wire_attach(&wire,fd,1000);
 }
@@ -120,8 +124,13 @@ int test_sync(void) { return sync_library(); }
 int test_run(int kind,uint64_t *keys,int count,int start) {
     command_t c={.kind=kind,.keys=keys,.count=count,.start=start,.queue_id=(uint32_t)start}; return run_command(&c);
 }
+void test_set_volume_steps(int n) { volume_steps=n; }
+int test_volume_mode_change(void) {
+    server_volume=67;state.volume=69;volume_steps=64;
+    command_t c={.kind=CMD_TEXT};strcpy(c.text,"@volume_up");return run_command(&c);
+}
 int test_toggle(const char *name,int repeat,int volume,int shuffle) {
-    state.repeat=repeat; state.volume=volume; state.shuffle=shuffle;
+    state.repeat=repeat; state.volume=server_volume=volume; state.shuffle=shuffle;
     command_t c={.kind=CMD_TEXT}; snprintf(c.text,sizeof(c.text),"%s",name);
     return run_command(&c);
 }
@@ -449,8 +458,28 @@ static unsigned uri_count,uri_used;
             self.assertEqual(self.lib.test_toggle(b'@repeat',mode,50,0),1)
             self.threads[-1].join()
 
+    def test_volume_steps_snap_to_grid_before_one_notch(self):
+        for steps,up,down in [(16,44,31),(64,39,36)]:
+            self.lib.test_set_volume_steps(steps)
+            for command,expected in [(b'@volume_up',up),(b'@volume_down',down)]:
+                self.server([(f'setvol {expected}\n'.encode(),b'OK\n')])
+                self.assertEqual(self.lib.test_toggle(command,0,37,0),1)
+                self.threads[-1].join()
+
+    def test_switching_volume_grid_uses_raw_server_level(self):
+        self.server([(b'setvol 69\n',b'OK\n')])
+        self.assertEqual(self.lib.test_volume_mode_change(),1)
+
+    def test_volume_steps_clamp_without_disabling_controls(self):
+        for command,level,expected in [(b'@volume_up',100,100),(b'@volume_down',0,0)]:
+            self.server([(f'setvol {expected}\n'.encode(),b'OK\n')])
+            self.assertEqual(self.lib.test_toggle(command,0,level,0),1)
+            self.threads[-1].join()
+        self.assertEqual(self.lib.test_toggle(b'@volume_up',0,-1,0),1)
+        self.assertIn(b'mixer is unavailable',self.lib.test_message())
+
     def test_mute_restores_actual_volume_and_shuffle_uses_server_state(self):
-        for command,vol,shuffle,expected in [(b'@mute',67,0,b'setvol 0\n'),(b'@mute',0,0,b'setvol 67\n'),(b'@shuffle',50,1,b'random 0\n')]:
+        for command,vol,shuffle,expected in [(b'@mute',67,0,b'setvol 0\n'),(b'@mute',0,0,b'setvol 69\n'),(b'@shuffle',50,1,b'random 0\n')]:
             self.server([(expected,b'OK\n')])
             self.assertEqual(self.lib.test_toggle(command,0,vol,shuffle),1)
             self.threads[-1].join()

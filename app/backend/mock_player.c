@@ -2,6 +2,8 @@
 #include "media_index.h"
 #include "store_util.h"
 #include "text_util.h"
+#include "volume_grid.h"
+#include <stdatomic.h>
 #include <time.h>
 
 #include "cJSON.h"
@@ -50,6 +52,16 @@ static const char * TAG = "player";
 
 static MOCK_LARGE_BSS player_track_t tracks[MAX_TRACKS];
 static int track_count;
+static atomic_int volume_steps = 16;
+
+void player_set_volume_steps(int steps)
+{
+    atomic_store_explicit(&volume_steps, volume_steps_normalize(steps), memory_order_relaxed);
+}
+int player_volume_steps(void)
+{
+    return atomic_load_explicit(&volume_steps, memory_order_relaxed);
+}
 static MOCK_LARGE_BSS uint16_t song_order[MAX_TRACKS];
 static MOCK_LARGE_BSS uint32_t song_sort_dates[MAX_TRACKS];
 static MOCK_LARGE_BSS uint16_t song_sort_years[MAX_TRACKS];
@@ -1904,15 +1916,12 @@ void player_step_volume(int direction)
     if(direction == 0) return;
 #if defined(ESP_PLATFORM)
     if(mpd_client_is_enabled()) {
-        /* Send a relative tap for every detent. A local percentage estimate
-         * drifts from the iPod and can incorrectly prevent further turns. */
+        /* The worker snaps its latest server level and moves one grid notch. */
         mpd_client_hid_command(direction > 0 ? "volume_up" : "volume_down");
         return;
     }
 #endif
-    int new_volume = volume + (direction > 0 ? 5 : -5);
-    if(new_volume < 0) new_volume = 0;
-    if(new_volume > 100) new_volume = 100;
+    int new_volume = volume_grid_step(volume, direction > 0 ? 1 : -1, player_volume_steps());
     volume = new_volume;
     if(new_volume > 0) muted = false;
     bump_revision();

@@ -4,6 +4,7 @@
 #include "mpd_wire.h"
 #include "player.h"
 #include "text_util.h"
+#include "volume_grid.h"
 #include "app_config.h"
 #include "jpeg_thumbnail.h"
 #include "thumb_cache.h"
@@ -66,7 +67,7 @@ static int mpd_playlist_version;
 static bool mpd_updating;
 static unsigned reported_queue_size;
 static bool remote_repeat, remote_single;
-static int muted_volume=50;
+static int muted_volume=50, server_volume=-1;
 static char current_uri[2048];
 static char library_id[64];
 static void artwork_register(uint64_t album, uint64_t track);
@@ -200,8 +201,8 @@ esp_err_t mpd_client_hid_command(const char *name) {
     if(!strcmp(name,"play")) return text_command("play");
     if(!strcmp(name,"pause")) return text_command("pause 1");
     if(!strcmp(name,"next") || !strcmp(name,"previous") || !strcmp(name,"stop")) return text_command(name);
-    if(!strcmp(name,"volume_up")) return text_command("volume 5");
-    if(!strcmp(name,"volume_down")) return text_command("volume -5");
+    if(!strcmp(name,"volume_up")) return text_command("@volume_up");
+    if(!strcmp(name,"volume_down")) return text_command("@volume_down");
     /* Evaluate toggles on the worker using its latest authoritative state. */
     if(!strcmp(name,"shuffle")) return text_command("@shuffle");
     if(!strcmp(name,"repeat")) return text_command("@repeat");
@@ -381,7 +382,7 @@ static bool song_field(const char *key,const char *value,void *ctx) {
 static bool status_field(const char *key,const char *value,void *ctx) {
     mpd_state_t *s=ctx;
     if(!strcmp(key,"state")) s->play_status=!strcmp(value,"play") ? 1 : !strcmp(value,"pause") ? 2 : 0;
-    else if(!strcmp(key,"volume")) s->volume=atoi(value);
+    else if(!strcmp(key,"volume")) s->volume=server_volume=atoi(value);
     else if(!strcmp(key,"random")) s->shuffle=atoi(value)!=0;
     else if(!strcmp(key,"repeat")) remote_repeat=atoi(value)!=0;
     else if(!strcmp(key,"single")) remote_single=atoi(value)!=0;
@@ -446,8 +447,9 @@ static bool sync_library(void) {
 static bool poll_state(void) {
     mpd_state_t next={.battery=-1,.max_current_ma=-1,.volume=-1,.queue_index=-1,.connected=true,.identified=true};
     take(); snprintf(next.device_name,sizeof(next.device_name),"MPD · %.48s",config.host); give();
-    mpd_updating=false; remote_repeat=remote_single=false; reported_queue_size=0;
+    mpd_updating=false; remote_repeat=remote_single=false; reported_queue_size=0; server_volume=-1;
     if(!mpd_wire_command(&wire,"status",status_field,NULL,&next)) return false;
+    if(next.volume >= 0) next.volume=volume_grid_snap(next.volume,player_volume_steps());
     next.repeat=remote_repeat ? (remote_single ? 1 : 2) : 0;
     song_parser_t parser={0};
     song_parser_t *p=&parser;
@@ -630,7 +632,12 @@ static bool run_command(command_t *c) {
     }
     mpd_state_t s={0}; mpd_client_get_state(&s);
     char cmd[128];
-    if(!strcmp(c->text,"@shuffle")) snprintf(cmd,sizeof(cmd),"random %d",!s.shuffle);
+    if(!strcmp(c->text,"@volume_up") || !strcmp(c->text,"@volume_down")) {
+        if(server_volume<0) { message("MPD mixer is unavailable"); return true; }
+        int delta=!strcmp(c->text,"@volume_up") ? 1 : -1;
+        snprintf(cmd,sizeof(cmd),"setvol %d",volume_grid_step(server_volume,delta,player_volume_steps()));
+    }
+    else if(!strcmp(c->text,"@shuffle")) snprintf(cmd,sizeof(cmd),"random %d",!s.shuffle);
     else if(!strcmp(c->text,"@repeat")) {
         unsigned repeat=(s.repeat==0 ? 2 : s.repeat==2 ? 1 : 0);
         snprintf(cmd,sizeof(cmd),"command_list_begin\nrepeat %u\nsingle %u\ncommand_list_end",repeat>0,repeat==1);
@@ -638,7 +645,7 @@ static bool run_command(command_t *c) {
     else if(!strcmp(c->text,"@mute")) {
         if(s.volume<0) { message("MPD mixer is unavailable"); return true; }
         if(s.volume>0) muted_volume=s.volume;
-        snprintf(cmd,sizeof(cmd),"setvol %d",s.volume ? 0 : muted_volume);
+        snprintf(cmd,sizeof(cmd),"setvol %d",s.volume ? 0 : volume_grid_snap(muted_volume,player_volume_steps()));
     }
     else snprintf(cmd,sizeof(cmd),"%s",c->text);
     return simple(cmd);
