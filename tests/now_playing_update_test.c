@@ -10,6 +10,7 @@ static bool test_artwork_copy(uint8_t *dst, size_t size, artwork_quality_t minim
                               artwork_quality_t *actual);
 static bool test_song_get(int index, player_track_t *out);
 static bool test_artist_song_get(uint64_t id, int index, player_track_t *out);
+static void test_seek_sec(uint32_t sec);
 #define player_get_snapshot test_snapshot
 #define player_queue_revision test_queue_revision
 #define player_artwork_revision test_artwork_revision
@@ -17,6 +18,7 @@ static bool test_artist_song_get(uint64_t id, int index, player_track_t *out);
 #define player_artwork_copy test_artwork_copy
 #define player_song_get test_song_get
 #define player_artist_song_get test_artist_song_get
+#define player_seek_sec test_seek_sec
 #include "../app/ui/ui.c"
 #undef player_get_snapshot
 #undef player_queue_revision
@@ -25,6 +27,7 @@ static bool test_artist_song_get(uint64_t id, int index, player_track_t *out);
 #undef player_artwork_copy
 #undef player_song_get
 #undef player_artist_song_get
+#undef player_seek_sec
 #include <unistd.h>
 
 static player_snapshot_t injected;
@@ -36,6 +39,11 @@ static artwork_quality_t art_quality={360,360};
 static uint32_t queue_rev, art_rev;
 static unsigned renders, deleted, copies;
 static unsigned global_song_reads, member_song_reads;
+static unsigned seek_calls;
+static uint32_t sought_sec;
+static lv_indev_t *touch;
+static lv_point_t touch_point;
+static bool touch_down;
 static uint32_t observed_background;
 static bool force_empty_queue;
 static const int shell_points[4][2]={{1,1},{4,270},{1278,1},{1276,270}};
@@ -79,6 +87,8 @@ static bool test_song_get(int index, player_track_t *out)
 { global_song_reads++; return player_song_get(index,out); }
 static bool test_artist_song_get(uint64_t id, int index, player_track_t *out)
 { member_song_reads++; return player_artist_song_get(id,index,out); }
+static void test_seek_sec(uint32_t sec)
+{ seek_calls++;sought_sec=sec; }
 static void check(bool condition, const char *message)
 { if(!condition) { fprintf(stderr,"FAIL: %s\n",message); exit(1); } }
 static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *p)
@@ -102,6 +112,92 @@ static void pump(int ms)
 { for(int i=0;i<ms;i+=10) { lv_tick_inc(10); lv_timer_handler(); } }
 static void text(lv_obj_t *o, const char *value)
 { check(o && !strcmp(lv_label_get_text(o),value),value); }
+static void read_touch(lv_indev_t *indev, lv_indev_data_t *data)
+{ LV_UNUSED(indev);data->point=touch_point;data->state=touch_down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED; }
+static void pointer(int x,int y,bool down)
+{ touch_point=(lv_point_t){x,y};touch_down=down;lv_indev_read(touch);pump(30); }
+
+static void touch_seeking(void)
+{
+    player_snapshot_t saved=injected;
+    injected.connected=true;injected.status=PLAYER_PAUSED;
+    injected.duration_sec=240;injected.elapsed_sec=30;
+    np_tick();pump(600);
+    touch=lv_indev_create();lv_indev_set_type(touch,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(touch,read_touch);ui_set_touch_enabled(true);ui_attach_touch(touch);
+    for(int queue=0;queue<2;queue++) {
+        if(np_queue_visible!=(bool)queue) {np_toggle_queue();pump(600);}
+        lv_area_t bounds;lv_obj_get_content_coords(np_progress,&bounds);
+        int span=bounds.x2-bounds.x1, y=(bounds.y1+bounds.y2)/2;
+        int start=bounds.x1+span/4, end=bounds.x1+3*span/4;
+        unsigned before=seek_calls;
+        pointer(start,y,true);
+        check(np_seek_dragging,"A real pointer must start seeking in either layout");
+        check(abs(lv_bar_get_value(np_progress)-60)<=1,"Pressing must preview the touched position");
+        pointer(end,y,true);
+        uint32_t target=np_seek_target;
+        check(abs((int)target-180)<=1,"Dragging must preview the new position");
+        np_tick();pump(100);
+        check(lv_bar_get_value(np_progress)==(int32_t)target && seek_calls==before,
+              "Playback polling must preserve the drag preview without sending seeks");
+        pointer(end,y,false);
+        check(seek_calls==before+1 && sought_sec==target && !np_seek_dragging,
+              "Releasing a drag must send exactly one seek");
+        check(injected.status==PLAYER_PAUSED,"Seeking must not resume paused playback");
+        np_tick();
+        check(lv_bar_get_value(np_progress)==(int32_t)target && np_seek_pending,
+              "A stale server position must not undo the released preview");
+        injected.elapsed_sec=target;np_tick();
+        check(!np_seek_pending,"The server acknowledging the position must clear the pending preview");
+        injected.elapsed_sec=30;np_tick();text(np_time_cur,"0:30");
+
+        pointer(start,y,true);pointer(end,y,false);
+        check(seek_calls==before+2 && abs((int)sought_sec-180)<=1,
+              "A quick touch movement must use its release position");
+        /* An unacknowledged command must eventually return to server truth. */
+        pump(2200);np_tick();
+        check(!np_seek_pending && lv_bar_get_value(np_progress)==30,
+              "A rejected seek must recover to the server position");
+
+        pointer(start,y,true);pointer(bounds.x2+40,y,true);pointer(bounds.x2+40,y,false);
+        check(sought_sec==240 && seek_calls==before+3,"Dragging beyond the right end must clamp to duration");
+        pointer(start,y,true);pointer(bounds.x1-40,y,true);pointer(bounds.x1-40,y,false);
+        check(sought_sec==0 && seek_calls==before+4,"Dragging beyond the left end must clamp to zero");
+
+        pointer(start,y,true);lv_indev_wait_release(touch);pointer(start,y,false);
+        check(!np_seek_dragging && !np_seek_pending && seek_calls==before+4,
+              "A lost press must cancel without sending a seek");
+        check(lv_bar_get_value(np_progress)==30,"Cancelling must restore the actual elapsed position");
+
+        /* The thin bar must also accept a touch just above its visible track. */
+        pointer(start,bounds.y1-8,true);pointer(start,bounds.y1-8,false);
+        check(seek_calls==before+5 && abs((int)sought_sec-60)<=1,"The expanded hit area must support tapping");
+
+        pointer(start,y,true);injected.track.id++;np_tick();pump(300);pointer(end,y,false);
+        check(seek_calls==before+5 && !np_seek_dragging && !np_seek_pending,
+              "A track change during dragging must never seek the next track");
+        /* Duration-less streams cannot be sought. */
+        injected.duration_sec=0;np_tick();
+        lv_obj_get_content_coords(np_progress,&bounds);y=(bounds.y1+bounds.y2)/2;
+        start=(bounds.x1+bounds.x2)/2;
+        pointer(start,y,true);pointer(start,y,false);
+        check(seek_calls==before+5 && !np_seek_dragging,"Unknown duration must disable seeking");
+        injected.duration_sec=240;np_tick();
+        pointer(start,y,true);injected.connected=false;np_refresh_snapshot(&injected);pointer(start,y,false);
+        check(seek_calls==before+5 && !np_seek_dragging,"Disconnecting must cancel an in-progress seek");
+        injected.connected=true;np_tick();
+    }
+    /* Rebuilding a view while a touch is held must discard its old gesture. */
+    lv_area_t bounds;lv_obj_get_content_coords(np_progress,&bounds);
+    int x=(bounds.x1+bounds.x2)/2,y=(bounds.y1+bounds.y2)/2;
+    unsigned before=seek_calls;
+    pointer(x,y,true);np_toggle_queue();pump(300);pointer(x,y,false);
+    check(seek_calls==before && !np_seek_dragging && !np_seek_pending,
+          "Leaving the layout must cancel its pending touch");
+    ui_attach_touch(NULL);lv_indev_delete(touch);touch=NULL;
+    if(np_queue_visible) {np_toggle_queue();pump(300);}
+    injected=saved;np_tick();pump(300);
+}
 
 static void check_shell_tint(unsigned index)
 {
@@ -463,6 +559,7 @@ int main(int argc, char **argv)
     artwork_arrival_during_build();
     artwork_upgrades();
     stopped_empty_queue();
+    touch_seeking();
     gradient_lifecycle();
     artist_membership();
     puts("PASS: selective updates, delayed metadata/artwork, progress and queue visibility");

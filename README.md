@@ -53,6 +53,10 @@ On Now Playing with the queue closed, **Down** skips to the next track,
 toggles Play/Pause. This includes ColoPlay knob navigation and presses. Up Next
 and the context menu retain Up/Down selection and Enter activation.
 
+Tap or drag the Now Playing progress bar to seek, including with Up Next open.
+The position previews while dragging and sends one seek on release. Paused
+playback stays paused; changing track or leaving the view cancels an unfinished drag.
+
 Stars use Tracks’ server-side **Stared** playlist. The Tab5 reads its membership,
 adds songs with `playlistadd`, and removes them with `playlistdelete`. The star
 icon and Stared view reflect confirmed server state; MPD mode does not read or

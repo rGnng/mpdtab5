@@ -3840,6 +3840,9 @@ static lv_obj_t * np_album;
 static lv_obj_t * np_time_cur;
 static lv_obj_t * np_time_dur;
 static lv_obj_t * np_progress;
+static bool np_seek_dragging, np_seek_pending;
+static uint64_t np_seek_track;
+static uint32_t np_seek_duration, np_seek_target, np_seek_sent_tick;
 static lv_obj_t * np_play_icon;
 static lv_obj_t * np_shuffle_btn;
 static lv_obj_t * np_repeat_btn;
@@ -3935,6 +3938,80 @@ typedef enum {
 } np_bg_mode_t;
 
 static np_bg_mode_t g_np_bg_mode = NP_BG_COVER_GRADIENT;
+
+static void np_seek_reset(void)
+{
+    np_seek_dragging = np_seek_pending = false;
+    np_seek_track = 0;
+}
+
+static void np_progress_show(uint32_t seconds)
+{
+    if(np_progress && lv_bar_get_value(np_progress)!=(int32_t)seconds)
+        lv_bar_set_value(np_progress, (int32_t)seconds, LV_ANIM_OFF);
+    if(np_time_cur) {
+        char text[16];format_time(seconds,text,sizeof(text));
+        if(strcmp(lv_label_get_text(np_time_cur),text)) lv_label_set_text(np_time_cur,text);
+    }
+}
+
+static bool np_seek_available(const player_snapshot_t *snapshot)
+{
+    return snapshot->connected && snapshot->track.id && snapshot->track.title[0] && snapshot->duration_sec;
+}
+
+static void np_seek_preview(lv_obj_t *bar, lv_indev_t *indev)
+{
+    lv_point_t point;lv_indev_get_point(indev,&point);
+    lv_area_t bounds;lv_obj_get_content_coords(bar,&bounds);
+    int32_t span=bounds.x2-bounds.x1;
+    if(span<=0) return;
+    int32_t x=LV_CLAMP(0,point.x-bounds.x1,span);
+    np_seek_target=(uint32_t)(((uint64_t)x*np_seek_duration+span/2)/span);
+    np_progress_show(np_seek_target);
+}
+
+static void np_seek_cb(lv_event_t *event)
+{
+    lv_obj_t *bar=lv_event_get_current_target(event);
+    if(bar!=np_progress) return;
+    lv_event_code_t code=lv_event_get_code(event);
+    if(code!=LV_EVENT_PRESSED && code!=LV_EVENT_PRESSING &&
+       code!=LV_EVENT_RELEASED && code!=LV_EVENT_PRESS_LOST) return;
+    player_snapshot_t snapshot;player_get_snapshot(&snapshot);
+    if(code==LV_EVENT_PRESS_LOST) {
+        np_seek_reset();np_progress_show(snapshot.elapsed_sec);return;
+    }
+    lv_indev_t *indev=lv_event_get_indev(event);
+    if(!indev || lv_indev_get_type(indev)!=LV_INDEV_TYPE_POINTER) return;
+    if(code==LV_EVENT_PRESSED) {
+        if(!np_seek_available(&snapshot)) return;
+        np_seek_reset();np_seek_dragging=true;
+        np_seek_track=snapshot.track.id;np_seek_duration=snapshot.duration_sec;
+        ui_feedback_emit(UI_FEEDBACK_CLICK,false);
+    }
+    if(!np_seek_dragging) return;
+    if(!np_seek_available(&snapshot) || snapshot.track.id!=np_seek_track) {
+        np_seek_reset();np_progress_show(snapshot.elapsed_sec);return;
+    }
+    np_seek_preview(bar,indev);
+    if(code==LV_EVENT_RELEASED) {
+        np_seek_target=LV_MIN(np_seek_target,snapshot.duration_sec);
+        np_seek_dragging=false;np_seek_pending=true;np_seek_sent_tick=lv_tick_get();
+        np_progress_show(np_seek_target);
+        player_seek_sec(np_seek_target);
+    }
+}
+
+static void np_progress_bind(lv_obj_t *bar)
+{
+    lv_obj_set_clickable(bar,true);
+    lv_obj_set_scrollable(bar,false);
+    lv_obj_set_scroll_chain(bar,false);
+    lv_obj_add_flag(bar,LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_set_ext_click_area(bar,16);
+    lv_obj_add_event_cb(bar,np_seek_cb,LV_EVENT_ALL,NULL);
+}
 
 static void np_prev_action(void * user)
 {
@@ -4123,22 +4200,24 @@ static void np_refresh_snapshot(const player_snapshot_t * snapshot)
         }
     }
 
-    bool elapsed_changed = first || snapshot->elapsed_sec != old->elapsed_sec;
     bool duration_changed = first || snapshot->duration_sec != old->duration_sec;
-    if(elapsed_changed) {
-        char current[16];
-        format_time(snapshot->elapsed_sec, current, sizeof(current));
-        np_set_text(np_time_cur, current);
-    }
     if(duration_changed) {
         char total[16];
         format_time(snapshot->duration_sec, total, sizeof(total));
         np_set_text(np_time_dur, total);
         lv_bar_set_range(np_progress, 0, snapshot->duration_sec ? (int32_t)snapshot->duration_sec : 1);
     }
-    if(elapsed_changed || duration_changed) {
-        lv_bar_set_value(np_progress, (int32_t)snapshot->elapsed_sec, LV_ANIM_OFF);
+    bool can_seek=np_seek_available(snapshot);
+    if(lv_obj_has_state(np_progress,LV_STATE_DISABLED)==can_seek)
+        lv_obj_set_state(np_progress,LV_STATE_DISABLED,!can_seek);
+    if((np_seek_dragging || np_seek_pending) &&
+       (!can_seek || np_seek_track!=snapshot->track.id)) np_seek_reset();
+    if(np_seek_pending) {
+        uint32_t distance=snapshot->elapsed_sec>np_seek_target ? snapshot->elapsed_sec-np_seek_target
+                                                            : np_seek_target-snapshot->elapsed_sec;
+        if(distance<=2 || lv_tick_elaps(np_seek_sent_tick)>=2000) np_seek_reset();
     }
+    np_progress_show(np_seek_dragging || np_seek_pending ? np_seek_target : snapshot->elapsed_sec);
     if(first || snapshot->status != old->status) {
         np_set_text(np_play_icon, snapshot->status == PLAYER_PLAYING ? ICON_PAUSE : ICON_PLAY);
     }
@@ -4526,6 +4605,7 @@ static void np_build_vertical_left(lv_obj_t * left, const void * cover_src,
                               LV_PART_INDICATOR);
     lv_obj_set_style_radius(np_progress, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(np_progress, 0, LV_PART_INDICATOR);
+    np_progress_bind(np_progress);
     np_time_dur = make_label(progress_row, "0:00", FONT_NUM, COL_MUTED);
     lv_obj_set_width(np_time_dur, 72);
     lv_obj_set_style_text_align(np_time_dur, LV_TEXT_ALIGN_RIGHT, 0);
@@ -4859,6 +4939,7 @@ static void np_create(lv_obj_t * parent)
                                   LV_PART_INDICATOR);
         lv_obj_set_style_radius(np_progress, 0, LV_PART_MAIN);
         lv_obj_set_style_radius(np_progress, 0, LV_PART_INDICATOR);
+        np_progress_bind(np_progress);
         np_time_dur = make_label(progress_row, "0:00", FONT_NP_TIME, COL_MUTED);
         lv_obj_set_width(np_time_dur, 88);
         lv_obj_set_style_text_align(np_time_dur, LV_TEXT_ALIGN_RIGHT, 0);
@@ -10290,6 +10371,8 @@ static void ui_fast_scroll_reset(void);
 
 static void ui_page_teardown(void)
 {
+    np_seek_reset();
+    np_progress = NULL;
     ui_fast_scroll_reset();
     ui_page_cancel_load();
     np_gradient_detach();
