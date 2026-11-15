@@ -21,6 +21,14 @@ runs on **your MPD server's audio output**. The Tab5 is a remote control.
 4. The library loads automatically. MPD `idle` notifications refresh database
    and stored-playlist changes. **Resync library** is also available manually.
 
+Wi-Fi distinguishes **Connecting…** from **Requesting IP…**. Association and
+DHCP each have a 20-second timeout. A stalled DHCP client restarts once; if
+there is still no address after another 20 seconds, Wi-Fi reconnects. Failed
+connections retry with a 1–30 second backoff, restarting only the Wi-Fi driver
+after every third failure. Recovery does not reboot the Tab5 or power-cycle
+the C6/Bluetooth module. Disconnect reason codes and failed API calls appear
+in the web debug log; enable **Debug log to SD** to retain logs across reboots.
+
 Playback controls include play/pause, previous/next, seek, volume, mute,
 shuffle, repeat all/one, server stars, starting albums/artists/songs/playlists,
 and jumping to entries in Up Next. Touch, USB, BLE and web inputs use the same
