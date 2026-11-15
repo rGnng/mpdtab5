@@ -74,7 +74,7 @@ typedef struct {
     player_track_t track;
     uint32_t elapsed_sec;
     uint32_t duration_sec;
-    int volume;
+    float volume; /* normalized 0..1, -1 when unavailable */
     bool muted;
     bool starred;
     bool shuffle;

@@ -14,7 +14,7 @@ static void test_ble_status(ble_remote_state_t *state, char *text, size_t size)
     if(text && size) snprintf(text, size, "Test controller");
 }
 static bool volume_override,volume_connected=true,volume_muted;
-static int volume_value=50;
+static float volume_value=0.5f;
 static void test_player_snapshot(player_snapshot_t *snapshot);
 #define player_get_snapshot test_player_snapshot
 #define ble_remote_enabled test_ble_enabled
@@ -99,50 +99,50 @@ static void volume_notifications(void)
 {
     volume_override=true;volume_connected=false;
     status_area_update();pump(600);
-    volume_value=34;volume_connected=true;volume_muted=false;player_set_volume_steps(16);
+    volume_value=0.34f;volume_connected=true;volume_muted=false;player_set_volume_steps(16);
     status_area_update();pump(1000);
     check(g_status_content==STATUS_CLOCK,"Initial mixer state must seed a baseline without a popup");
-    volume_value=37;status_area_update();wait_for(STATUS_VOLUME);
-    check(lv_obj_is_visible(g_status_volume_icon) && lv_obj_is_visible(g_status_caption) &&
+    volume_value=6.0f/16;status_area_update();wait_for(STATUS_VOLUME);
+    check(lv_obj_is_visible(g_status_volume_bar) && !lv_obj_is_visible(g_status_caption) &&
           !lv_obj_is_visible(g_status_time) && !lv_obj_is_visible(g_status_icon),
-          "Volume notification must replace the clock with speaker and percentage");
-    check(!strcmp(lv_label_get_text(g_status_caption),"38%") &&
-          !strcmp(lv_label_get_text(g_status_volume_icon),ICON_VOLUME_DOWN),
-          "Off-grid server volume must display the nearest grid percentage");
-    lv_area_t icon,caption,area;
+          "Volume notification must show only a bar in the clock area");
+    check(lv_bar_get_value(g_status_volume_bar)==1536,"The bar must retain the exact 6/16 fraction");
+    lv_area_t bar,area;
     lv_obj_update_layout(g_menubar);
-    lv_obj_get_coords(g_status_volume_icon,&icon);lv_obj_get_coords(g_status_caption,&caption);
+    lv_obj_get_coords(g_status_volume_bar,&bar);
     lv_obj_get_coords(lv_obj_get_parent(g_status_time),&area);
-    check(icon.y2<caption.y1 && icon.x1>=area.x1 && icon.x2<=area.x2 &&
-          caption.y2<=area.y2 && caption.x1>=area.x1 && caption.x2<=area.x2,
-          "The percentage must fit beneath the speaker inside the clock area");
-    check(lv_color_eq(lv_obj_get_style_text_color(g_status_volume_icon,0),lv_obj_get_style_text_color(g_status_time,0)),
-          "Speaker color must match the clock in every theme");
+    check(bar.x1>=area.x1+16 && bar.x2<=area.x2-16 && bar.y1>area.y1 && bar.y2<area.y2,
+          "The centered bar must fit within the existing clock margins");
+    check(lv_color_eq(lv_obj_get_style_bg_color(g_status_volume_bar,LV_PART_INDICATOR),lv_obj_get_style_text_color(g_status_time,0)),
+          "The bar must match the clock foreground in every theme");
     save_strip("volume");
     for(int value=50;value<=94;value+=11) {
-        volume_value=value;status_area_update();pump(300);
+        volume_value=value/100.0f;status_area_update();pump(300);
         check(g_status_content==STATUS_VOLUME && g_status_phase==STATUS_HOLD,
               "Rapid changes update the visible percentage without restarting its fade");
     }
     stays_visible(STATUS_VOLUME,1200,"The last volume change must extend the notification");
     wait_for(STATUS_CLOCK);
-    volume_value=100;status_area_update();wait_for(STATUS_VOLUME);
-    check(!strcmp(lv_label_get_text(g_status_caption),"100%") &&
-          !strcmp(lv_label_get_text(g_status_volume_icon),ICON_VOLUME_UP),"Full volume must show 100 percent");
+    volume_value=1.0f;status_area_update();wait_for(STATUS_VOLUME);
+    check(lv_bar_get_value(g_status_volume_bar)==4096,"Full volume must fill the bar");
     save_strip("volume-full");
     volume_muted=true;status_area_update();pump(50);
-    check(!strcmp(lv_label_get_text(g_status_caption),"0%") &&
-          !strcmp(lv_label_get_text(g_status_volume_icon),ICON_VOLUME_MUTE),"Mute must show the muted speaker and zero percent");
+    check(lv_bar_get_value(g_status_volume_bar)==0,"Mute must empty the bar");
     save_strip("volume-muted");
+    volume_muted=false;player_set_volume_steps(64);
+    for(int i=1;i<=64;i++) {
+        volume_value=i/64.0f;status_area_update();pump(10);
+        check(lv_bar_get_value(g_status_volume_bar)==i*64,"Every 1/64 position must remain exact in the bar");
+    }
     ui_set_library_syncing(true);status_area_update();wait_for(STATUS_LIBRARY_SYNC);
-    volume_muted=false;volume_value=50;status_area_update();wait_for(STATUS_VOLUME);
+    volume_muted=false;volume_value=0.5f;status_area_update();wait_for(STATUS_VOLUME);
     wait_for(STATUS_LIBRARY_SYNC);
     ui_set_library_syncing(false);status_area_update();wait_for(STATUS_CLOCK);
-    ui_screen_off();volume_value=75;status_area_update();wait_for(STATUS_VOLUME);
+    ui_screen_off();volume_value=0.75f;status_area_update();wait_for(STATUS_VOLUME);
     check(!ui_screen_is_on(),"Remote volume notification must not wake a manually blanked screen");
     ui_user_activity();volume_value=-1;status_area_update();wait_for(STATUS_CLOCK);
     check(!g_status_volume_seen,"Unavailable mixers clear the baseline and do not display negative percentages");
-    volume_value=90;status_area_update();pump(1000);
+    volume_value=0.9f;status_area_update();pump(1000);
     check(g_status_content==STATUS_CLOCK,"Mixer reconnection must not create a fake volume change");
     volume_connected=false;status_area_update();volume_override=false;status_area_update();pump(500);
 }

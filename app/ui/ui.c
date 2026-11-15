@@ -2364,9 +2364,9 @@ static bool g_mini_valid;
 static lv_obj_t * g_status_time;
 static lv_obj_t * g_status_icon;
 static lv_obj_t * g_status_caption;
-static lv_obj_t * g_status_volume_icon;
+static lv_obj_t * g_status_volume_bar;
 static bool g_status_volume_seen;
-static int g_status_volume;
+static float g_status_volume;
 static bool g_library_syncing;
 static np_battery_status_t g_np_battery = {.percent=-1};
 static bool g_np_battery_seen;
@@ -2819,7 +2819,7 @@ static void status_area_opacity(lv_opa_t opacity)
     lv_obj_set_style_opa(g_status_time, opacity, 0);
     lv_obj_set_style_opa(g_status_icon, opacity, 0);
     lv_obj_set_style_opa(g_status_caption, opacity, 0);
-    lv_obj_set_style_opa(g_status_volume_icon, opacity, 0);
+    lv_obj_set_style_opa(g_status_volume_bar, opacity, 0);
 }
 
 static void status_area_show(status_content_t content)
@@ -2827,15 +2827,11 @@ static void status_area_show(status_content_t content)
     g_status_content = content;
     lv_obj_set_hidden(g_status_time, content != STATUS_CLOCK);
     lv_obj_set_hidden(g_status_icon, content == STATUS_CLOCK || content == STATUS_VOLUME);
-    lv_obj_set_hidden(g_status_volume_icon, content != STATUS_VOLUME);
+    lv_obj_set_hidden(g_status_volume_bar, content != STATUS_VOLUME);
     bool battery=content>=STATUS_NP_CHARGING && content<=STATUS_NP_LOW;
-    lv_obj_set_hidden(g_status_caption, !battery && content != STATUS_VOLUME);
+    lv_obj_set_hidden(g_status_caption, !battery);
     if(content == STATUS_VOLUME) {
-        lv_label_set_text(g_status_volume_icon, g_status_volume == 0 ? ICON_VOLUME_MUTE :
-            g_status_volume <= 50 ? ICON_VOLUME_DOWN : ICON_VOLUME_UP);
-        lv_label_set_text_fmt(g_status_caption, "%d%%", g_status_volume);
-        lv_obj_set_style_text_font(g_status_caption, FONT_NUM, 0);
-        lv_obj_align(g_status_caption, LV_ALIGN_BOTTOM_MID, 0, -6);
+        lv_bar_set_value(g_status_volume_bar, (int32_t)(g_status_volume * 4096.0f + 0.5f), LV_ANIM_OFF);
         return;
     }
     if(battery) {
@@ -2921,13 +2917,13 @@ static void status_area_update(void)
     uint32_t now = lv_tick_get();
     player_snapshot_t snapshot;
     player_get_snapshot(&snapshot);
-    bool volume_available = snapshot.connected && snapshot.volume >= 0 && snapshot.volume <= 100;
+    bool volume_available = snapshot.connected && snapshot.volume >= 0 && snapshot.volume <= 1.0f;
     if(!volume_available) {
         g_status_volume_seen = false;
         g_status_events[STATUS_VOLUME].active = false;
     }
     else {
-        int level = snapshot.muted ? 0 : volume_grid_snap(snapshot.volume, player_volume_steps());
+        float level = snapshot.muted ? 0.0f : snapshot.volume;
         bool changed = g_status_volume_seen && level != g_status_volume;
         g_status_volume = level;
         g_status_volume_seen = true;
@@ -3009,8 +3005,9 @@ static void status_area_update_color(void)
                                    lv_obj_get_style_text_color(g_status_time, 0), 0);
     lv_obj_set_style_text_color(g_status_caption,
                                lv_obj_get_style_text_color(g_status_time,0),0);
-    lv_obj_set_style_text_color(g_status_volume_icon,
-                               lv_obj_get_style_text_color(g_status_time,0),0);
+    lv_color_t foreground=lv_obj_get_style_text_color(g_status_time,0);
+    lv_obj_set_style_bg_color(g_status_volume_bar,foreground,LV_PART_INDICATOR);
+    lv_obj_set_style_border_color(g_status_volume_bar,foreground,LV_PART_MAIN);
 }
 
 static void status_area_color_cb(lv_event_t * event)
@@ -3063,10 +3060,21 @@ static void build_menubar(lv_obj_t * parent)
     lv_obj_set_style_image_recolor_opa(g_status_icon, LV_OPA_COVER, 0);
     lv_obj_set_style_image_recolor(g_status_icon, lv_color_hex(COL_MENU_TOP_FG), 0);
     lv_obj_set_hidden(g_status_icon, true);
-    g_status_volume_icon=make_label(time_area,ICON_VOLUME_UP,&bootstrap_icons_32,COL_MENU_TOP_FG);
-    lv_obj_set_clickable(g_status_volume_icon,false);
-    lv_obj_align(g_status_volume_icon,LV_ALIGN_TOP_MID,0,5);
-    lv_obj_set_hidden(g_status_volume_icon,true);
+    g_status_volume_bar=lv_bar_create(time_area);
+    lv_obj_set_size(g_status_volume_bar,MENUBAR_W-32,12);
+    lv_obj_set_clickable(g_status_volume_bar,false);
+    lv_obj_set_scrollable(g_status_volume_bar,false);
+    lv_bar_set_range(g_status_volume_bar,0,4096);
+    lv_obj_set_style_bg_opa(g_status_volume_bar,LV_OPA_TRANSP,LV_PART_MAIN);
+    lv_obj_set_style_border_width(g_status_volume_bar,1,LV_PART_MAIN);
+    lv_obj_set_style_border_color(g_status_volume_bar,lv_color_hex(COL_MENU_TOP_FG),LV_PART_MAIN);
+    lv_obj_set_style_pad_all(g_status_volume_bar,2,LV_PART_MAIN);
+    lv_obj_set_style_radius(g_status_volume_bar,0,LV_PART_MAIN);
+    lv_obj_set_style_bg_color(g_status_volume_bar,lv_color_hex(COL_MENU_TOP_FG),LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(g_status_volume_bar,LV_OPA_COVER,LV_PART_INDICATOR);
+    lv_obj_set_style_radius(g_status_volume_bar,0,LV_PART_INDICATOR);
+    lv_obj_center(g_status_volume_bar);
+    lv_obj_set_hidden(g_status_volume_bar,true);
     g_status_caption=make_label(time_area,"NP Battery",&inter_14,COL_MENU_TOP_FG);
     lv_obj_set_clickable(g_status_caption,false);
     lv_obj_align(g_status_caption,LV_ALIGN_BOTTOM_MID,0,-6);

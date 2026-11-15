@@ -91,7 +91,7 @@ static int queue_index;
 
 static player_status_t status;
 static uint32_t elapsed_sec;
-static int volume = 72;
+static float volume = 0.72f;
 static bool muted;
 static MOCK_LARGE_BSS bool track_starred[MAX_TRACKS];
 static bool shuffle;
@@ -1288,7 +1288,7 @@ void player_init(void)
     queue_index = 0;
     status = PLAYER_PAUSED;
     elapsed_sec = 0;
-    volume = 72;
+    volume = 0.72f;
     muted = false;
     memset(track_starred, 0, sizeof(track_starred));
     shuffle = false;
@@ -1921,7 +1921,7 @@ void player_step_volume(int direction)
         return;
     }
 #endif
-    int new_volume = volume_grid_step(volume, direction > 0 ? 1 : -1, player_volume_steps());
+    float new_volume = volume_grid_step(volume, direction > 0 ? 1 : -1, player_volume_steps());
     volume = new_volume;
     if(new_volume > 0) muted = false;
     bump_revision();

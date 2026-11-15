@@ -4,6 +4,7 @@
 #include "usb_hid_input.h"
 #include "ui.h"
 #include "player.h"
+#include "volume_grid.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -19,7 +20,7 @@ static const char *TAG="coloplay_ble";
 static const ble_uuid128_t s_service=BLE_UUID128_INIT(0xb5,0x17,0x1d,0x62,0x1d,0x12,0x5d,0x9f,0xcb,0x4a,0x69,0xc1,0x01,0,0x1c,0xa9);
 static uint16_t s_start,s_end,s_conn=0xffff,s_caps,s_command,s_command_end,s_state,s_cccd;
 static uint32_t s_generation,s_session;
-static bool s_ready,s_writing;
+static bool s_ready,s_writing,s_float_volume;
 static int64_t s_write_deadline,s_next_state;
 static uint16_t s_last_id;static uint8_t s_last_result;
 static uint16_t s_recent[16];static uint8_t s_recent_result[16];static unsigned s_recent_next;
@@ -54,13 +55,29 @@ static bool queue(const uint8_t *frame){
 }
 static void state_packet(uint8_t *out,uint16_t request,uint8_t result){
     mpd_state_t state={0};mpd_client_get_remote_state(&state);
-    cp_header(out,CP_STATE,request,s_session);out[8]=(uint8_t)(int8_t)(state.connected?state.volume:-1);
+    cp_header(out,CP_STATE,request,s_session);out[8]=(uint8_t)(int8_t)(state.connected?volume_percent(state.volume):-1);
     out[9]=state.connected?(uint8_t)state.play_status:255;
     out[10]=(state.connected?0x80:0)|mpd_client_coloplay_seek_state();out[11]=result;
     cp_put32(out+12,state.elapsed_ms);cp_put32(out+16,state.duration_ms);
 }
+static bool queue_state(uint16_t request,uint8_t result){
+    if(s_count+(s_float_volume?2:1)>32)return false;
+    uint8_t data[CP_BLE_BYTES];state_packet(data,request,result);
+    if(!queue(data))return false;
+    if(s_float_volume){
+        mpd_state_t state={0};mpd_client_get_remote_state(&state);
+        cp_header(data,CP_VOLUME_STATE,request,s_session);
+        cp_put_float(data+8,state.connected?state.volume:-1.0f);data[12]=result;
+        return queue(data);
+    }
+    return true;
+}
+static void hello_packet(uint8_t *data){
+    cp_header(data,CP_HELLO,0,s_session);data[8]=player_volume_steps();
+    if(s_float_volume){data[16]=CP_CAP_VOLUME_FLOAT;cp_put_float(data+12,1.0f/player_volume_steps());}
+}
 void coloplay_ble_reset(void){
-    ++s_generation;s_start=s_end=s_caps=s_command=s_command_end=s_state=s_cccd=0;s_conn=0xffff;s_session=0;s_ready=s_writing=false;s_read=s_count=0;s_track=UINT64_MAX;
+    ++s_generation;s_start=s_end=s_caps=s_command=s_command_end=s_state=s_cccd=0;s_conn=0xffff;s_session=0;s_ready=s_writing=s_float_volume=false;s_read=s_count=0;s_track=UINT64_MAX;
     memset(s_recent,0,sizeof(s_recent));s_recent_next=0;s_native_steps=0;
     if(s_results){xQueueReset(s_results);}mpd_client_coloplay_release();
 }
@@ -78,7 +95,7 @@ static int hello_written(uint16_t conn,const struct ble_gatt_error *error,struct
 }
 static int subscribed(uint16_t conn,const struct ble_gatt_error *error,struct ble_gatt_attr *attr,void *arg){
     (void)attr;if(!current(conn,arg)){return 0;}if(error&&error->status){fail("ColoPlay subscription failed");return 0;}
-    uint8_t hello[CP_BLE_BYTES];cp_header(hello,CP_HELLO,0,s_session);hello[8]=player_volume_steps();
+    uint8_t hello[CP_BLE_BYTES];hello_packet(hello);
     if(ble_gattc_write_flat(conn,s_state,hello,sizeof(hello),hello_written,generation())){fail("ColoPlay handshake failed");}return 0;
 }
 static int descriptor(uint16_t conn,const struct ble_gatt_error *error,uint16_t chr,const struct ble_gatt_dsc *dsc,void *arg){
@@ -94,6 +111,7 @@ static int caps_read(uint16_t conn,const struct ble_gatt_error *error,struct ble
     if(!error||error->status||!attr||OS_MBUF_PKTLEN(attr->om)!=CP_BLE_BYTES||os_mbuf_copydata(attr->om,0,sizeof(bytes),bytes)||!cp_packet(bytes,sizeof(bytes))||bytes[1]!=CP_HELLO||!cp_u32(bytes+4)){
         fail("ColoPlay protocol capabilities invalid");return 0;
     }
+    s_float_volume=(bytes[8]&CP_CAP_VOLUME_FLOAT)!=0;
     s_session=cp_u32(bytes+4);
     if(ble_gattc_disc_all_dscs(conn,s_command,s_command_end?s_command_end:s_end,descriptor,generation())){fail("ColoPlay descriptor discovery failed");}return 0;
 }
@@ -128,8 +146,8 @@ static bool key(uint16_t usage,uint16_t modifiers,ui_key_t *out){
 }
 bool coloplay_ble_notification(uint16_t conn,uint16_t handle,const uint8_t *data,unsigned len){
     if(conn!=s_conn||handle!=s_command){return false;}if(!s_ready||!cp_command_valid(data,len)||cp_u32(data+4)!=s_session){return true;}
-    const uint16_t id=cp_u16(data+2);uint8_t state[CP_BLE_BYTES];
-    for(unsigned i=0;i<16;++i)if(s_recent[i]==id){state_packet(state,id,s_recent_result[i]);queue(state);return true;}
+    const uint16_t id=cp_u16(data+2);
+    for(unsigned i=0;i<16;++i)if(s_recent[i]==id){queue_state(id,s_recent_result[i]);return true;}
     s_last_id=id;s_last_result=CP_ACCEPTED;
     if(data[1]==CP_KEY){
         ui_key_t value;if(!key(cp_u16(data+8),cp_u16(data+12),&value))s_last_result=CP_UNSUPPORTED;
@@ -139,18 +157,18 @@ bool coloplay_ble_notification(uint16_t conn,uint16_t handle,const uint8_t *data
         if(err!=ESP_OK)s_last_result=err==ESP_ERR_NO_MEM?CP_BUSY:CP_FAILED;
     }
     s_recent[s_recent_next]=id;s_recent_result[s_recent_next]=s_last_result;s_recent_next=(s_recent_next+1)%16;
-    state_packet(state,id,s_last_result);if(!queue(state)){fail("ColoPlay result queue full");}return true;
+    if(!queue_state(id,s_last_result)){fail("ColoPlay result queue full");}return true;
 }
 void coloplay_ble_tick(int64_t now){
     if(!s_ready){return;}if(s_writing&&now>s_write_deadline){fail("ColoPlay state write timeout");return;}
     result_t result;for(int n=0;n<12&&s_count<26&&xQueueReceive(s_results,&result,0)==pdTRUE;++n){
-        if(cp_u32(result.command+4)!=s_session){continue;}uint8_t data[CP_BLE_BYTES];const uint16_t id=cp_u16(result.command+2);
-        state_packet(data,id,result.result);queue(data);if(id==s_last_id)s_last_result=result.result;
+        if(cp_u32(result.command+4)!=s_session){continue;}const uint16_t id=cp_u16(result.command+2);
+        queue_state(id,result.result);if(id==s_last_id)s_last_result=result.result;
         for(unsigned i=0;i<16;++i)if(s_recent[i]==id)s_recent_result[i]=result.result;
     }
     if(now>=s_next_state&&s_count<8){
-        s_next_state=now+400000;uint8_t data[CP_BLE_BYTES];state_packet(data,0,0);queue(data);
-        const int steps=player_volume_steps();if(steps!=s_native_steps){s_native_steps=steps;cp_header(data,CP_HELLO,0,s_session);data[8]=steps;queue(data);}
+        s_next_state=now+400000;uint8_t data[CP_BLE_BYTES];queue_state(0,0);
+        const int steps=player_volume_steps();if(steps!=s_native_steps){s_native_steps=steps;hello_packet(data);queue(data);}
         mpd_state_t state={0};mpd_client_get_remote_state(&state);
         if(state.track_key!=s_track||strncmp(s_title,state.title,63)||strncmp(s_artist,state.artist,63)){
             s_track=state.track_key;cp_header(data,CP_TRACK,0,s_session);cp_put32(data+8,(uint32_t)s_track);cp_put32(data+12,(uint32_t)(s_track>>32));cp_put32(data+16,state.revision);queue(data);

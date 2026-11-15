@@ -11,6 +11,7 @@ PREFIX=r'''
 #include <string.h>
 #include <assert.h>
 #include "coloplay_ble_protocol.h"
+#include "volume_grid.h"
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
 #define BLE_UUID_TYPE_16 16
@@ -37,9 +38,10 @@ static int64_t clock_us=1000000;
 static int64_t esp_timer_get_time(void){return clock_us;}
 static int ble_gap_update_params(int conn,struct ble_gap_upd_params *p){(void)conn;assert(p->itvl_min==6&&p->itvl_max==12&&p->latency==0);return 0;}
 static int player_volume_steps(void){return 64;}
-typedef struct {bool connected;int volume,play_status;uint32_t elapsed_ms,duration_ms,revision;uint64_t track_key;char title[128],artist[128];} mpd_state_t;
+typedef struct {bool connected;float volume;int play_status;uint32_t elapsed_ms,duration_ms,revision;uint64_t track_key;char title[128],artist[128];} mpd_state_t;
+static float remote_volume=.67f;static bool float_peer;
 static uint32_t backend_session;static unsigned commands,releases,key_events;static int backend_error;
-static bool mpd_client_get_remote_state(mpd_state_t *s){memset(s,0,sizeof(*s));s->connected=true;s->volume=67;s->play_status=1;s->track_key=123;s->elapsed_ms=1000;s->duration_ms=100000;strcpy(s->title,"A real title");strcpy(s->artist,"Artist");return true;}
+static bool mpd_client_get_remote_state(mpd_state_t *s){memset(s,0,sizeof(*s));s->connected=true;s->volume=remote_volume;s->play_status=1;s->track_key=123;s->elapsed_ms=1000;s->duration_ms=100000;strcpy(s->title,"A real title");strcpy(s->artist,"Artist");return true;}
 static void mpd_client_coloplay_begin(uint32_t session){backend_session=session;}
 static void mpd_client_coloplay_release(void){backend_session=0;releases++;}
 static uint8_t mpd_client_coloplay_seek_state(void){return 0;}
@@ -76,9 +78,9 @@ static void connect_peer(uint32_t session,bool reordered){
  chr.uuid.u128=s_service;chr.uuid.u128.value[12]=reordered?4:2;chr.val_handle=11;chr.def_handle=10;characteristic(7,&ok,&chr,generation());
  chr.uuid.u128.value[12]=reordered?2:3;chr.val_handle=14;chr.def_handle=13;characteristic(7,&ok,&chr,generation());
  chr.uuid.u128.value[12]=reordered?3:4;chr.val_handle=18;chr.def_handle=17;characteristic(7,&ok,&chr,generation());characteristic(7,&done,NULL,generation());
- struct fake_mbuf mb={.len=20};cp_header(mb.bytes,CP_HELLO,0,session);struct ble_gatt_attr attr={&mb};caps_read(7,&ok,&attr,generation());
+ struct fake_mbuf mb={.len=20};cp_header(mb.bytes,CP_HELLO,0,session);mb.bytes[8]=float_peer?CP_CAP_VOLUME_FLOAT:0;struct ble_gatt_attr attr={&mb};caps_read(7,&ok,&attr,generation());
  struct ble_gatt_dsc d={.uuid.u16={{BLE_UUID_TYPE_16},0x2902},.handle=(uint16_t)(s_command+1)};descriptor(7,&ok,12,&d,generation());descriptor(7,&done,12,NULL,generation());ack();
- assert(last_write[1]==CP_HELLO&&last_write[8]==64&&cp_u32(last_write+4)==session);ack();assert(coloplay_ble_connected()&&backend_session==session);
+ assert(last_write[1]==CP_HELLO&&last_write[8]==64&&cp_u32(last_write+4)==session);assert((last_write[16]&CP_CAP_VOLUME_FLOAT)==(float_peer?CP_CAP_VOLUME_FLOAT:0));ack();assert(coloplay_ble_connected()&&backend_session==session);
  coloplay_ble_tick(clock_us);drain();
 }
 int main(void){
@@ -111,6 +113,14 @@ int main(void){
  cp_header(request,CP_VOLUME,1,123);cp_put16(request+8,233);cp_put16(request+10,1);cp_put16(request+12,64);coloplay_ble_result(request,CP_APPLIED);coloplay_ble_tick(clock_us);drain();assert(coloplay_ble_connected());
  cp_put32(request+4,456);backend_error=ESP_ERR_NO_MEM;coloplay_ble_notification(7,s_command,request,20);assert(last_write[11]==CP_BUSY);drain();
  coloplay_ble_reset();assert(!coloplay_ble_connected()&&backend_session==0&&releases>=3);
+ float_peer=true;backend_error=0;remote_volume=1.0f/64;connect_peer(789,false);
+ cp_header(request,CP_VOLUME,1,789);cp_put16(request+8,233);cp_put16(request+10,1);cp_put16(request+12,64);cp_put_float(request+16,1.0f/64);
+ coloplay_ble_notification(7,s_command,request,20);drain();
+ assert(last_write[1]==CP_VOLUME_STATE&&cp_float(last_write+8)==1.0f/64&&last_write[12]==CP_ACCEPTED);
+ remote_volume=2.0f/64;coloplay_ble_result(request,CP_APPLIED);coloplay_ble_tick(clock_us);drain();
+ assert(last_write[1]==CP_VOLUME_STATE&&cp_float(last_write+8)==2.0f/64&&last_write[12]==CP_APPLIED);
+ unsigned applied=commands;coloplay_ble_notification(7,s_command,request,20);drain();assert(commands==applied&&cp_float(last_write+8)==2.0f/64);
+ coloplay_ble_reset();
  puts("ColoPlay GATT discovery/handshake, raw state, duplicates, key mapping, queue errors and stale-session isolation passed");return 0;
 }
 '''
@@ -119,5 +129,5 @@ class ColoPlayBleTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    path=Path(tmp);source=(ROOT/'firmware/main/coloplay_ble.c').read_text();source=re.sub(r'^#include .*$', '',source,flags=re.M)
    (path/'driver.c').write_text(PREFIX+source+SUFFIX)
-   binary=path/'driver';subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Wno-unused-function','-I'+str(ROOT/'firmware/main'),str(path/'driver.c'),'-o',str(binary)],check=True);subprocess.run([str(binary)],check=True)
+   binary=path/'driver';subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Wno-unused-function','-I'+str(ROOT/'firmware/main'),'-I'+str(ROOT/'app/backend'),str(path/'driver.c'),'-o',str(binary)],check=True);subprocess.run([str(binary)],check=True)
 if __name__=='__main__':unittest.main()

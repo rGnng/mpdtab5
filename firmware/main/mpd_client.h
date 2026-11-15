@@ -23,7 +23,7 @@ typedef struct {
     int queue_index, queue_count;
     bool shuffle, starred;
     uint8_t repeat; /* 0 off, 1 one, 2 all */
-    int volume; /* 0..100, -1 if MPD has no mixer */
+    float volume; /* normalized 0..1, -1 if MPD has no mixer */
     /* Compatibility with the shared device UI: MPD has no battery. */
     int battery;
     bool charging;
@@ -43,7 +43,7 @@ esp_err_t mpd_client_configure(const mpd_config_t *config);
 void mpd_client_library_id(char *out, size_t cap);
 void mpd_client_rescan(void);
 bool mpd_client_get_state(mpd_state_t *out);
-/* ColoPlay uses confirmed raw mixer state; the Tab5 UI retains its selected grid. */
+/* Confirmed mixer state, preserving exact fractions after our own commands. */
 bool mpd_client_get_remote_state(mpd_state_t *out);
 esp_err_t mpd_client_coloplay_command(const uint8_t *command);
 void mpd_client_coloplay_release(void);

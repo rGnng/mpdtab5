@@ -28,6 +28,7 @@
 #include "freertos/task.h"
 #include "ui.h"
 #include "player.h"
+#include "volume_grid.h"
 #include "bsp/esp-bsp.h"
 #include "esp_io_expander.h"
 #include "driver/i2c_master.h"
@@ -1458,7 +1459,8 @@ static esp_err_t status_get(httpd_req_t * req)
     cJSON_AddStringToObject(artwork_json,"state",artwork.status);
     mpd_state_t iap2;
     if(mpd_client_get_state(&iap2)) {
-        cJSON_AddNumberToObject(root,"mpd_volume",iap2.volume);
+        cJSON_AddNumberToObject(root,"mpd_volume",volume_percent(iap2.volume));
+        cJSON_AddNumberToObject(root,"mpd_volume_fraction",iap2.volume);
         cJSON_AddBoolToObject(root,"mpd_syncing",iap2.library_syncing);
         cJSON_AddNumberToObject(root, "play_status", iap2.play_status);
         cJSON_AddStringToObject(root, "title", iap2.title);

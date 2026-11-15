@@ -29,13 +29,14 @@ class VolumeControlTests(unittest.TestCase):
 #include <stdbool.h>
 #include <string.h>
 #include "volume_grid.h"
-static int volume, revisions, count, commands[256];
+static float volume;
+static int revisions, count, commands[256];
 static bool muted;
 static int steps=16;
 int player_volume_steps(void) { return steps; }
 void set_steps(int n) { steps=volume_steps_normalize(n); }
-int snap(int level,int n) { return volume_grid_snap(level,n); }
-int step(int level,int delta,int n) { return volume_grid_step(level,delta,n); }
+float snap(float level,int n) { return volume_grid_snap(level,n); }
+float step(float level,int delta,int n) { return volume_grid_step(level,delta,n); }
 #if defined(ESP_PLATFORM)
 static bool mpd_client_is_enabled(void) { return true; }
 static int mpd_client_hid_command(const char *name) {
@@ -44,8 +45,8 @@ static int mpd_client_hid_command(const char *name) {
 }
 #endif
 static void bump_revision(void) { revisions++; }
-void reset(int v) { volume=v; muted=true; revisions=count=0; }
-int value(void) { return volume; }
+void reset(float v) { volume=v; muted=true; revisions=count=0; }
+float value(void) { return volume; }
 int is_muted(void) { return muted; }
 int command_count(void) { return count; }
 int command(int i) { return commands[i]; }
@@ -61,7 +62,10 @@ int revision(void) { return revisions; }
             lib = ctypes.CDLL(str(library))
             lib.player_step_volume.argtypes = [ctypes.c_int]
             lib.player_step_volume.restype = None
-            lib.reset.argtypes = [ctypes.c_int]
+            lib.reset.argtypes = [ctypes.c_float]
+            lib.value.restype=ctypes.c_float
+            lib.snap.argtypes=[ctypes.c_float,ctypes.c_int];lib.snap.restype=ctypes.c_float
+            lib.step.argtypes=[ctypes.c_float,ctypes.c_int,ctypes.c_int];lib.step.restype=ctypes.c_float
             cls.backends[name] = lib
 
     def setUp(self):
@@ -70,29 +74,29 @@ int revision(void) { return revisions; }
     def test_grid_matches_headunit_for_every_percentage_and_both_options(self):
         lib=self.backends['mock']
         for steps in [16,64]:
-            positions=[int(i*100/steps+.5) for i in range(steps+1)]
+            positions=[i/steps for i in range(steps+1)]
             self.assertEqual(len(set(positions)),steps+1)
             for level in range(101):
                 index=int(level*steps/100+.5)
-                self.assertEqual(lib.snap(level,steps),positions[index])
+                self.assertEqual(lib.snap(level/100,steps),positions[index])
                 for delta in [-100,-2,-1,0,1,2,100]:
-                    self.assertEqual(lib.step(level,delta,steps),positions[max(0,min(steps,index+delta))])
+                    self.assertEqual(lib.step(level/100,delta,steps),positions[max(0,min(steps,index+delta))])
             for position in positions:self.assertEqual(lib.snap(position,steps),position)
 
     def test_off_grid_and_invalid_settings(self):
         lib=self.backends['mock']
-        self.assertEqual(lib.snap(37,16),38)
-        self.assertEqual(lib.step(37,1,16),44)
-        self.assertEqual(lib.step(37,1,64),39)
+        self.assertEqual(lib.snap(.37,16),6/16)
+        self.assertEqual(lib.step(.37,1,16),7/16)
+        self.assertEqual(lib.step(.37,1,64),25/64)
         self.assertEqual(lib.snap(-10,16),0)
-        self.assertEqual(lib.snap(110,64),100)
-        self.assertEqual(lib.snap(37,0),38)
-        lib.set_steps(64);lib.reset(37);lib.player_step_volume(1)
-        self.assertEqual(lib.value(),39)
+        self.assertEqual(lib.snap(1.1,64),1)
+        self.assertEqual(lib.snap(.37,0),6/16)
+        lib.set_steps(64);lib.reset(.37);lib.player_step_volume(1)
+        self.assertEqual(lib.value(),25/64)
 
     def test_mpd_sends_one_native_step_per_detent(self):
         lib = self.backends['mpd']
-        lib.reset(72)
+        lib.reset(.72)
         for direction in [1, 1, -1, -1, 1]:
             lib.player_step_volume(direction)
         self.assertEqual(lib.command_count(), 5)
@@ -100,7 +104,7 @@ int revision(void) { return revisions; }
 
     def test_mpd_steps_never_stop_at_a_local_estimated_limit(self):
         lib = self.backends['mpd']
-        for estimate in [0, 72, 100]:
+        for estimate in [0, .72, 1]:
             lib.reset(estimate)
             for direction in [1] * 40 + [-1] * 40:
                 lib.player_step_volume(direction)
@@ -109,23 +113,23 @@ int revision(void) { return revisions; }
 
     def test_zero_is_a_no_op_for_both_backends(self):
         for lib in self.backends.values():
-            lib.reset(72)
+            lib.reset(.72)
             lib.player_step_volume(0)
-            self.assertEqual(lib.value(), 72)
+            self.assertEqual(lib.value(), ctypes.c_float(.72).value)
             self.assertEqual(lib.command_count(), 0)
             self.assertEqual(lib.revision(), 0)
 
     def test_mock_adjusts_in_both_directions_and_clamps(self):
         lib = self.backends['mock']
-        lib.reset(72)
+        lib.reset(.72)
         lib.player_step_volume(1)
-        self.assertEqual(lib.value(), 81)
+        self.assertEqual(lib.value(), 13/16)
         self.assertFalse(lib.is_muted())
         lib.player_step_volume(-1)
-        self.assertEqual(lib.value(), 75)
+        self.assertEqual(lib.value(), 12/16)
         for _ in range(40):
             lib.player_step_volume(1)
-        self.assertEqual(lib.value(), 100)
+        self.assertEqual(lib.value(), 1)
         for _ in range(40):
             lib.player_step_volume(-1)
         self.assertEqual(lib.value(), 0)

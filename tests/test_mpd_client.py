@@ -51,8 +51,10 @@ static void *test_reallocate(void *ptr,size_t n) {
 #define vTaskDelay(n) ((void)(n))
 static mpd_wire_t wire;
 static mpd_state_t state;
-static int muted_volume=50, server_volume=-1, mpd_playlist_version;
-static int confirmed_server_volume;
+static float muted_volume=0.5f,volume_target=-1.0f;
+static int server_volume=-1,mpd_playlist_version;
+static mpd_config_t config;
+static char current_uri[4096];
 static uint32_t coloplay_session=7;static uint8_t coloplay_seek;static int64_t coloplay_seek_deadline,coloplay_next_seek;
 static int64_t esp_timer_get_time(void) { return 1000000; }
 static bool remote_repeat,remote_single,mpd_updating;
@@ -101,7 +103,7 @@ void test_init(int fd) {
     unpaged_server=false; database_songs=0;
     allocation_limit=SIZE_MAX;largest_allocation=0;queue_size=0;queue_refresh_pending=false;
     free(star_keys);star_keys=NULL;star_count=0;star_revision=0;stars_refresh_pending=false;
-    volume_steps=16;
+    volume_steps=16;volume_target=-1.0f;server_volume=-1;muted_volume=0.5f;
     complete_count=0;
     diagnostic[0]=0; mpd_wire_init(&wire); mpd_wire_attach(&wire,fd,1000);
 }
@@ -137,17 +139,23 @@ int test_run(int kind,uint64_t *keys,int count,int start) {
 int test_coloplay(int kind,int usage,int count,int parameter,int level,int play,uint32_t session) {
     command_t c={.kind=CMD_COLOPLAY,.remote_result=CP_APPLIED};
     cp_header(c.coloplay,kind,1,session);cp_put16(c.coloplay+8,usage);cp_put16(c.coloplay+10,count);cp_put16(c.coloplay+12,parameter);
-    state.volume=server_volume=level;state.play_status=play;coloplay_session=7;
+    server_volume=level;state.volume=level<0?-1.0f:level/100.0f;state.play_status=play;coloplay_session=7;
     if(!run_command(&c)){return CP_FAILED;}return c.remote_result;
+}
+float test_fraction(void) { return state.volume; }
+int test_poll(void) { return poll_state(); }
+int test_step_confirm(int direction) {
+    command_t c={.kind=CMD_TEXT};snprintf(c.text,sizeof(c.text),"@volume_%s",direction>0?"up":"down");
+    return run_command(&c) && poll_state();
 }
 int test_coloplay_seeking(void) { return coloplay_seek; }
 void test_set_volume_steps(int n) { volume_steps=n; }
 int test_volume_mode_change(void) {
-    server_volume=67;state.volume=69;volume_steps=64;
+    server_volume=67;state.volume=0.67f;volume_steps=64;
     command_t c={.kind=CMD_TEXT};strcpy(c.text,"@volume_up");return run_command(&c);
 }
 int test_toggle(const char *name,int repeat,int volume,int shuffle) {
-    state.repeat=repeat; state.volume=server_volume=volume; state.shuffle=shuffle;
+    state.repeat=repeat; server_volume=volume;state.volume=volume<0?-1.0f:volume/100.0f; state.shuffle=shuffle;
     command_t c={.kind=CMD_TEXT}; snprintf(c.text,sizeof(c.text),"%s",name);
     return run_command(&c);
 }
@@ -184,13 +192,14 @@ static unsigned uri_count,uri_used;
         functions='\n'.join(function(SOURCE,name) for name in [
             'publish','uri_lookup','uri_insert','song_reset','song_finish','song_field',
             'status_field','stat_field','simple','sync_library','sync_queue','star_position',
-            'sync_stars','change_star','playlist_field','sync_playlists','play_selection','run_command'])
+            'sync_stars','change_star','playlist_field','sync_playlists','play_selection','set_volume','run_command','poll_state'])
         (directory/'client.c').write_text(PREFIX+globals_+command_type+song_type+functions+SUFFIX)
         subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Wno-unused-function','-shared','-fPIC',
                         '-I'+str(directory),'-I'+str(ROOT/'app/mpd'),'-I'+str(ROOT/'app/backend'),
                         '-I'+str(ROOT/'firmware/main'),str(directory/'client.c'),
                         str(ROOT/'app/mpd/mpd_wire.c'),'-o',str(directory/'client.so')],check=True)
         cls.lib=C.CDLL(str(directory/'client.so'))
+        cls.lib.test_fraction.restype=C.c_float
         cls.lib.test_insert.argtypes=[C.c_char_p]; cls.lib.test_insert.restype=C.c_uint64
         cls.lib.test_run.argtypes=[C.c_int,C.POINTER(C.c_uint64),C.c_int,C.c_int]
         cls.lib.test_current_key.argtypes=[C.c_uint64]
@@ -483,6 +492,29 @@ static unsigned uri_count,uri_used;
             self.server([(f'command_list_begin\nrepeat {repeat}\nsingle {single}\ncommand_list_end\n'.encode(),b'OK\n')])
             self.assertEqual(self.lib.test_toggle(b'@repeat',mode,50,0),1)
             self.threads[-1].join()
+
+    def test_fractional_positions_survive_integer_server_echo_and_external_changes(self):
+        self.lib.test_set_volume_steps(64)
+        def poll(level):
+            return [(b'status\n',f'volume: {level}\nstate: pause\nOK\n'.encode()),(b'currentsong\n',b'OK\n')]
+        exchanges=poll(0)
+        for index in range(1,65):
+            level=int(index*100/64+.5)
+            exchanges += [(f'setvol {level}\n'.encode(),b'OK\n')]+poll(level)
+        for index in range(63,-1,-1):
+            level=int(index*100/64+.5)
+            exchanges += [(f'setvol {level}\n'.encode(),b'OK\n')]+poll(level)
+        exchanges += poll(43)
+        self.server(exchanges)
+        self.assertEqual(self.lib.test_poll(),1)
+        for index in range(1,65):
+            self.assertEqual(self.lib.test_step_confirm(1),1)
+            self.assertEqual(self.lib.test_fraction(),index/64)
+        for index in range(63,-1,-1):
+            self.assertEqual(self.lib.test_step_confirm(-1),1)
+            self.assertEqual(self.lib.test_fraction(),index/64)
+        self.assertEqual(self.lib.test_poll(),1)
+        self.assertAlmostEqual(self.lib.test_fraction(),.43,places=6)
 
     def test_coloplay_reuses_raw_mpd_volume_grid_without_changing_setting(self):
         for configured,requested,level,usage,count,expected in [(16,64,67,233,1,69),(64,16,67,233,1,75),(16,64,67,234,1,66),(64,16,0,234,1,0),(16,64,99,233,10,100),(64,1,67,233,1,69)]:

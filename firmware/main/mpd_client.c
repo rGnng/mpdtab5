@@ -69,7 +69,8 @@ static int mpd_playlist_version;
 static bool mpd_updating;
 static unsigned reported_queue_size;
 static bool remote_repeat, remote_single;
-static int muted_volume=50, server_volume=-1, confirmed_server_volume=-1;
+static float muted_volume=0.5f, volume_target=-1.0f;
+static int server_volume=-1;
 static uint8_t coloplay_seek;
 static uint32_t coloplay_session;
 static int64_t coloplay_seek_deadline,coloplay_next_seek;
@@ -111,7 +112,6 @@ static void publish(const mpd_state_t *s) {
     uint32_t revision = state.revision + changed;
     state = *s;
     state.revision = revision;
-    confirmed_server_volume = server_volume;
     give();
 }
 static void identity(const mpd_config_t *c, char *out, size_t cap) {
@@ -176,7 +176,7 @@ const char *mpd_client_status(void) {
     return status_text;
 }
 bool mpd_client_get_state(mpd_state_t *out) { if(!mutex || !out) return false; take(); *out=state; give(); return true; }
-bool mpd_client_get_remote_state(mpd_state_t *out){if(!mutex||!out)return false;take();*out=state;out->volume=confirmed_server_volume;give();return true;}
+bool mpd_client_get_remote_state(mpd_state_t *out){if(!mutex||!out)return false;take();*out=state;give();return true;}
 void mpd_client_coloplay_begin(uint32_t session){if(!mutex)return;take();coloplay_session=session;coloplay_seek=0;give();}
 void mpd_client_coloplay_release(void){if(!mutex)return;take();coloplay_session=0;coloplay_seek=0;give();}
 uint8_t mpd_client_coloplay_seek_state(void){if(!mutex)return 0;take();uint8_t value=esp_timer_get_time()<coloplay_seek_deadline?coloplay_seek:0;give();return value;}
@@ -415,7 +415,7 @@ static bool song_field(const char *key,const char *value,void *ctx) {
 static bool status_field(const char *key,const char *value,void *ctx) {
     mpd_state_t *s=ctx;
     if(!strcmp(key,"state")) s->play_status=!strcmp(value,"play") ? 1 : !strcmp(value,"pause") ? 2 : 0;
-    else if(!strcmp(key,"volume")) s->volume=server_volume=atoi(value);
+    else if(!strcmp(key,"volume")) { server_volume=atoi(value);s->volume=server_volume<0 ? -1.0f : server_volume/100.0f; }
     else if(!strcmp(key,"random")) s->shuffle=atoi(value)!=0;
     else if(!strcmp(key,"repeat")) remote_repeat=atoi(value)!=0;
     else if(!strcmp(key,"single")) remote_single=atoi(value)!=0;
@@ -482,7 +482,11 @@ static bool poll_state(void) {
     take(); snprintf(next.device_name,sizeof(next.device_name),"MPD · %.48s",config.host); give();
     mpd_updating=false; remote_repeat=remote_single=false; reported_queue_size=0; server_volume=-1;
     if(!mpd_wire_command(&wire,"status",status_field,NULL,&next)) return false;
-    if(next.volume >= 0) next.volume=volume_grid_snap(next.volume,player_volume_steps());
+    /* Keep a confirmed fractional target through the integer MPD echo. An
+     * external mixer change takes ownership as soon as its percentage differs. */
+    if(server_volume >= 0 && volume_target >= 0 && server_volume == volume_percent(volume_target))
+        next.volume=volume_target;
+    else volume_target=-1.0f;
     next.repeat=remote_repeat ? (remote_single ? 1 : 2) : 0;
     song_parser_t parser={0};
     song_parser_t *p=&parser;
@@ -649,6 +653,12 @@ static bool play_selection(const uint64_t *keys,int count,int start) {
     char cmd[40]; snprintf(cmd,sizeof(cmd),"play %d",start);
     return simple(cmd);
 }
+static bool set_volume(float target) {
+    char command[32];snprintf(command,sizeof(command),"setvol %d",volume_percent(target));
+    if(!simple(command)) return false;
+    volume_target=target;
+    return true;
+}
 static bool run_command(command_t *c) {
     if(c->kind==CMD_COLOPLAY){
         const uint8_t *p=c->coloplay;take();bool current=coloplay_session&&coloplay_session==cp_u32(p+4);give();
@@ -658,9 +668,10 @@ static bool run_command(command_t *c) {
         if(p[1]==CP_VOLUME){
             if(server_volume<0){c->remote_result=CP_UNSUPPORTED;return true;}
             const int steps=parameter==1?player_volume_steps():parameter;
-            const int value=volume_grid_step(server_volume,(usage==0xe9?1:-1)*(int)count,steps);
-            if(value==server_volume)c->remote_result=CP_NO_CHANGE;
-            char command[32];snprintf(command,sizeof(command),"setvol %d",value);return simple(command);
+            mpd_state_t latest={0};mpd_client_get_state(&latest);
+            const float value=volume_grid_step(latest.volume,(usage==0xe9?1:-1)*(int)count,steps);
+            if(value==latest.volume)c->remote_result=CP_NO_CHANGE;
+            return set_volume(value);
         }
         if(usage==0xb3||usage==0xb4){
             const int64_t now=esp_timer_get_time();take();coloplay_seek=usage==0xb3?1:2;coloplay_next_seek=now+1000000;coloplay_seek_deadline=now+(parameter==1?10000000:(int64_t)(cp_u16(p+14)?cp_u16(p+14):200)*1000);give();
@@ -690,7 +701,7 @@ static bool run_command(command_t *c) {
     if(!strcmp(c->text,"@volume_up") || !strcmp(c->text,"@volume_down")) {
         if(server_volume<0) { message("MPD mixer is unavailable"); return true; }
         int delta=!strcmp(c->text,"@volume_up") ? 1 : -1;
-        snprintf(cmd,sizeof(cmd),"setvol %d",volume_grid_step(server_volume,delta,player_volume_steps()));
+        return set_volume(volume_grid_step(s.volume,delta,player_volume_steps()));
     }
     else if(!strcmp(c->text,"@shuffle")) snprintf(cmd,sizeof(cmd),"random %d",!s.shuffle);
     else if(!strcmp(c->text,"@repeat")) {
@@ -700,7 +711,7 @@ static bool run_command(command_t *c) {
     else if(!strcmp(c->text,"@mute")) {
         if(s.volume<0) { message("MPD mixer is unavailable"); return true; }
         if(s.volume>0) muted_volume=s.volume;
-        snprintf(cmd,sizeof(cmd),"setvol %d",s.volume ? 0 : volume_grid_snap(muted_volume,player_volume_steps()));
+        return set_volume(s.volume > 0 ? 0.0f : volume_grid_snap(muted_volume,player_volume_steps()));
     }
     else snprintf(cmd,sizeof(cmd),"%s",c->text);
     return simple(cmd);
@@ -709,7 +720,7 @@ static bool generation_changed(uint32_t generation) { take(); bool changed=gener
 static void disconnected(void) {
     mpd_wire_close(&wire);
     mpd_wire_close(&events);
-    take(); state.connected=state.identified=false; state.library_syncing=false; state.play_status=0; state.revision++;confirmed_server_volume=-1;coloplay_seek=0;
+    take(); state.connected=state.identified=false; state.library_syncing=false; state.play_status=0; state.revision++;volume_target=-1.0f;coloplay_seek=0;
     queue_size=0; queue_revision++; art_valid=false; art_revision++;
     uint64_t *old_stars=star_keys; star_keys=NULL; star_count=0; star_revision++; state.starred=false;
     give(); free(old_stars);
