@@ -696,8 +696,8 @@ static bool membership_get(const uint16_t * order, uint64_t id, int index,
  *              device uses PlayMediaLibrarySpecial so the 20k-track library
  *              is never sent as a PID list);
  *   playlist : chosen track to the end of the playlist (no wrap).
- * Shuffle permutes the list in the simulator; on the device the iPod's own
- * shuffle is switched on instead. */
+ * Shuffle permutes the list in the simulator; the MPD worker shuffles the
+ * complete server queue before starting playback. */
 #define ARTIST_ALBUMS_MAX 256
 
 /* The iAP2 path sends at most ~500 keys per command, so the device keeps
@@ -815,9 +815,8 @@ static void play_ids_start(int count, bool shuffle_on)
     if(count > PLAY_IDS_MAX) count = PLAY_IDS_MAX;
 #if defined(ESP_PLATFORM)
     if(mpd_client_is_enabled()) {
-        mpd_client_play_track_keys(play_ids, count, 0);
+        mpd_client_play_track_keys(play_ids, count, 0, shuffle_on);
         queue_rev++;
-        if(shuffle_on) player_set_shuffle(true);
         return;
     }
     return;

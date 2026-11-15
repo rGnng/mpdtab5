@@ -88,6 +88,7 @@ typedef struct {
     command_kind_t kind;
     uint32_t generation;
     int count, start;
+    bool shuffle;
     uint32_t queue_id;
     uint64_t *keys;
     char text[80];
@@ -253,9 +254,9 @@ esp_err_t mpd_client_hid_raw_bit(uint8_t bit) {
 esp_err_t mpd_client_hid_press_bit(uint8_t bit) { take(); hold_bit=bit; give(); return ESP_OK; }
 esp_err_t mpd_client_hid_release(void) { take(); hold_bit=0; give(); return ESP_OK; }
 esp_err_t mpd_client_refresh_now_playing(void) { mpd_client_rescan(); return ESP_OK; }
-esp_err_t mpd_client_play_track_keys(const uint64_t *keys,int count,int start) {
+esp_err_t mpd_client_play_track_keys(const uint64_t *keys,int count,int start,bool shuffle) {
     if(!keys || count<=0 || count>TRACK_LIMIT || start<0 || start>=count) return ESP_ERR_INVALID_ARG;
-    command_t c={.kind=CMD_PLAY,.count=count,.start=start};
+    command_t c={.kind=CMD_PLAY,.count=count,.start=start,.shuffle=shuffle};
     c.keys=heap_caps_malloc(count*sizeof(*keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!c.keys) return ESP_ERR_NO_MEM;
     memcpy(c.keys,keys,count*sizeof(*keys)); return enqueue(&c);
@@ -630,7 +631,7 @@ static bool art_binary(const void *data,size_t len,void *ctx) {
     t->received+=len; t->chunk+=len; return true;
 }
 #include "mpd_artwork.inc"
-static bool play_selection(const uint64_t *keys,int count,int start) {
+static bool play_selection(const uint64_t *keys,int count,int start,bool shuffle) {
     /* Validate before touching the existing server queue. */
     if(!keys || count<=0 || start<0 || start>=count) return false;
     char quoted_uri[4100];
@@ -658,6 +659,10 @@ static bool play_selection(const uint64_t *keys,int count,int start) {
     }
     free(batch);
     if(!ok) return false;
+    /* Shuffle before starting: enabling random after play pins the first
+     * album track in Tracks. The explicit shuffle also randomizes the first
+     * song on MPD servers where random affects only the playback sequence. */
+    if(shuffle) return simple("command_list_begin\nshuffle\nrandom 1\nplay 0\ncommand_list_end");
     char cmd[40]; snprintf(cmd,sizeof(cmd),"play %d",start);
     return simple(cmd);
 }
@@ -708,13 +713,13 @@ static bool run_command(command_t *c) {
     }
     if(c->kind==CMD_STAR) return c->keys && change_star(c->keys[0],false);
     if(c->kind==CMD_CLEAR_STARS) return change_star(0,true);
-    if(c->kind==CMD_PLAY) return play_selection(c->keys,c->count,c->start);
+    if(c->kind==CMD_PLAY) return play_selection(c->keys,c->count,c->start,c->shuffle);
     if(c->kind==CMD_ALL) {
         uint64_t *keys=heap_caps_malloc(uri_count*sizeof(*keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
         if(!keys || !uri_count) { free(keys); return false; }
         int start=0;
         for(unsigned i=0;i<uri_count;i++) { keys[i]=uris[i].id; if(keys[i]==c->keys[0]) start=i; }
-        bool ok=play_selection(keys,uri_count,start); free(keys); return ok;
+        bool ok=play_selection(keys,uri_count,start,false); free(keys); return ok;
     }
     if(c->kind==CMD_JUMP) {
         char cmd[40]; snprintf(cmd,sizeof(cmd),"playid %lu",(unsigned long)c->queue_id); return simple(cmd);

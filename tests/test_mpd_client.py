@@ -140,6 +140,9 @@ int test_sync(void) { return sync_library(); }
 int test_run(int kind,uint64_t *keys,int count,int start) {
     command_t c={.kind=kind,.keys=keys,.count=count,.start=start,.queue_id=(uint32_t)start}; return run_command(&c);
 }
+int test_run_shuffled(uint64_t *keys,int count) {
+    command_t c={.kind=CMD_PLAY,.keys=keys,.count=count,.shuffle=true};return run_command(&c);
+}
 int test_coloplay(int kind,int usage,int count,int parameter,int level,int play,uint32_t session) {
     command_t c={.kind=CMD_COLOPLAY,.remote_result=CP_APPLIED};
     cp_header(c.coloplay,kind,1,session);cp_put16(c.coloplay+8,usage);cp_put16(c.coloplay+10,count);cp_put16(c.coloplay+12,parameter);
@@ -217,6 +220,7 @@ static unsigned uri_count,uri_used;
         cls.lib.test_grid_target.restype=C.c_float
         cls.lib.test_insert.argtypes=[C.c_char_p]; cls.lib.test_insert.restype=C.c_uint64
         cls.lib.test_run.argtypes=[C.c_int,C.POINTER(C.c_uint64),C.c_int,C.c_int]
+        cls.lib.test_run_shuffled.argtypes=[C.POINTER(C.c_uint64),C.c_int]
         cls.lib.test_current_key.argtypes=[C.c_uint64]
         cls.lib.test_star_key.restype=C.c_uint64
         cls.lib.test_toggle.argtypes=[C.c_char_p,C.c_int,C.c_int,C.c_int]
@@ -449,6 +453,27 @@ static unsigned uri_count,uri_used;
             exchanges.append((commands,b'OK\n'))
         exchanges.append((b'play 0\n',b'OK\n'));self.server(exchanges)
         self.assertEqual(self.lib.test_run(1,keys,len(paths),0),1)
+
+    def test_shuffle_play_shuffles_entire_album_before_first_play(self):
+        paths=[f'album/{i}.flac'.encode() for i in range(12)]
+        keys=(C.c_uint64*len(paths))(*[self.lib.test_insert(p) for p in paths])
+        self.server([
+            (b'command_list_begin\nclear\nrandom 0\nsingle 0\ncommand_list_end\n',b'OK\n'),
+            (b'command_list_begin\n'+b''.join(b'add "'+p+b'"\n' for p in paths)+b'command_list_end\n',b'OK\n'),
+            (b'command_list_begin\nshuffle\nrandom 1\nplay 0\ncommand_list_end\n',b'OK\n')])
+        self.assertEqual(self.lib.test_run_shuffled(keys,len(paths)),1)
+
+    def test_failed_shuffle_does_not_start_unshuffled_album(self):
+        paths=[b'album/one.flac',b'album/two.flac']
+        keys=(C.c_uint64*len(paths))(*[self.lib.test_insert(p) for p in paths])
+        self.server([
+            (b'command_list_begin\nclear\nrandom 0\nsingle 0\ncommand_list_end\n',b'OK\n'),
+            (b'command_list_begin\n'+b''.join(b'add "'+p+b'"\n' for p in paths)+b'command_list_end\n',b'OK\n'),
+            (b'command_list_begin\nshuffle\nrandom 1\nplay 0\ncommand_list_end\n',b'ACK [5@0] {shuffle} Failed\n')])
+        self.assertEqual(self.lib.test_run_shuffled(keys,len(paths)),0)
+        self.threads[-1].join()
+        self.peer.setblocking(False)
+        with self.assertRaises(BlockingIOError):self.peer.recv(1)
 
     def test_metadata_uses_uri_identity_and_album_artist(self):
         self.assertEqual(self.metadata(

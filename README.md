@@ -27,6 +27,11 @@ and jumping to entries in Up Next. Touch, USB, BLE and web inputs use the same
 player functions. Hold previous/next on the Ulanzi to seek; hold the knob and
 turn it to change MPD volume.
 
+**Shuffle Play** builds the selected album, artist or playlist queue, shuffles
+the whole queue, and enables random playback before starting its first song.
+Queue setup and shuffle belong to one request, so the album's first track is
+not started before shuffling. **Play All** retains the displayed track order.
+
 **Settings → Screen → Pagination** offers **Off** (default), **On touch 64**,
 or **On touch 96**. The numbers set each button’s width and height in pixels.
 On touch adds stacked page-up/down buttons at the lower right of every list,

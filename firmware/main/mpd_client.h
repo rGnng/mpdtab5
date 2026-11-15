@@ -75,8 +75,9 @@ bool mpd_client_star_get(int index, uint64_t *key);
 int mpd_client_star_copy(uint64_t *keys, int capacity);
 uint32_t mpd_client_star_revision(void);
 
-/* Replaces the MPD queue with the selected URI IDs, then starts at index. */
-esp_err_t mpd_client_play_track_keys(const uint64_t *keys, int count, int start_index);
+/* Replace the MPD queue, optionally shuffle it, then start playback. Shuffle
+ * starts at the first entry of the shuffled queue rather than start_index. */
+esp_err_t mpd_client_play_track_keys(const uint64_t *keys, int count, int start_index, bool shuffle);
 esp_err_t mpd_client_play_all_songs(uint64_t start_key);
 esp_err_t mpd_client_play_current_key(void);
 esp_err_t mpd_client_queue_jump(int index);
