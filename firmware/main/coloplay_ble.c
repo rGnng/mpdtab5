@@ -20,7 +20,7 @@ static const char *TAG="coloplay_ble";
 static const ble_uuid128_t s_service=BLE_UUID128_INIT(0xb5,0x17,0x1d,0x62,0x1d,0x12,0x5d,0x9f,0xcb,0x4a,0x69,0xc1,0x01,0,0x1c,0xa9);
 static uint16_t s_start,s_end,s_conn=0xffff,s_caps,s_command,s_command_end,s_state,s_cccd;
 static uint32_t s_generation,s_session;
-static bool s_ready,s_writing,s_float_volume;
+static bool s_ready,s_writing,s_float_volume,s_prediction;
 static int64_t s_write_deadline,s_next_state;
 static uint16_t s_last_id;static uint8_t s_last_result;
 static uint16_t s_recent[16];static uint8_t s_recent_result[16];static unsigned s_recent_next;
@@ -68,16 +68,20 @@ static bool queue_state(uint16_t request,uint8_t result){
         mpd_state_t state={0};mpd_client_get_remote_state(&state);
         cp_header(data,CP_VOLUME_STATE,request,s_session);
         cp_put_float(data+8,state.connected?state.volume:-1.0f);data[12]=result;
+        if(s_prediction){
+            data[13]=player_volume_steps();cp_put16(data+14,state.volume_request);
+            cp_put_float(data+16,state.connected&&state.volume_grid_steps==data[13]?state.volume_grid_target:-1.0f);
+        }
         return queue(data);
     }
     return true;
 }
 static void hello_packet(uint8_t *data){
     cp_header(data,CP_HELLO,0,s_session);data[8]=player_volume_steps();
-    if(s_float_volume){data[16]=CP_CAP_VOLUME_FLOAT;cp_put_float(data+12,1.0f/player_volume_steps());}
+    if(s_float_volume){data[16]=CP_CAP_VOLUME_FLOAT|(s_prediction?CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE:0);cp_put_float(data+12,1.0f/volume_grid_count(player_volume_steps()));}
 }
 void coloplay_ble_reset(void){
-    ++s_generation;s_start=s_end=s_caps=s_command=s_command_end=s_state=s_cccd=0;s_conn=0xffff;s_session=0;s_ready=s_writing=s_float_volume=false;s_read=s_count=0;s_track=UINT64_MAX;
+    ++s_generation;s_start=s_end=s_caps=s_command=s_command_end=s_state=s_cccd=0;s_conn=0xffff;s_session=0;s_ready=s_writing=s_float_volume=s_prediction=false;s_read=s_count=0;s_track=UINT64_MAX;
     memset(s_recent,0,sizeof(s_recent));s_recent_next=0;s_native_steps=0;
     if(s_results){xQueueReset(s_results);}mpd_client_coloplay_release();
 }
@@ -112,6 +116,7 @@ static int caps_read(uint16_t conn,const struct ble_gatt_error *error,struct ble
         fail("ColoPlay protocol capabilities invalid");return 0;
     }
     s_float_volume=(bytes[8]&CP_CAP_VOLUME_FLOAT)!=0;
+    s_prediction=s_float_volume&&(bytes[8]&CP_CAP_VOLUME_PREDICT)&&(bytes[8]&CP_CAP_VOLUME_SCALE);
     s_session=cp_u32(bytes+4);
     if(ble_gattc_disc_all_dscs(conn,s_command,s_command_end?s_command_end:s_end,descriptor,generation())){fail("ColoPlay descriptor discovery failed");}return 0;
 }

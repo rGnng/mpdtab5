@@ -12,6 +12,8 @@ PREFIX=r'''
 #include "player.h"
 #include "mpd_client.h"
 #include "text_util.h"
+#include "volume_grid.h"
+int player_volume_steps(void){return 64;}
 #include <stdio.h>
 #include <string.h>
 static player_track_t tracks[1];

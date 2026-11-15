@@ -21,7 +21,7 @@ typedef struct {
     bool sound_enabled;
     uint8_t sound_mode;         /* 0 = none, 1 = touch, 2 = touch + key */
     uint8_t volume;            /* Feedback loudness, 0..100 */
-    uint8_t volume_steps;      /* MPD volume grid: 16 (default) or 64 */
+    uint8_t volume_steps;      /* Volume scale ID: 16/64 squared, 2/5 integer; default 64 */
     char ap_ssid[33];
     char library_id[128];      /* full iAP2/AFC media-library UUID */
 

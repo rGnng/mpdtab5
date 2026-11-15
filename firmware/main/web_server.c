@@ -813,9 +813,9 @@ static esp_err_t config_post(httpd_req_t * req)
 
     const cJSON *volume_steps = cJSON_GetObjectItemCaseSensitive(root, "volume_steps");
     if(volume_steps && (!cJSON_IsNumber(volume_steps) || volume_steps->valuedouble != volume_steps->valueint ||
-       (volume_steps->valueint != 16 && volume_steps->valueint != 64))) {
+       (volume_steps->valueint != 16 && volume_steps->valueint != 64 && volume_steps->valueint != 2 && volume_steps->valueint != 5))) {
         cJSON_Delete(root);
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Volume Step must be 16 or 64");
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Volume Scale must be 16, 64, 2 or 5");
     }
     const cJSON *pagination = cJSON_GetObjectItemCaseSensitive(root, "pagination_size");
     if(pagination && (!cJSON_IsNumber(pagination) || pagination->valuedouble != pagination->valueint ||
@@ -1461,6 +1461,7 @@ static esp_err_t status_get(httpd_req_t * req)
     if(mpd_client_get_state(&iap2)) {
         cJSON_AddNumberToObject(root,"mpd_volume",volume_percent(iap2.volume));
         cJSON_AddNumberToObject(root,"mpd_volume_fraction",iap2.volume);
+        cJSON_AddNumberToObject(root,"mpd_scale_volume_fraction",volume_grid_display(iap2.volume,player_volume_steps()));
         cJSON_AddBoolToObject(root,"mpd_syncing",iap2.library_syncing);
         cJSON_AddNumberToObject(root, "play_status", iap2.play_status);
         cJSON_AddStringToObject(root, "title", iap2.title);

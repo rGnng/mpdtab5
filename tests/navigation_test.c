@@ -860,12 +860,12 @@ static void volume_step_settings(void)
 {
     ui_select_screen(SCR_SETTINGS);pump(400);
     settings_open((void*)(intptr_t)SETTING_VOLUME_STEP);pump(300);
-    check(g_focus_count==2 && lv_obj_get_child_count(settings_right_content)==2,
-          "Volume Step settings must contain exactly 1/16 and 1/64");
-    check(g_system_config.volume_steps==16 && player_volume_steps()==16,
-          "Missing volume step configuration defaults to 1/16");
+    check(g_focus_count==4 && lv_obj_get_child_count(settings_right_content)==4,
+          "Volume Scale settings must contain all four presets");
+    check(g_system_config.volume_steps==64 && player_volume_steps()==64,
+          "Missing volume scale configuration defaults to 1/64 Squared Curve");
     ui_set_system_config_changed_cb(volume_step_saved);
-    ui_handle_key(UI_KEY_DOWN);ui_handle_key(UI_KEY_ENTER);pump(200);
+    ui_handle_key(UI_KEY_ENTER);pump(200);
     check(saved_volume_steps==64 && player_volume_steps()==64 &&
           !strcmp(lv_label_get_text(settings_volume_step_checks[1]),ICON_CHECK),
           "Keyboard selection must apply and persist 1/64");
@@ -877,8 +877,12 @@ static void volume_step_settings(void)
     lv_indev_set_read_cb(touch,read_touch);ui_set_touch_enabled(true);ui_attach_touch(touch);
     tap_pager(lv_obj_get_child(settings_right_content,1));
     check(saved_volume_steps==64 && player_volume_steps()==64,"Touch must select the same 1/64 grid");
+    tap_pager(lv_obj_get_child(settings_right_content,2));
+    check(saved_volume_steps==2 && player_volume_steps()==2,"Touch selects 2% Integer");
+    tap_pager(lv_obj_get_child(settings_right_content,3));
+    check(saved_volume_steps==5 && player_volume_steps()==5,"Touch selects 5% Integer");
     ui_attach_touch(NULL);lv_indev_delete(touch);touch=NULL;
-    settings_volume_step_action((void*)(intptr_t)16);ui_set_system_config_changed_cb(NULL);
+    settings_volume_step_action((void*)(intptr_t)64);ui_set_system_config_changed_cb(NULL);
 }
 
 static bool playlist_view_deleted;

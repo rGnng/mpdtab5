@@ -24,6 +24,9 @@ typedef struct {
     bool shuffle, starred;
     uint8_t repeat; /* 0 off, 1 one, 2 all */
     float volume; /* normalized 0..1, -1 if MPD has no mixer */
+    float volume_grid_target; /* confirmed logical target, -1 when unanchored */
+    uint8_t volume_grid_steps;
+    uint16_t volume_request; /* last completed ColoPlay volume command */
     /* Compatibility with the shared device UI: MPD has no battery. */
     int battery;
     bool charging;
@@ -43,7 +46,7 @@ esp_err_t mpd_client_configure(const mpd_config_t *config);
 void mpd_client_library_id(char *out, size_t cap);
 void mpd_client_rescan(void);
 bool mpd_client_get_state(mpd_state_t *out);
-/* Confirmed mixer state, preserving exact fractions after our own commands. */
+/* Atomic mixer/grid-reference snapshot for the ColoPlay feedback service. */
 bool mpd_client_get_remote_state(mpd_state_t *out);
 esp_err_t mpd_client_coloplay_command(const uint8_t *command);
 void mpd_client_coloplay_release(void);

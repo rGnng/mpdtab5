@@ -35,15 +35,17 @@ list. Controls use 65% transparency, follow the existing content margins, and
 hide when keyboard/knob navigation resumes or touch is disabled. The setting is
 saved in `/sdcard/mpd/config.json` and is also available on the web System page.
 
-**Settings → Volume Step** selects **1/16** (default, 6.25% per notch) or
-**1/64** (1.5625% per notch), following [Headunit](https://github.com/rGnng/headunit).
-Each notch snaps to the nearest position, then moves one position. Volume stays
-as a normalized floating-point fraction internally and over the ColoPlay BLE
-extension: 1/16 and 1/64 positions are exact. MPD commands and status parsing
-retain fractional percentages, matching Tracks `628ee5b` (`setvol 6.25` means
-6.25%). An integer-only server's explicit invalid-argument reply triggers a
-rounded retry, remembered until reconnect. External mixer changes replace the
-local target with the reported server level.
+**Settings → Volume Scale** offers **1/16 Squared Curve**, **1/64 Squared Curve**
+(default), **2% Integer** and **5% Integer**. Squared profiles use control position
+`x` with raw MPD target `x²`; readback maps to the nearest lookup position for
+consistent control/display. Integer profiles use straight 2% or 5% targets for
+Linux/Windows and integer-only MPD servers. Both devices share tiny compile-time
+tables, with no runtime square root or logarithm. The selected scale is announced
+over BLE on connect and when it changes; ColoPlay offers only Up/Down actions.
+Changing scales preserves current playback volume and changes the readout and
+subsequent steps. API/config `volume_steps` retains IDs 16/64 for squared profiles
+and 2/5 for integer profiles. Confirmed raw targets remain separate from actual
+readback; external changes reset the reference.
 The setting is saved on SD and is also available on the web System page.
 Volume changes briefly replace the clock with a centered volume bar. Further
 changes update its fill and extend the display for about two seconds. Mute

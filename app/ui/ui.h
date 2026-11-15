@@ -83,7 +83,7 @@ typedef struct {
     bool sound_enabled;
     int sound_mode;        /* 0 = none, 1 = touch, 2 = touch + key */
     int volume;            /* Feedback loudness, 0..100 */
-    int volume_steps;      /* MPD volume grid: 16 (default) or 64 */
+    int volume_steps;      /* Volume scale ID: 16/64 squared, 2/5 integer; default 64 */
     char ap_ssid[33];
     char wifi_status[64];
     char wifi_ip[32];

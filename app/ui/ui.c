@@ -295,7 +295,7 @@ static ui_system_config_t g_system_config = {
     .sound_enabled = true,
     .sound_mode = 2,
     .volume = 65,
-    .volume_steps = 16,
+    .volume_steps = 64,
     .sort_desc = 1,
     .song_sort_desc = 1,
     .np_bg_mode = 2,
@@ -8463,7 +8463,7 @@ enum {
 static int settings_time_segment;
 static lv_obj_t * settings_detail_touch_value;
 static lv_obj_t * settings_pagination_value;
-static lv_obj_t * settings_volume_step_checks[2];
+static lv_obj_t * settings_volume_step_checks[4];
 static lv_obj_t * settings_detail_menubar_value;
 static lv_obj_t * settings_detail_sort_value;
 static lv_obj_t * settings_detail_order_value;
@@ -8516,7 +8516,7 @@ static void settings_clear_detail_widgets(void)
     settings_time_down_icon = NULL;
     settings_detail_touch_value = NULL;
     settings_pagination_value = NULL;
-    settings_volume_step_checks[0] = settings_volume_step_checks[1] = NULL;
+    for(int i=0;i<4;++i)settings_volume_step_checks[i]=NULL;
     settings_detail_menubar_value = NULL;
     settings_detail_sort_value = NULL;
     settings_detail_order_value = NULL;
@@ -8591,7 +8591,7 @@ static const char * const settings_names[SETTING_COUNT] = {
     "Sort Order",
     "Fast Scroll",
     "Key Feedback",
-    "Volume Step",
+    "Volume Scale",
     "Screen",
     "Theme",
     "Now Playing Background",
@@ -8604,7 +8604,7 @@ static const char * const settings_names[SETTING_COUNT] = {
 static int settings_initial_focus(int index)
 {
     if(index == SETTING_FAST_SCROLL) return 0;
-    if(index == SETTING_VOLUME_STEP) return g_system_config.volume_steps == 64 ? 1 : 0;
+    if(index == SETTING_VOLUME_STEP) return g_system_config.volume_steps==16?0:g_system_config.volume_steps==2?2:g_system_config.volume_steps==5?3:1;
     if(index == SETTING_SCREEN) {
         int nearest = 0;
         for(int i = 1; i < 3; i++) {
@@ -9486,14 +9486,14 @@ static void settings_fast_hold_touch_cb(lv_event_t * event)
 
 static void settings_update_volume_step(void)
 {
-    for(int i=0;i<2;i++) if(settings_volume_step_checks[i])
+    for(int i=0;i<4;i++) if(settings_volume_step_checks[i])
         lv_label_set_text(settings_volume_step_checks[i],
-            g_system_config.volume_steps == (i ? 64 : 16) ? ICON_CHECK : "");
+            g_system_config.volume_steps == (i==0?16:i==1?64:i==2?2:5) ? ICON_CHECK : "");
 }
 
 static void settings_volume_step_action(void *user)
 {
-    g_system_config.volume_steps = (intptr_t)user == 64 ? 64 : 16;
+    g_system_config.volume_steps = volume_steps_normalize((intptr_t)user);
     player_set_volume_steps(g_system_config.volume_steps);
     settings_update_volume_step();
     settings_system_changed();
@@ -10247,9 +10247,9 @@ static void settings_render_detail(lv_obj_t * parent, bool interactive)
             break;
         }
         case SETTING_VOLUME_STEP: {
-            for(int i=0;i<2;i++) {
-                int steps=i ? 64 : 16;
-                lv_obj_t *row=settings_make_choice_row(parent,i ? "1/64" : "1/16",
+            for(int i=0;i<4;i++) {
+                int steps=i==0?16:i==1?64:i==2?2:5;
+                lv_obj_t *row=settings_make_choice_row(parent,volume_scale_name(steps),
                     g_system_config.volume_steps==steps,&settings_volume_step_checks[i]);
                 if(interactive) focus_add_clickable(row,settings_volume_step_action,NULL,(void*)(intptr_t)steps,true);
                 else touch_add_clickable(row,settings_volume_step_touch_cb,(void*)(intptr_t)steps);

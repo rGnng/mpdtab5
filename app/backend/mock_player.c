@@ -52,7 +52,7 @@ static const char * TAG = "player";
 
 static MOCK_LARGE_BSS player_track_t tracks[MAX_TRACKS];
 static int track_count;
-static atomic_int volume_steps = 16;
+static atomic_int volume_steps = 64;
 
 void player_set_volume_steps(int steps)
 {
@@ -501,7 +501,7 @@ static void iap2_snapshot(player_snapshot_t * out, const mpd_state_t * state)
         out->track.disc_no = tracks[star_idx].disc_no;
         out->track.year = tracks[star_idx].year;
     }
-    out->volume = state->volume;
+    out->volume = volume_grid_display(state->volume,player_volume_steps());
     out->muted = state->volume==0;
     out->shuffle = state->shuffle;
     out->repeat = state->repeat == 1 ? PLAYER_REPEAT_ONE :
@@ -1402,7 +1402,7 @@ void player_get_snapshot(player_snapshot_t * out)
 {
 #if defined(ESP_PLATFORM)
     memset(out, 0, sizeof(*out));
-    out->volume = volume;
+    out->volume = volume_grid_display(volume,player_volume_steps());
     out->muted = muted;
     out->battery = -1;
     out->revision = revision;
@@ -1420,7 +1420,7 @@ void player_get_snapshot(player_snapshot_t * out)
     memset(out, 0, sizeof(*out));
     out->status = status;
     out->elapsed_sec = elapsed_sec;
-    out->volume = volume;
+    out->volume = volume_grid_display(volume,player_volume_steps());
     out->muted = muted;
     if(queue_count > 0 && queue_index >= 0 && queue_index < queue_count) {
         int idx = track_index_by_id(queue[queue_index]);

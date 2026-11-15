@@ -51,7 +51,9 @@ static void *test_reallocate(void *ptr,size_t n) {
 #define vTaskDelay(n) ((void)(n))
 static mpd_wire_t wire;
 static mpd_state_t state;
-static float muted_volume=0.5f,volume_target=-1.0f;
+static float muted_volume=0.5f;
+static volume_grid_cursor_t volume_cursor;
+static uint16_t coloplay_volume_completed;
 static float server_volume=-1.0f;
 static bool volume_integer_only=false;
 static int mpd_playlist_version;
@@ -105,7 +107,7 @@ void test_init(int fd) {
     unpaged_server=false; database_songs=0;
     allocation_limit=SIZE_MAX;largest_allocation=0;queue_size=0;queue_refresh_pending=false;
     free(star_keys);star_keys=NULL;star_count=0;star_revision=0;stars_refresh_pending=false;
-    volume_steps=16;volume_target=-1.0f;server_volume=-1;volume_integer_only=false;muted_volume=0.5f;
+    coloplay_volume_completed=0;volume_steps=16;memset(&volume_cursor,0,sizeof(volume_cursor));server_volume=-1;volume_integer_only=false;muted_volume=0.5f;
     complete_count=0;
     diagnostic[0]=0; mpd_wire_init(&wire); mpd_wire_attach(&wire,fd,1000);
 }
@@ -145,6 +147,16 @@ int test_coloplay(int kind,int usage,int count,int parameter,int level,int play,
     if(!run_command(&c)){return CP_FAILED;}return c.remote_result;
 }
 float test_fraction(void) { return state.volume; }
+float test_grid_target(void) { return state.volume_grid_target; }
+int test_grid_steps(void) { return state.volume_grid_steps; }
+int test_volume_request(void) { return state.volume_request; }
+int test_remote_confirm(int id,int direction) {
+    command_t c={.kind=CMD_COLOPLAY,.remote_result=CP_APPLIED};
+    coloplay_session=7;cp_header(c.coloplay,CP_VOLUME,id,7);
+    cp_put16(c.coloplay+8,direction>0?233:234);cp_put16(c.coloplay+10,1);cp_put16(c.coloplay+12,1);
+    if(!run_command(&c))return 0;
+    coloplay_volume_complete(&c);return poll_state();
+}
 int test_poll(void) { return poll_state(); }
 int test_step_confirm(int direction) {
     command_t c={.kind=CMD_TEXT};snprintf(c.text,sizeof(c.text),"@volume_%s",direction>0?"up":"down");
@@ -194,7 +206,7 @@ static unsigned uri_count,uri_used;
         functions='\n'.join(function(SOURCE,name) for name in [
             'publish','uri_lookup','uri_insert','song_reset','song_finish','song_field',
             'status_field','stat_field','simple','sync_library','sync_queue','star_position',
-            'sync_stars','change_star','playlist_field','sync_playlists','play_selection','set_volume','run_command','poll_state'])
+            'sync_stars','change_star','playlist_field','sync_playlists','play_selection','poll_state','set_volume','run_command','coloplay_volume_complete'])
         (directory/'client.c').write_text(PREFIX+globals_+command_type+song_type+functions+SUFFIX)
         subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Wno-unused-function','-shared','-fPIC',
                         '-I'+str(directory),'-I'+str(ROOT/'app/mpd'),'-I'+str(ROOT/'app/backend'),
@@ -202,6 +214,7 @@ static unsigned uri_count,uri_used;
                         str(ROOT/'app/mpd/mpd_wire.c'),'-o',str(directory/'client.so')],check=True)
         cls.lib=C.CDLL(str(directory/'client.so'))
         cls.lib.test_fraction.restype=C.c_float
+        cls.lib.test_grid_target.restype=C.c_float
         cls.lib.test_insert.argtypes=[C.c_char_p]; cls.lib.test_insert.restype=C.c_uint64
         cls.lib.test_run.argtypes=[C.c_int,C.POINTER(C.c_uint64),C.c_int,C.c_int]
         cls.lib.test_current_key.argtypes=[C.c_uint64]
@@ -495,115 +508,114 @@ static unsigned uri_count,uri_used;
             self.assertEqual(self.lib.test_toggle(b'@repeat',mode,50,0),1)
             self.threads[-1].join()
 
-    def test_fractional_positions_round_trip_without_integer_conversion(self):
-        self.lib.test_set_volume_steps(64)
-        def poll(level):
-            return [(b'status\n',f'volume: {level}\nstate: pause\nOK\n'.encode()),(b'currentsong\n',b'OK\n')]
-        exchanges=poll(0)
-        for index in range(1,65):
-            level=f'{index*100/64:.4f}'.rstrip('0').rstrip('.')
-            exchanges += [(f'setvol {level}\n'.encode(),b'OK\n')]+poll(level)
-        for index in range(63,-1,-1):
-            level=f'{index*100/64:.4f}'.rstrip('0').rstrip('.')
-            exchanges += [(f'setvol {level}\n'.encode(),b'OK\n')]+poll(level)
-        exchanges += poll(43)
-        self.server(exchanges)
-        self.assertEqual(self.lib.test_poll(),1)
-        for index in range(1,65):
-            self.assertEqual(self.lib.test_step_confirm(1),1)
-            self.assertEqual(self.lib.test_fraction(),index/64)
-        for index in range(63,-1,-1):
-            self.assertEqual(self.lib.test_step_confirm(-1),1)
-            self.assertEqual(self.lib.test_fraction(),index/64)
-        self.assertEqual(self.lib.test_poll(),1)
-        self.assertAlmostEqual(self.lib.test_fraction(),.43,places=6)
+    @staticmethod
+    def volume_poll(level):
+        return [(b'status\n',f'volume: {level}\nstate: pause\nOK\n'.encode()),(b'currentsong\n',b'OK\n')]
 
-    def test_fractional_status_escapes_five_percent_trap_and_adopts_external_volume(self):
-        self.lib.test_set_volume_steps(64)
-        def poll(level):
-            return [(b'status\n',f'volume: {level}\nstate: pause\nOK\n'.encode()),(b'currentsong\n',b'OK\n')]
-        self.server(poll('5')+[(b'setvol 6.25\n',b'OK\n')]+poll('6.25')+
-                    [(b'setvol 7.8125\n',b'OK\n')]+poll('7.8125')+poll('6.3')+poll('-1'))
-        self.assertEqual(self.lib.test_poll(),1)
-        self.assertEqual(self.lib.test_step_confirm(1),1)
-        self.assertEqual(self.lib.test_fraction(),4/64)
-        self.assertEqual(self.lib.test_step_confirm(1),1)
-        self.assertEqual(self.lib.test_fraction(),5/64)
-        self.assertEqual(self.lib.test_poll(),1)
-        self.assertAlmostEqual(self.lib.test_fraction(),.063,places=6)
-        self.assertEqual(self.lib.test_poll(),1)
-        self.assertEqual(self.lib.test_fraction(),-1)
+    @staticmethod
+    def target(index,mode):
+        count={16:16,64:64,2:50,5:20}[mode]
+        return (index/count)**2 if mode in (16,64) else index/count
 
-    def test_integer_only_server_retries_invalid_argument_and_retains_grid(self):
-        self.lib.test_set_volume_steps(64)
-        def poll(level):
-            return [(b'status\n',f'volume: {level}\nstate: pause\nOK\n'.encode()),(b'currentsong\n',b'OK\n')]
-        self.server(poll(5)+[(b'setvol 6.25\n',b'ACK [2@0] {setvol} need integer\n'),
-                            (b'setvol 6\n',b'OK\n')]+poll(6)+
-                    [(b'setvol 8\n',b'OK\n')]+poll(8)+poll(7))
-        self.assertEqual(self.lib.test_poll(),1)
-        self.assertEqual(self.lib.test_step_confirm(1),1)
-        self.assertEqual(self.lib.test_fraction(),4/64)
-        self.assertEqual(self.lib.test_step_confirm(1),1)
-        self.assertEqual(self.lib.test_fraction(),5/64)
-        self.assertEqual(self.lib.test_poll(),1)
-        self.assertAlmostEqual(self.lib.test_fraction(),.07,places=6)
+    @staticmethod
+    def percent_text(raw):
+        return f'{raw*100:.8f}'.rstrip('0').rstrip('.')
 
-    def test_fractional_volume_does_not_retry_permission_errors(self):
+    def test_all_four_scales_round_trip_every_position(self):
+        for mode,count in [(16,16),(64,64),(2,50),(5,20)]:
+            self.lib.test_set_volume_steps(mode)
+            poll=self.volume_poll;current='0';exchanges=poll(0)
+            indices=list(range(1,count+1))+list(range(count-1,-1,-1))
+            for index in indices:
+                level=self.percent_text(self.target(index,mode))
+                exchanges+=poll(current)+[(f'setvol {level}\n'.encode(),b'OK\n')]+poll(level)
+                current=level
+            self.server(exchanges);self.assertEqual(self.lib.test_poll(),1)
+            for n,index in enumerate(indices):
+                self.assertEqual(self.lib.test_step_confirm(1 if n<count else -1),1)
+                self.assertAlmostEqual(self.lib.test_fraction(),self.target(index,mode),places=7)
+            self.threads[-1].join()
+
+    def test_squared_mode_quantized_echo_retains_logical_position(self):
+        self.lib.test_set_volume_steps(64);poll=self.volume_poll
+        t33=self.percent_text(self.target(33,64));t34=self.percent_text(self.target(34,64))
+        self.server(poll('25.4')+[(f'setvol {t33}\n'.encode(),b'OK\n')]+poll('26.1951')+
+                    poll('26.1951')+[(f'setvol {t34}\n'.encode(),b'OK\n')]+poll('27.8319')+
+                    poll('27.8319')+[(f'setvol {t33}\n'.encode(),b'OK\n')]+poll('26.1951')+poll('30'))
+        for direction,actual in [(1,.261951),(1,.278319),(-1,.261951)]:
+            self.assertEqual(self.lib.test_step_confirm(direction),1)
+            self.assertAlmostEqual(self.lib.test_fraction(),actual,places=6)
+        self.assertEqual(self.lib.test_poll(),1);self.assertEqual(self.lib.test_grid_target(),-1)
+
+    def test_integer_only_server_retry_keeps_actual_readback(self):
+        self.lib.test_set_volume_steps(64);poll=self.volume_poll
+        t33=self.percent_text(self.target(33,64))
+        self.server(poll(25)+[(f'setvol {t33}\n'.encode(),b'ACK [2@0] {setvol} need integer\n'),
+                             (b'setvol 27\n',b'OK\n')]+poll(27)+poll(27)+[(b'setvol 28\n',b'OK\n')]+poll(28))
+        self.assertEqual(self.lib.test_step_confirm(1),1);self.assertAlmostEqual(self.lib.test_fraction(),.27,places=6)
+        self.assertEqual(self.lib.test_step_confirm(1),1);self.assertAlmostEqual(self.lib.test_fraction(),.28,places=6)
+
+    def test_permission_error_is_not_retried(self):
         self.lib.test_set_volume_steps(64)
-        self.server([(b'status\n',b'volume: 5\nstate: pause\nOK\n'),(b'currentsong\n',b'OK\n'),
-                     (b'setvol 6.25\n',b'ACK [4@0] {setvol} permission denied\n')])
-        self.assertEqual(self.lib.test_poll(),1)
+        value=self.percent_text(self.target(33,64))
+        self.server(self.volume_poll(25)+[(f'setvol {value}\n'.encode(),b'ACK [4@0] {setvol} permission denied\n')])
         self.assertEqual(self.lib.test_step_confirm(1),0)
 
-    def test_coloplay_reuses_raw_mpd_volume_grid_without_changing_setting(self):
-        for configured,requested,level,usage,count,expected in [(16,64,67,233,1,68.75),(64,16,67,233,1,75),(16,64,67,234,1,65.625),(64,16,0,234,1,0),(16,64,99,233,10,100),(64,1,67,233,1,68.75)]:
-            self.lib.test_set_volume_steps(configured)
-            self.server([(f'setvol {expected}\n'.encode(),b'OK\n')])
-            self.assertIn(self.lib.test_coloplay(2,usage,count,requested,level,1,7),(2,4))
+    def test_remote_snapshot_contains_raw_target_scale_and_completed_request(self):
+        self.lib.test_set_volume_steps(64);poll=self.volume_poll
+        value=self.percent_text(self.target(33,64))
+        self.server(poll('25.4')+[(f'setvol {value}\n'.encode(),b'OK\n')]+poll('26.1951'))
+        self.assertEqual(self.lib.test_remote_confirm(8,1),1)
+        self.assertAlmostEqual(self.lib.test_fraction(),.261951,places=6)
+        self.assertEqual(self.lib.test_grid_target(),self.target(33,64))
+        self.assertEqual(self.lib.test_grid_steps(),64);self.assertEqual(self.lib.test_volume_request(),8)
 
-    def test_coloplay_rejects_old_session_and_unknown_mixer_without_wire_command(self):
+    def test_coloplay_ignores_controller_step_fields_for_all_scales(self):
+        for mode,old_field,level,usage,count,index in [(16,64,67,233,1,14),(64,16,67,233,1,53),(16,64,67,234,1,12),(2,64,61,233,1,31),(5,16,61,234,1,12),(64,16,0,234,1,0),(16,64,99,233,10,16)]:
+            self.lib.test_set_volume_steps(mode)
+            value=self.percent_text(self.target(index,mode))
+            self.server(self.volume_poll(level)+[(f'setvol {value}\n'.encode(),b'OK\n')])
+            self.assertIn(self.lib.test_coloplay(2,usage,count,old_field,50,1,7),(2,4))
+            self.threads[-1].join()
+
+    def test_coloplay_batches_count_every_scale_detent(self):
+        self.lib.test_set_volume_steps(64)
+        for usage,index in [(233,35),(234,29)]:
+            value=self.percent_text(self.target(index,64))
+            self.server(self.volume_poll('25.4')+[(f'setvol {value}\n'.encode(),b'OK\n')])
+            self.assertEqual(self.lib.test_coloplay(2,usage,3,1,0,1,7),2);self.threads[-1].join()
+
+    def test_coloplay_rejects_old_session_and_missing_mixer(self):
         self.assertEqual(self.lib.test_coloplay(2,233,1,64,50,1,999),3)
-        self.assertEqual(self.lib.test_coloplay(2,233,1,64,-1,1,7),5)
-        self.peer.setblocking(False)
+        self.server(self.volume_poll(-1));self.assertEqual(self.lib.test_coloplay(2,233,1,64,50,1,7),5)
+        self.threads[-1].join();self.peer.setblocking(False)
         with self.assertRaises(BlockingIOError):self.peer.recv(1)
 
     def test_coloplay_media_controls_preserve_explicit_play_pause_semantics(self):
         for usage,play,expected in [(205,1,b'pause 1\n'),(205,2,b'pause 0\n'),(176,0,b'play\n'),(177,1,b'pause 1\n'),(181,1,b'next\n'),(182,1,b'previous\n'),(183,1,b'stop\n')]:
-            self.server([(expected,b'OK\n')])
-            self.assertEqual(self.lib.test_coloplay(1,usage,1,0,50,play,7),2)
+            self.server([(expected,b'OK\n')]);self.assertEqual(self.lib.test_coloplay(1,usage,1,0,50,play,7),2)
 
     def test_coloplay_seek_release_does_not_touch_the_legacy_hold_path(self):
-        self.server([(b'seekcur +5\n',b'OK\n')])
-        self.assertEqual(self.lib.test_coloplay(1,179,1,1,50,1,7),2)
-        self.assertEqual(self.lib.test_coloplay_seeking(),1)
-        self.assertEqual(self.lib.test_coloplay(4,0,1,0,50,1,7),2)
+        self.server([(b'seekcur +5\n',b'OK\n')]);self.assertEqual(self.lib.test_coloplay(1,179,1,1,50,1,7),2)
+        self.assertEqual(self.lib.test_coloplay_seeking(),1);self.assertEqual(self.lib.test_coloplay(4,0,1,0,50,1,7),2)
         self.assertEqual(self.lib.test_coloplay_seeking(),0)
 
-    def test_volume_steps_snap_to_grid_before_one_notch(self):
-        for steps,up,down in [(16,43.75,31.25),(64,39.0625,35.9375)]:
-            self.lib.test_set_volume_steps(steps)
-            for command,expected in [(b'@volume_up',up),(b'@volume_down',down)]:
-                self.server([(f'setvol {expected}\n'.encode(),b'OK\n')])
-                self.assertEqual(self.lib.test_toggle(command,0,37,0),1)
-                self.threads[-1].join()
+    def test_native_controls_use_configured_scale_and_fresh_volume(self):
+        for mode,index in [(16,11),(64,40),(2,19),(5,8)]:
+            self.lib.test_set_volume_steps(mode);value=self.percent_text(self.target(index,mode))
+            self.server(self.volume_poll(37)+[(f'setvol {value}\n'.encode(),b'OK\n')])
+            self.assertEqual(self.lib.test_toggle(b'@volume_up',0,50,0),1);self.threads[-1].join()
 
-    def test_switching_volume_grid_uses_raw_server_level(self):
-        self.server([(b'setvol 68.75\n',b'OK\n')])
-        self.assertEqual(self.lib.test_volume_mode_change(),1)
-
-    def test_volume_steps_clamp_without_disabling_controls(self):
-        for command,level,expected in [(b'@volume_up',100,100),(b'@volume_down',0,0)]:
-            self.server([(f'setvol {expected}\n'.encode(),b'OK\n')])
-            self.assertEqual(self.lib.test_toggle(command,0,level,0),1)
-            self.threads[-1].join()
-        self.assertEqual(self.lib.test_toggle(b'@volume_up',0,-1,0),1)
+    def test_volume_clamps_at_both_ends_and_missing_mixer_sends_nothing(self):
+        for command,level in [(b'@volume_up',100),(b'@volume_down',0)]:
+            self.server(self.volume_poll(level)+[(f'setvol {level}\n'.encode(),b'OK\n')])
+            self.assertEqual(self.lib.test_toggle(command,0,level,0),1);self.threads[-1].join()
+        self.server(self.volume_poll(-1));self.assertEqual(self.lib.test_toggle(b'@volume_up',0,-1,0),1)
         self.assertIn(b'mixer is unavailable',self.lib.test_message())
 
-    def test_mute_restores_actual_volume_and_shuffle_uses_server_state(self):
-        for command,vol,shuffle,expected in [(b'@mute',67,0,b'setvol 0\n'),(b'@mute',0,0,b'setvol 68.75\n'),(b'@shuffle',50,1,b'random 0\n')]:
-            self.server([(expected,b'OK\n')])
-            self.assertEqual(self.lib.test_toggle(command,0,vol,shuffle),1)
-            self.threads[-1].join()
+    def test_mute_restores_on_selected_scale(self):
+        self.lib.test_set_volume_steps(16)
+        for command,volume,value in [(b'@mute',67,'0'),(b'@mute',0,'66.015625')]:
+            self.server([(f'setvol {value}\n'.encode(),b'OK\n')]);self.assertEqual(self.lib.test_toggle(command,0,volume,0),1);self.threads[-1].join()
 
 if __name__=='__main__': unittest.main()

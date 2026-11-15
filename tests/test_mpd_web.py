@@ -70,9 +70,9 @@ class SetupFormTest(unittest.TestCase):
         self.assertEqual(self.submit()['host'],'')
 
     def test_volume_step_options_submit_numeric_grids(self):
-        self.assertEqual(self.page.locator('#volume_steps option').all_text_contents(),['1/16','1/64'])
+        self.assertEqual(self.page.locator('#volume_steps option').all_text_contents(),['1/16 Squared Curve','1/64 Squared Curve','2% Integer','5% Integer'])
         self.assertEqual(self.page.locator('#volume_steps').input_value(),'16')
-        for steps in [64,16]:
+        for steps in [64,16,2,5]:
             self.page.locator('#volume_steps').select_option(str(steps))
             self.page.evaluate('saveConfig()')
             self.page.wait_for_function('dirty.volume_steps === undefined')

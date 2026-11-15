@@ -13,11 +13,11 @@ current supervisor and saved-controller list. The private UUID service is
 `firmware/main/coloplay_ble_protocol.h` in both projects defines 20-byte frames.
 The extension carries commands once, without also injecting their HID reports.
 
-Supported controls: volume host-step or explicit 1/16 and 1/64, mute, Play/Pause,
+Supported controls: Volume Up/Down using Tab5's saved 1/16 or 1/64 grid, mute, Play/Pause,
 Play, Pause, Stop, Previous/Next Track, bounded Fast Forward/Rewind and navigation
 keys. The raw MPD volume, playing/paused/stopped state, seek direction, position,
 track identity and bounded title/artist are sent back. No mixer is reported as
--1. Explicit grids do not modify the saved native grid. Existing local speaker
+-1. ColoPlay step fields from older firmware are ignored. Existing local speaker
 volume is independent. Keyboard support is unmodified arrows, Return/Escape,
 Page Up/Down, brackets, C and digits 1–7. `*` toggles the currently playing song's
 server star from any playback/library screen. Bind **Bluetooth HID key** to
@@ -71,3 +71,57 @@ OTA verified running ELF SHA-256
 saved configuration and the MPD endpoint were preserved, BLE reconnected and
 live feedback above 5% was observed. The evidence bundle is in the sibling
 ColoPlay checkout's ignored `backups/volume-bar/tab5/` directory.
+
+
+Host-owned volume control: ColoPlay sends direction and detent count only.
+Before each volume command Tab5 polls MPD, computes the nearest grid point
+in that direction, and issues absolute `setvol`. At exact grid points it moves
+to the adjacent point. For a 1/64 grid, 25.40% moves down to 25% or up to
+26.5625%. The first confirmed readback within half a grid step anchors the
+requested point to the hardware's actual value. Subsequent equal readbacks
+preserve that grid reference; external changes and MPD reconnect discard it, and a
+changed grid uses fresh actual volume. The target is never substituted for BLE
+feedback. Batches count all detents and use the same native grid. ColoPlay's
+screen/ring show actual feedback with no local prediction.
+
+
+Host-volume validation (2026-11-15): 102 MPD tests, 9 volume/grid tests, the
+ColoPlay BLE fixture and 21 rebuilt native UI CTests passed. Application-only
+OTA verified ELF SHA-256
+`e03cd3fd693aa7a15b5d6cfd84728c7671c20a82838625757d7793c9f26fcece`.
+Saved Tab5 settings and the MPD endpoint were preserved. Live repeated volume
+reversals returned to the exact starting readback; the controller showed only
+actual feedback and migrated its bindings to direction-only values.
+
+
+Negotiated prediction extension: `CP_CAP_VOLUME_PREDICT` is advertised alongside
+float feedback. HELLO reports the native grid. Extended `CP_VOLUME_STATE` keeps
+actual float volume at bytes 8–11 and result at byte 12, adding step count at
+13, the last completed volume request ID at 14–15 and confirmed grid target at
+16–19 (-1 when unanchored). Target and completion ID are published atomically
+with mixer state; a late result envelope may contain a newer snapshot watermark.
+This permits immediate controller prediction and replay of unconfirmed turns
+without overriding Tab5's absolute MPD operation or actual feedback. Older peers
+continue receiving their original frame layout. No additional packets are used.
+
+
+Four-profile volume scales: HELLO byte 8 and volume-state byte 13 carry IDs
+16 (1/16 Squared Curve), 64 (1/64 Squared Curve, default), 2 (2% Integer) or
+5 (5% Integer). `CP_CAP_VOLUME_SCALE` must be negotiated alongside prediction;
+legacy peers fall back to raw feedback so they cannot misinterpret curved IDs.
+The HELLO normalized increment is in control coordinates. State actual/target
+floats remain raw MPD scalars. Display/prediction uses the selected scale and
+its shared constant lookup tables. A squared display position `x` requests `x²`;
+readback returns to the nearest logical position, including hardware-quantized
+values. Integer profiles send whole MPD percentages. Saved choices use the
+existing `volume_steps` JSON field; unrelated settings are preserved.
+
+
+Scale validation (2026-11-15): 101 MPD tests, 8 scale/volume tests, the
+extended/legacy BLE fixture and 21 rebuilt native UI CTests passed. Every
+squared/linear table position round-trips; simulated device quantization maps
+back to the intended squared control position. Native keyboard/touch and web
+checks cover all four choices. Application-only OTA verified ELF SHA-256
+`ff8d0e65d739760ce8ecd418658e95951cf83d530d5c6aca91676210f0da8c68`.
+The live check synchronized all four profiles to ColoPlay, matched both
+readouts, preserved raw playing volume and restored the saved profile.
