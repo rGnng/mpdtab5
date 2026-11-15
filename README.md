@@ -39,9 +39,11 @@ saved in `/sdcard/mpd/config.json` and is also available on the web System page.
 **1/64** (1.5625% per notch), following [Headunit](https://github.com/rGnng/headunit).
 Each notch snaps to the nearest position, then moves one position. Volume stays
 as a normalized floating-point fraction internally and over the ColoPlay BLE
-extension: 1/16 and 1/64 positions are exact. Only the MPD `setvol` command rounds
-to an integer percentage. Its matching status echo preserves the fractional
-target; external mixer changes replace it with the reported server level.
+extension: 1/16 and 1/64 positions are exact. MPD commands and status parsing
+retain fractional percentages, matching Tracks `628ee5b` (`setvol 6.25` means
+6.25%). An integer-only server's explicit invalid-argument reply triggers a
+rounded retry, remembered until reconnect. External mixer changes replace the
+local target with the reported server level.
 The setting is saved on SD and is also available on the web System page.
 Volume changes briefly replace the clock with a centered volume bar. Further
 changes update its fill and extend the display for about two seconds. Mute

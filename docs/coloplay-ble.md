@@ -26,6 +26,15 @@ Shift+8 is also accepted: usage 37 (`0x25`), modifier 2 (left Shift) or 32 (righ
 Shift). These are HID usages, not ASCII codes. C is usage 6, modifiers 0, and
 opens/closes the context menu on Now Playing. Other modified keys are rejected.
 
+Volume uses normalized floats on BLE and fractional percentages on MPD, matching
+[Tracks `628ee5b`](https://github.com/rGnng/tracks/commit/628ee5b).
+For example, a fine upward step from 5% sends `setvol 6.25` and parses
+`volume: 6.25` as 0.0625. Four decimal percent digits preserve every 1/64 step.
+This removes the whole-percent round trip that could stall repeated turns at
+5%. An explicit invalid-argument ACK from an integer-only MPD server triggers
+one rounded retry and selects integer commands until reconnect. Permission and
+network errors are not retried; unrelated external mixer changes remain authoritative.
+
 Commands enter the existing MPD worker queue. Results follow backend processing
 and polling; initial Accepted means queued. State publishes approximately every
 500 ms and results also wake a NimBLE event. The GATT driver keeps bounded queues,
@@ -51,3 +60,14 @@ credential/legacy-fixture failures; comparing failure identities found no new
 failures. See `tests/test_coloplay_ble.py` for production-driver tests covering
 reordered characteristics, nonce/HELLO, raw state, deduplication, unsupported
 keys, busy results and stale connection generations.
+
+
+Fractional MPD update (2026-11-15): 100 MPD Python tests, 6 volume-control
+checks, the ColoPlay driver fixture and 21 native UI CTests passed. The decimal
+parser/sender regression covers escaping 5%, all 64 grid positions in both
+directions, external changes and integer-only-server fallback. Application-only
+OTA verified running ELF SHA-256
+`045ef555a9034871641967235a2a317dae091a644c1dde34a453ce91e8ae5198`;
+saved configuration and the MPD endpoint were preserved, BLE reconnected and
+live feedback above 5% was observed. The evidence bundle is in the sibling
+ColoPlay checkout's ignored `backups/volume-bar/tab5/` directory.

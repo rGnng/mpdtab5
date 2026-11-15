@@ -70,7 +70,8 @@ static bool mpd_updating;
 static unsigned reported_queue_size;
 static bool remote_repeat, remote_single;
 static float muted_volume=0.5f, volume_target=-1.0f;
-static int server_volume=-1;
+static float server_volume=-1.0f;
+static bool volume_integer_only=false;
 static uint8_t coloplay_seek;
 static uint32_t coloplay_session;
 static int64_t coloplay_seek_deadline,coloplay_next_seek;
@@ -415,7 +416,12 @@ static bool song_field(const char *key,const char *value,void *ctx) {
 static bool status_field(const char *key,const char *value,void *ctx) {
     mpd_state_t *s=ctx;
     if(!strcmp(key,"state")) s->play_status=!strcmp(value,"play") ? 1 : !strcmp(value,"pause") ? 2 : 0;
-    else if(!strcmp(key,"volume")) { server_volume=atoi(value);s->volume=server_volume<0 ? -1.0f : server_volume/100.0f; }
+    else if(!strcmp(key,"volume")) {
+        char *end;const float percent=strtof(value,&end);
+        while(*end==' '||*end=='\t')++end;
+        server_volume=end==value||*end||!(percent>=0&&percent<=100)?-1.0f:percent;
+        s->volume=server_volume<0 ? -1.0f : server_volume/100.0f;
+    }
     else if(!strcmp(key,"random")) s->shuffle=atoi(value)!=0;
     else if(!strcmp(key,"repeat")) remote_repeat=atoi(value)!=0;
     else if(!strcmp(key,"single")) remote_single=atoi(value)!=0;
@@ -482,9 +488,12 @@ static bool poll_state(void) {
     take(); snprintf(next.device_name,sizeof(next.device_name),"MPD · %.48s",config.host); give();
     mpd_updating=false; remote_repeat=remote_single=false; reported_queue_size=0; server_volume=-1;
     if(!mpd_wire_command(&wire,"status",status_field,NULL,&next)) return false;
-    /* Keep a confirmed fractional target through the integer MPD echo. An
-     * external mixer change takes ownership as soon as its percentage differs. */
-    if(server_volume >= 0 && volume_target >= 0 && server_volume == volume_percent(volume_target))
+    /* Tracks returns fractional percentages. Integer-only MPD peers use the
+     * negotiated fallback; external mixer changes remain authoritative. */
+    const float volume_difference=next.volume-volume_target;
+    if(server_volume >= 0 && volume_target >= 0 &&
+       ((volume_difference>=-0.000001f&&volume_difference<=0.000001f)||
+        (volume_integer_only&&server_volume==volume_percent(volume_target))))
         next.volume=volume_target;
     else volume_target=-1.0f;
     next.repeat=remote_repeat ? (remote_single ? 1 : 2) : 0;
@@ -654,8 +663,22 @@ static bool play_selection(const uint64_t *keys,int count,int start) {
     return simple(cmd);
 }
 static bool set_volume(float target) {
-    char command[32];snprintf(command,sizeof(command),"setvol %d",volume_percent(target));
-    if(!simple(command)) return false;
+    char command[32];
+    if(volume_integer_only)snprintf(command,sizeof(command),"setvol %d",volume_percent(target));
+    else {
+        // Four decimal percent digits retain every 1/64 position exactly.
+        snprintf(command,sizeof(command),"setvol %.4f",target*100.0f);
+        char *end=command+strlen(command)-1;
+        while(*end=='0')*end--=0;
+        if(*end=='.')*end=0;
+    }
+    if(!simple(command)) {
+        // Retry only an explicit invalid-argument ACK, never network failures.
+        if(volume_integer_only||!strchr(command,'.')||!strstr(wire.error,"ACK [2@"))return false;
+        snprintf(command,sizeof(command),"setvol %d",volume_percent(target));
+        if(!simple(command))return false;
+        volume_integer_only=true;
+    }
     volume_target=target;
     return true;
 }
@@ -720,7 +743,7 @@ static bool generation_changed(uint32_t generation) { take(); bool changed=gener
 static void disconnected(void) {
     mpd_wire_close(&wire);
     mpd_wire_close(&events);
-    take(); state.connected=state.identified=false; state.library_syncing=false; state.play_status=0; state.revision++;volume_target=-1.0f;coloplay_seek=0;
+    take(); state.connected=state.identified=false; state.library_syncing=false; state.play_status=0; state.revision++;volume_target=-1.0f;volume_integer_only=false;coloplay_seek=0;
     queue_size=0; queue_revision++; art_valid=false; art_revision++;
     uint64_t *old_stars=star_keys; star_keys=NULL; star_count=0; star_revision++; state.starred=false;
     give(); free(old_stars);

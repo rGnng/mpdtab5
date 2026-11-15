@@ -52,7 +52,9 @@ static void *test_reallocate(void *ptr,size_t n) {
 static mpd_wire_t wire;
 static mpd_state_t state;
 static float muted_volume=0.5f,volume_target=-1.0f;
-static int server_volume=-1,mpd_playlist_version;
+static float server_volume=-1.0f;
+static bool volume_integer_only=false;
+static int mpd_playlist_version;
 static mpd_config_t config;
 static char current_uri[4096];
 static uint32_t coloplay_session=7;static uint8_t coloplay_seek;static int64_t coloplay_seek_deadline,coloplay_next_seek;
@@ -103,7 +105,7 @@ void test_init(int fd) {
     unpaged_server=false; database_songs=0;
     allocation_limit=SIZE_MAX;largest_allocation=0;queue_size=0;queue_refresh_pending=false;
     free(star_keys);star_keys=NULL;star_count=0;star_revision=0;stars_refresh_pending=false;
-    volume_steps=16;volume_target=-1.0f;server_volume=-1;muted_volume=0.5f;
+    volume_steps=16;volume_target=-1.0f;server_volume=-1;volume_integer_only=false;muted_volume=0.5f;
     complete_count=0;
     diagnostic[0]=0; mpd_wire_init(&wire); mpd_wire_attach(&wire,fd,1000);
 }
@@ -493,16 +495,16 @@ static unsigned uri_count,uri_used;
             self.assertEqual(self.lib.test_toggle(b'@repeat',mode,50,0),1)
             self.threads[-1].join()
 
-    def test_fractional_positions_survive_integer_server_echo_and_external_changes(self):
+    def test_fractional_positions_round_trip_without_integer_conversion(self):
         self.lib.test_set_volume_steps(64)
         def poll(level):
             return [(b'status\n',f'volume: {level}\nstate: pause\nOK\n'.encode()),(b'currentsong\n',b'OK\n')]
         exchanges=poll(0)
         for index in range(1,65):
-            level=int(index*100/64+.5)
+            level=f'{index*100/64:.4f}'.rstrip('0').rstrip('.')
             exchanges += [(f'setvol {level}\n'.encode(),b'OK\n')]+poll(level)
         for index in range(63,-1,-1):
-            level=int(index*100/64+.5)
+            level=f'{index*100/64:.4f}'.rstrip('0').rstrip('.')
             exchanges += [(f'setvol {level}\n'.encode(),b'OK\n')]+poll(level)
         exchanges += poll(43)
         self.server(exchanges)
@@ -516,8 +518,46 @@ static unsigned uri_count,uri_used;
         self.assertEqual(self.lib.test_poll(),1)
         self.assertAlmostEqual(self.lib.test_fraction(),.43,places=6)
 
+    def test_fractional_status_escapes_five_percent_trap_and_adopts_external_volume(self):
+        self.lib.test_set_volume_steps(64)
+        def poll(level):
+            return [(b'status\n',f'volume: {level}\nstate: pause\nOK\n'.encode()),(b'currentsong\n',b'OK\n')]
+        self.server(poll('5')+[(b'setvol 6.25\n',b'OK\n')]+poll('6.25')+
+                    [(b'setvol 7.8125\n',b'OK\n')]+poll('7.8125')+poll('6.3')+poll('-1'))
+        self.assertEqual(self.lib.test_poll(),1)
+        self.assertEqual(self.lib.test_step_confirm(1),1)
+        self.assertEqual(self.lib.test_fraction(),4/64)
+        self.assertEqual(self.lib.test_step_confirm(1),1)
+        self.assertEqual(self.lib.test_fraction(),5/64)
+        self.assertEqual(self.lib.test_poll(),1)
+        self.assertAlmostEqual(self.lib.test_fraction(),.063,places=6)
+        self.assertEqual(self.lib.test_poll(),1)
+        self.assertEqual(self.lib.test_fraction(),-1)
+
+    def test_integer_only_server_retries_invalid_argument_and_retains_grid(self):
+        self.lib.test_set_volume_steps(64)
+        def poll(level):
+            return [(b'status\n',f'volume: {level}\nstate: pause\nOK\n'.encode()),(b'currentsong\n',b'OK\n')]
+        self.server(poll(5)+[(b'setvol 6.25\n',b'ACK [2@0] {setvol} need integer\n'),
+                            (b'setvol 6\n',b'OK\n')]+poll(6)+
+                    [(b'setvol 8\n',b'OK\n')]+poll(8)+poll(7))
+        self.assertEqual(self.lib.test_poll(),1)
+        self.assertEqual(self.lib.test_step_confirm(1),1)
+        self.assertEqual(self.lib.test_fraction(),4/64)
+        self.assertEqual(self.lib.test_step_confirm(1),1)
+        self.assertEqual(self.lib.test_fraction(),5/64)
+        self.assertEqual(self.lib.test_poll(),1)
+        self.assertAlmostEqual(self.lib.test_fraction(),.07,places=6)
+
+    def test_fractional_volume_does_not_retry_permission_errors(self):
+        self.lib.test_set_volume_steps(64)
+        self.server([(b'status\n',b'volume: 5\nstate: pause\nOK\n'),(b'currentsong\n',b'OK\n'),
+                     (b'setvol 6.25\n',b'ACK [4@0] {setvol} permission denied\n')])
+        self.assertEqual(self.lib.test_poll(),1)
+        self.assertEqual(self.lib.test_step_confirm(1),0)
+
     def test_coloplay_reuses_raw_mpd_volume_grid_without_changing_setting(self):
-        for configured,requested,level,usage,count,expected in [(16,64,67,233,1,69),(64,16,67,233,1,75),(16,64,67,234,1,66),(64,16,0,234,1,0),(16,64,99,233,10,100),(64,1,67,233,1,69)]:
+        for configured,requested,level,usage,count,expected in [(16,64,67,233,1,68.75),(64,16,67,233,1,75),(16,64,67,234,1,65.625),(64,16,0,234,1,0),(16,64,99,233,10,100),(64,1,67,233,1,68.75)]:
             self.lib.test_set_volume_steps(configured)
             self.server([(f'setvol {expected}\n'.encode(),b'OK\n')])
             self.assertIn(self.lib.test_coloplay(2,usage,count,requested,level,1,7),(2,4))
@@ -541,7 +581,7 @@ static unsigned uri_count,uri_used;
         self.assertEqual(self.lib.test_coloplay_seeking(),0)
 
     def test_volume_steps_snap_to_grid_before_one_notch(self):
-        for steps,up,down in [(16,44,31),(64,39,36)]:
+        for steps,up,down in [(16,43.75,31.25),(64,39.0625,35.9375)]:
             self.lib.test_set_volume_steps(steps)
             for command,expected in [(b'@volume_up',up),(b'@volume_down',down)]:
                 self.server([(f'setvol {expected}\n'.encode(),b'OK\n')])
@@ -549,7 +589,7 @@ static unsigned uri_count,uri_used;
                 self.threads[-1].join()
 
     def test_switching_volume_grid_uses_raw_server_level(self):
-        self.server([(b'setvol 69\n',b'OK\n')])
+        self.server([(b'setvol 68.75\n',b'OK\n')])
         self.assertEqual(self.lib.test_volume_mode_change(),1)
 
     def test_volume_steps_clamp_without_disabling_controls(self):
@@ -561,7 +601,7 @@ static unsigned uri_count,uri_used;
         self.assertIn(b'mixer is unavailable',self.lib.test_message())
 
     def test_mute_restores_actual_volume_and_shuffle_uses_server_state(self):
-        for command,vol,shuffle,expected in [(b'@mute',67,0,b'setvol 0\n'),(b'@mute',0,0,b'setvol 69\n'),(b'@shuffle',50,1,b'random 0\n')]:
+        for command,vol,shuffle,expected in [(b'@mute',67,0,b'setvol 0\n'),(b'@mute',0,0,b'setvol 68.75\n'),(b'@shuffle',50,1,b'random 0\n')]:
             self.server([(expected,b'OK\n')])
             self.assertEqual(self.lib.test_toggle(command,0,vol,shuffle),1)
             self.threads[-1].join()
