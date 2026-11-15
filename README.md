@@ -46,6 +46,8 @@ Changing scales preserves current playback volume and changes the readout and
 subsequent steps. API/config `volume_steps` retains IDs 16/64 for squared profiles
 and 2/5 for integer profiles. Confirmed raw targets remain separate from actual
 readback; external changes reset the reference.
+The [macOS mixer findings](docs/coloplay-ble.md#macos-mixer-findings) explain
+observed quantization, the squared profiles and their device-specific limits.
 The setting is saved on SD and is also available on the web System page.
 Volume changes briefly replace the clock with a centered volume bar. Further
 changes update its fill and extend the display for about two seconds. Mute

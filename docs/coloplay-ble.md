@@ -28,10 +28,12 @@ opens/closes the context menu on Now Playing. Other modified keys are rejected.
 
 Volume uses normalized floats on BLE and fractional percentages on MPD, matching
 [Tracks `628ee5b`](https://github.com/rGnng/tracks/commit/628ee5b).
-For example, a fine upward step from 5% sends `setvol 6.25` and parses
-`volume: 6.25` as 0.0625. Four decimal percent digits preserve every 1/64 step.
-This removes the whole-percent round trip that could stall repeated turns at
-5%. An explicit invalid-argument ACK from an integer-only MPD server triggers
+For example, `setvol 6.25` requests raw scalar 0.0625. Status is parsed as the
+actual mixer scalar, which can differ from the request after device quantization.
+Squared targets use up to eight decimal percent digits; integer profiles send
+whole percentages. This avoids the earlier whole-percent round trip that could
+stall repeated turns at 5%. An explicit invalid-argument ACK from an
+integer-only MPD server triggers
 one rounded retry and selects integer commands until reconnect. Permission and
 network errors are not retried; unrelated external mixer changes remain authoritative.
 
@@ -73,7 +75,8 @@ live feedback above 5% was observed. The evidence bundle is in the sibling
 ColoPlay checkout's ignored `backups/volume-bar/tab5/` directory.
 
 
-Host-owned volume control: ColoPlay sends direction and detent count only.
+Historical host-owned volume release (before squared profiles and prediction):
+ColoPlay sends direction and detent count only.
 Before each volume command Tab5 polls MPD, computes the nearest grid point
 in that direction, and issues absolute `setvol`. At exact grid points it moves
 to the adjacent point. For a 1/64 grid, 25.40% moves down to 25% or up to
@@ -115,6 +118,33 @@ its shared constant lookup tables. A squared display position `x` requests `x²`
 readback returns to the nearest logical position, including hardware-quantized
 values. Integer profiles send whole MPD percentages. Saved choices use the
 existing `volume_steps` JSON field; unrelated settings are preserved.
+
+### macOS mixer findings
+
+The tested Tracks/macOS output accepts fractional MPD percentages but returns
+quantized actual mixer values. Observed request/readback pairs include raw
+25% → 25.3953% and 28.125% → 27.8319%. These fit a 128-level squared model,
+`raw = (n / 127)²`, `n = 0..127`. This is an inference for that output, not a
+guarantee about every macOS/CoreAudio device. Integer requests can also return
+different values; integer profiles do not bypass hardware quantization.
+
+The 16/64-step control grids are independent of that inferred device grid.
+Each squared control position `x` requests raw `x²` through absolute `setvol`;
+actual feedback maps to the nearest selected control target. For example,
+control position 25% requests raw 6.25%, and raw readback 6.3488% maps back to
+25%. Keeping target and echo separate avoids adding a fixed raw step to an
+already quantized readback, while the common display mapping prevents the
+earlier predicted/actual numerical bounce. External changes invalidate the
+logical reference.
+
+Both devices use 154 compile-time raw targets (616 bytes): 17/65 for the squared
+profiles and 51/21 for the 2%/5% integer profiles. These are control tables, not
+a hard-coded 128-entry macOS hardware table. Nearest lookup uses binary search;
+there is no runtime square root or logarithm. Tab5 sends the selected scale,
+actual raw scalar, confirmed raw target and completion watermark over BLE so
+ColoPlay can predict promptly and reconcile pending turns. Its physical volume
+screen shows only the icon and bar; raw values remain available in diagnostics.
+See the [full findings and examples](https://github.com/rGnng/esp32colo/blob/main/docs/tab5-integration.md#observed-macos-volume-scale).
 
 
 Scale validation (2026-11-15): 101 MPD tests, 8 scale/volume tests, the
