@@ -181,8 +181,25 @@ static void now_playing_keys(void)
           "Context Enter must activate Star rather than pause playback");
     ui_handle_key(UI_KEY_ENTER);ui_handle_key(UI_KEY_BACK);
 
-    ui_handle_key(UI_KEY_PAGE_UP);pump(600);
-    check(np_queue_visible,"Page Up still opens Up Next");
+    ui_handle_key(UI_KEY_PAGE_UP);ui_handle_key(UI_KEY_PAGE_DOWN);pump(300);
+    player_get_snapshot(&snap);
+    check(!np_queue_visible && g_current_screen==SCR_NOW_PLAYING && snap.track.id==second.id,
+          "Page Up/Down with no list must not open Up Next, switch tabs or change playback");
+    ui_handle_key(UI_KEY_QUEUE);pump(600);
+    check(np_queue_visible,"The explicit Queue action must open Up Next");
+    focus_select(np_queue_focus_start);
+    ui_handle_key(UI_KEY_PAGE_UP);pump(100);
+    check(np_queue_visible && g_focus_index==np_queue_focus_start,
+          "Page Up at the queue start must keep Up Next open and retain queue focus");
+    int page_rows=lv_obj_get_content_height(np_queue_list)/NP_QUEUE_ROW_H;
+    int page_target=np_queue_focus_start+(page_rows>1 ? page_rows-1 : 1);
+    if(page_target>=g_focus_count)page_target=g_focus_count-1;
+    ui_handle_key(UI_KEY_PAGE_DOWN);pump(100);player_get_snapshot(&snap);
+    check(np_queue_visible && g_focus_index==page_target && snap.track.id==second.id,
+          "Page Down must page open queue rows without changing playback");
+    ui_handle_key(UI_KEY_PAGE_UP);pump(100);
+    check(np_queue_visible && g_focus_index==np_queue_focus_start,
+          "Page Up must return to the queue start without focusing transport controls");
     focus_select(np_queue_focus_start);
     ui_handle_key(UI_KEY_DOWN);player_get_snapshot(&snap);
     check(g_focus_index==np_queue_focus_start+1 && snap.track.id==second.id,
@@ -195,6 +212,25 @@ static void now_playing_keys(void)
     check(snap.track.id==queued.id && snap.status==PLAYER_PLAYING,"Up Next Enter must play the selected queue row");
     ui_handle_key(UI_KEY_BACK);pump(400);
     check(!np_queue_visible,"Back still closes Up Next");
+    ui_handle_key(UI_KEY_QUEUE);pump(400);
+    ui_handle_key(UI_KEY_QUEUE);pump(400);
+    check(!np_queue_visible,"The explicit Queue action must also close Up Next");
+    ui_handle_key(UI_KEY_SCREEN_PREV);pump(400);
+    check(np_queue_visible,"Previous-tab navigation at Now Playing must retain its queue shortcut");
+    ui_handle_key(UI_KEY_BACK);pump(300);
+    ui_handle_key(UI_KEY_SCREEN_NEXT);pump(500);
+    check(g_current_screen==SCR_ALBUMS,"Next-tab navigation must still open Albums");
+    int selected=albums_selected;
+    ui_handle_key(UI_KEY_PAGE_DOWN);pump(200);
+    check(g_current_screen==SCR_ALBUMS && albums_selected>selected,
+          "Page Down in Albums must page its list while retaining the tab");
+    ui_handle_key(UI_KEY_PAGE_UP);pump(200);
+    check(g_current_screen==SCR_ALBUMS && albums_selected<=selected,
+          "Page Up in Albums must page back without switching tabs");
+    ui_handle_key(UI_KEY_SCREEN_PREV);
+    ui_handle_key(UI_KEY_PAGE_UP);ui_handle_key(UI_KEY_PAGE_DOWN);pump(500);
+    check(g_current_screen==SCR_NOW_PLAYING && !np_queue_visible,
+          "Page keys immediately after switching to Now Playing must leave Up Next closed");
 }
 
 static void context_album_delayed_refresh(void)

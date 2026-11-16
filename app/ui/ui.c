@@ -3778,19 +3778,16 @@ static void ui_dispatch_key(ui_key_t key)
             ui_back();
             break;
         case UI_KEY_PAGE_UP:
-            /* Page Up/Down belong to lists now. On Now Playing, Up still
-             * opens the queue because there is no list to page. */
-            if(ui_list_page(-1)) break;
-            if(g_current_screen == SCR_NOW_PLAYING) {
-                np_toggle_queue();
-            }
+            ui_list_page(-1);
             break;
         case UI_KEY_PAGE_DOWN:
             ui_list_page(1);
             break;
+        case UI_KEY_QUEUE:
+            if(g_current_screen == SCR_NOW_PLAYING) np_toggle_queue();
+            break;
         case UI_KEY_SCREEN_PREV: {
-            /* The controller's "previous page" button opens the queue on
-             * Now Playing, matching the Page Up shortcut. */
+            /* Previous-tab navigation retains the queue shortcut at home. */
             if(g_current_screen == SCR_NOW_PLAYING) {
                 np_toggle_queue();
                 break;
@@ -7438,12 +7435,22 @@ static void songs_swipe_page(int direction)
     songs_swipe_guard = lv_tick_get();
 }
 
-/* Page Up/Down pages the visible list first; on other screens it keeps the
- * previous screen-navigation behaviour. Also useful for testing paging with a
- * USB keyboard or the serial debug keys. */
+/* Page Up/Down only page lists; they never open panels or switch screens. */
 static bool ui_list_page(int direction)
 {
     if(g_page_loading) return true;
+    if(g_current_screen == SCR_NOW_PLAYING) {
+        if(!np_queue_visible || !np_queue_list) return false;
+        if(g_focus_count > np_queue_focus_start) {
+            int rows = lv_obj_get_content_height(np_queue_list) / NP_QUEUE_ROW_H;
+            int current = g_focus_index < np_queue_focus_start ? np_queue_focus_start : g_focus_index;
+            int target = current + direction * (rows > 1 ? rows - 1 : 1);
+            if(target < np_queue_focus_start) target = np_queue_focus_start;
+            if(target >= g_focus_count) target = g_focus_count - 1;
+            focus_select(target);
+        }
+        return true;
+    }
     if(g_current_screen == SCR_ALBUMS) {
         albums_swipe_page(direction);
         return true;

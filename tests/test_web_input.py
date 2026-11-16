@@ -39,11 +39,16 @@ int parse(const char *name) { ui_key_t key; return web_key_parse(name,&key) ? (i
 
     def test_named_controls_and_legacy_aliases(self):
         for name, alias in [('up','w'), ('down','s'), ('enter','\r'), ('back','b'),
-                            ('queue','p'), ('tabprev','['), ('tabnext',']'),
+                            ('pageup','p'), ('pagedown','n'), ('tabprev','['), ('tabnext',']'),
                             ('nowplaying','1'), ('albums','2'), ('artists','3'),
                             ('songs','4'), ('playlists','5'), ('play','7')]:
             self.assertEqual(self.parse(name), self.parse(alias))
             self.assertGreaterEqual(self.parse(name), 0)
+
+    def test_queue_is_separate_from_paging_and_tab_navigation(self):
+        self.assertGreaterEqual(self.parse('queue'), 0)
+        for key in ['pageup', 'pagedown', 'p', 'n', 'tabprev', 'tabnext']:
+            self.assertNotEqual(self.parse('queue'), self.parse(key))
 
     def test_media_commands_are_distinct(self):
         values = [self.parse(k) for k in ['prev','next','play','star','shuffle','repeat','volup','voldown','mute']]

@@ -205,7 +205,7 @@ int state(int n) {
 
     def test_media_and_tab_navigation_are_not_queued(self):
         self.lib.show(1)
-        for key in ('7','NEXT_TRACK','PREV_TRACK','SCREEN_NEXT','SCREEN_PREV','3','BACK'):
+        for key in ('7','NEXT_TRACK','PREV_TRACK','SCREEN_NEXT','SCREEN_PREV','QUEUE','3','BACK'):
             self.assertFalse(self.lib.defer(self.key(key)), key)
         self.assertEqual(self.lib.state(4),0)
 

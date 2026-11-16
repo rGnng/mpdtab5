@@ -37,6 +37,7 @@ typedef enum {
     UI_KEY_STAR,
     UI_KEY_SHUFFLE,
     UI_KEY_REPEAT,
+    UI_KEY_QUEUE,
 } ui_key_t;
 
 /**

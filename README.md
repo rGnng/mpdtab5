@@ -76,6 +76,11 @@ On Now Playing with the queue closed, **Down** skips to the next track,
 toggles Play/Pause. This includes ColoPlay knob navigation and presses. Up Next
 and the context menu retain Up/Down selection and Enter activation.
 
+**Page Up/Down** only page lists, including Up Next when it is already open.
+They do nothing on Now Playing with the queue closed. **[** and **]** retain
+tab navigation; **[** on Now Playing toggles Up Next. The web **Up Next** button
+uses a separate queue action.
+
 Tap or drag the Now Playing progress bar to seek, including with Up Next open.
 The position previews while dragging and sends one seek on release. Paused
 playback stays paused; changing track or leaving the view cancels an unfinished drag.

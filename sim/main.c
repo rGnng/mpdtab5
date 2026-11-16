@@ -44,7 +44,7 @@ static void print_usage(const char * argv0)
     printf("  --help                Show this help\n\n");
     printf("Keys: Up/Down = knob, Enter = knob press (hold 650 ms = context menu),\n");
     printf("      7 = play/pause, Backspace = back,\n");
-    printf("      PageUp/PageDown = previous/next menubar item, C = context menu;\n");
+    printf("      PageUp/PageDown = page lists, [ and ] = previous/next tab, C = context menu;\n");
     printf("      1-6 reserved.\n");
     printf("In interactive mode the mouse acts as the touch panel.\n");
 }

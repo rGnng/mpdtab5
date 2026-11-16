@@ -245,7 +245,7 @@ static bool web_key_parse(const char *name, ui_key_t *key)
         {"enter", UI_KEY_ENTER},
         {"back", UI_KEY_BACK},
         {"context", UI_KEY_CONTEXT},
-        {"queue", UI_KEY_PAGE_UP},
+        {"queue", UI_KEY_QUEUE},
         {"pageup", UI_KEY_PAGE_UP},
         {"pagedown", UI_KEY_PAGE_DOWN},
         {"tabprev", UI_KEY_SCREEN_PREV},
