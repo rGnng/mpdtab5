@@ -13,7 +13,7 @@ The original [esp32colo project](https://github.com/rGnng/esp32colo) began as a
 proof of concept for rebuilding the ColoPlay firmware. Its code and history
 were imported here, and remain a reference for other ColoPlay projects.
 Development now focuses on ColoPlay as an MPD/MPD Tab5 controller, using BLE
-today and a planned direct USB CDC-ACM link. See the
+or a direct [USB CDC-ACM link](../docs/coloplay-usb.md). See the
 [migration record](../docs/coloplay-migration.md).
 
 > **Compatibility and warranty:** This is a rewritten replacement firmware.
@@ -22,17 +22,17 @@ today and a planned direct USB CDC-ACM link. See the
 
 ## Current baseline
 
-Current source: **`0.6.33-navigation-nvs`**. Tab5 owns the selected volume scale:
+Current source: **`0.7.2-usb-lease`**. Tab5 owns the selected volume scale:
 **1/16 Squared Curve**, **1/64 Squared Curve** (default), **2% Integer**, or
-**5% Integer**. ColoPlay synchronizes it over BLE and predicts immediate
+**5% Integer**. ColoPlay synchronizes it over USB or BLE and predicts immediate
 screen/ring response. Small curved hardware readback differences map back to
 the same displayed scale position. Commands remain Up/Down only.
 The [macOS volume findings](docs/tab5-integration.md#observed-macos-volume-scale)
 explain raw mixer quantization and the squared control profiles.
 The volume screen shows a speaker icon and bar; command outcomes
-stay in Device diagnostics and the web log. General combines WiFi and USB
+stay in Device diagnostics and the web log. Connection combines WiFi and USB
 status in one USB & Network panel, with separate modal editors and grouped controls.
-The dedicated [Bluetooth playback page](docs/firmware.md#bluetooth-playback)
+The dedicated [Playback page](docs/firmware.md#playback)
 configures separate Playing, Paused and Stopped/Disconnected light plans. Ring
 and Buttons independently follow the scene or use custom colors, fills and
 brightness. Screen elements, text scrolling and screen state fallbacks are
@@ -43,7 +43,7 @@ lighting and searchable HID keys remain available.
 Both devices use application-only OTA. Source/build identity, validation results
 and image fingerprints are in the
 [release record](docs/development.md#current-verified-release).
-The deployed 0.6.33 production image occupies **3.10 MiB**, leaving **1.40 MiB** of
+The deployed 0.7.2 production image occupies **3.11 MiB**, leaving **1.39 MiB** of
 headroom in either 4.5 MiB OTA slot. The embedded playback font uses **1.41 MiB**
 of that image; see the [application storage budget](docs/flash.md#application-slots-and-storage-budget).
 The working firmware provides:
@@ -52,7 +52,7 @@ The working firmware provides:
   Web screen capture and automatic preview refresh are disabled.
 - Rainbow or static-color LEDs; separate screen, ring and key brightness controls.
   All three default to **70%** and save to NVS.
-- Compact Bootstrap dark configuration: General, Scenes, Bluetooth playback and Device pages,
+- Compact Bootstrap dark configuration: Connection, Controls, Playback, Lighting and Device pages,
   served locally over WiFi or USB CDC-ECM. USB offers **CDC-ACM Serial + USB
   JTAG** (default) or **CDC-ACM Serial + CDC-ECM Network**, with no network-only
   mode. The active serial console provides commands and application logs.
@@ -87,14 +87,14 @@ exposed to light outside the case has not been established.
 
 ## Bluetooth and Tab5
 
-Enable **General → Bluetooth**, start pairing, then scan/select **ColoPlay**
+Enable **Connection → Bluetooth**, start pairing, then scan/select **ColoPlay**
 on Tab5. A bonded BLE connection carries controls and authoritative MPD volume,
 Playing/Paused/Stopped, track metadata, seek direction and position feedback.
 The action editor groups Device and Bluetooth commands; volume offers
 Up/Down commands using Tab5's configured grid, with separate volume/playback screens and
 proportional ring feedback. See [pairing, actions and limits](docs/tab5-integration.md).
 
-For direct navigation, choose **Scenes → + Tab5 navigation**, then **Activate scene**.
+For direct navigation, choose **Controls → + Tab5 navigation**, then **Activate scene**.
 The new scene uses knob turn/press for item selection, Button 1 for Back,
 Buttons 2/3 for previous/next view (hold to page repeatedly), and Button 4 for
 the context menu. Its idle screen shows Tab5's current view and focused item

@@ -10,7 +10,7 @@ connecting ColoPlay retains other saved controllers.
 
 The optional navigation extension adds current view and focused-item feedback
 without changing Tab5's existing key actions. On updated ColoPlay firmware,
-choose **Scenes → + Tab5 navigation**, then **Activate scene**. Its new scene
+choose **Controls → + Tab5 navigation**, then **Activate scene**. Its new scene
 uses knob turn/press for navigation/select, Button 1 for Back, Buttons 2/3 for
 previous/next view, and Button 4 for context. Holding Buttons 2/3 starts repeated
 Page Up/Down after 350 ms; repeat/release timing belongs to ColoPlay. Press-and-
@@ -51,9 +51,13 @@ reads do not move selection. Application-only OTA is also verified with ColoPlay
 ELF SHA-256 and live round-trip checks are recorded in
 [navigation OTA validation](mpd-validation.md#coloplay-navigation-ota-verification--2026-11-16).
 
+USB CDC-ACM is also available through Tab5's USB-A port; see the
+[wired controller guide](coloplay-usb.md). Both transports use the same controls
+and feedback; USB owns input after its handshake.
+
 ## Pairing and existing transport
 
-On ColoPlay, enable General → Bluetooth and Start pairing. Scan/select ColoPlay
+On ColoPlay, enable Connection → Bluetooth and Start pairing. Scan/select ColoPlay
 in Tab5's existing Bluetooth page. Encrypted bonding and reconnect reuse the
 current supervisor and saved-controller list. The private UUID service is
 `a91c0001-c169-4acb-9f5d-121d621d17b5`;

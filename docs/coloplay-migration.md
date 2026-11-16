@@ -65,4 +65,7 @@ USB-A host port to ColoPlay is planned, preserving Tab5's USB-C CDC-NCM network
 connection. It needs framing, session ownership and duplicate suppression
 before it can share controls/state with BLE. No USB transport or PC companion
 is implemented by this merge; see the
-[transport plan](../coloplay/docs/tab5-integration.md#next-usb-cdc-acm-transport).
+[USB transport guide](coloplay-usb.md).
+
+USB transport was subsequently implemented after this migration; see the
+[wired controller guide](coloplay-usb.md) for the current behavior and validation.

@@ -1,14 +1,15 @@
 # Desktop gadget guide
 
-Current source baseline: **0.6.33-navigation-nvs**. The gadget is configured
-through the **General**, **Scenes**, **Bluetooth playback** and **Device** pages. Desktop uses a navigation rail; mobile uses
+Current source baseline: **0.7.2-usb-lease**. The gadget is configured
+through the **Connection**, **Controls**, **Playback**, **Lighting** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
 [build/update/recovery](flash.md) instructions are maintained separately.
 The [verified release record](development.md#current-verified-release) identifies
 the compiled and OTA-tested image and its source baseline. Bluetooth controls,
 pairing and feedback are described in the
-[Tab5 integration guide](tab5-integration.md); Serial remains deferred.
+[Tab5 integration guide](tab5-integration.md). The [USB CDC-ACM link](../../docs/coloplay-usb.md)
+uses the same controls and feedback; no PC companion is required.
 
 ## Connect
 
@@ -21,11 +22,12 @@ scripts and icons are served by the gadget with no CDN, external fonts or
 Bootstrap JavaScript. Static CSS/JS use compressed, cached local assets. Status
 refreshes every two seconds while the page is visible and pauses in hidden tabs.
 
-## General
+## Connection
 
-The USB & Network overview spans the top of the page. Below it, desktop groups
-Lighting, Sound and Sleep in the left column, with Bluetooth and Time in the
-right column. Narrow screens stack the groups.
+USB & Network and Bluetooth pairing share this page. The controller link shows
+USB CDC-ACM after its handshake, or Bluetooth without a wired controller.
+Lighting has its own page; Time, Sound and Sleep are under Device.
+Existing saved scenes, bindings and settings are preserved.
 
 ### USB & Network
 
@@ -82,6 +84,21 @@ eFuse changes. ROM recovery remains REC + center knob while reconnecting power.
 Host enumeration, USB-network HTTP and serial round trips require checks on the
 computer physically attached to the USB cable; WiFi telemetry alone is not proof.
 
+## Lighting
+
+The default LED mode is **Rainbow** or **Static color**. Screen, ring and key LEDs
+have independent manual 0–100% sliders. Initial levels are **70%**. Settings
+survive reboots/OTA. Scene actions can change saved selections or apply temporary
+effects without replacing them. **Now** reports the effective channel brightness,
+including scene overrides and zero while asleep.
+
+Ambient-light readings, calibration and automatic dimming have been removed.
+No usable sensor exposed to external light has been established on this unit.
+Previously saved brightness percentages, colors and scenes remain intact;
+old Auto selections are ignored.
+
+## Device settings
+
 ### NTP servers
 
 Configure one required primary and up to two optional fallback servers, using
@@ -95,19 +112,6 @@ fallbacks and UTC. Existing primary/timezone settings migrate without resetting.
 SNTP synchronizes hourly and restarts on WiFi reconnect. USB supplies local
 access; WiFi remains the gadget's Internet connection.
 
-### Lighting
-
-General LED mode is **Rainbow** or **Static color**. Screen, ring and key LEDs
-have independent manual 0–100% sliders. Initial levels are **70%**. Settings
-survive reboots/OTA. Scene actions can change saved selections or apply temporary
-effects without replacing them. **Now** reports the effective channel brightness,
-including scene overrides and zero while asleep.
-
-Ambient-light readings, calibration and automatic dimming have been removed.
-No usable sensor exposed to external light has been established on this unit.
-Previously saved brightness percentages, colors and scenes remain intact;
-old Auto selections are ignored.
-
 ### Sound
 
 **Scene change sound** enables cues for scene selection through the web/API.
@@ -117,7 +121,7 @@ saved with the action. This also controls binding-triggered scene cues and
 660 Hz, 50 ms cue. Next/Previous use 880/440 Hz for 90 ms, including wraparound;
 direct scene selection follows the displayed scene order. Play tone uses its chosen
 frequency for 200 ms. Unchanged selection and failed scene saves are silent.
-All cues use **General → Sound → Sound effects volume**; 0% is silent.
+All cues use **Device → Sound → Sound effects volume**; 0% is silent.
 
 New actions start with Sound off; choosing Play tone enables it. Existing tone
 and scene cues retain their behavior during migration, while other actions
@@ -137,12 +141,12 @@ saved brightness selections. WiFi, USB, OTA and input handling remain
 available. **Toggle screen / LEDs** in Device can also wake it. A scene whose
 idle screen is Blank still keeps its display off after waking; its LEDs resume.
 
-## Bluetooth playback
+## Playback
 
 This page defines shared playback appearance. It applies when the active scene
-uses a Bluetooth playback/volume idle screen or playback-progress ring, and
-while a Bluetooth screen action is visible. Scenes keep their idle-screen,
-color and brightness choices. Pairing remains in General.
+uses a playback/MPD-volume idle screen or playback-progress ring, and
+while a playback screen action is visible. Scenes keep their idle-screen,
+color and brightness choices. Pairing is under Connection. Both USB and BLE use these settings.
 
 **Lights** has three tabs: **Playing**, **Paused** and **Stopped**. Stopped
 includes connected playback state 0, disconnects, stale feedback and unknown
@@ -200,7 +204,7 @@ records remain readable; use a 0.6.33-or-newer recovery image after saving.
 
 ### Tab5 navigation scene
 
-Choose **Scenes → + Tab5 navigation**, then **Activate scene**. This appends a
+Choose **Controls → + Tab5 navigation**, then **Activate scene**. This appends a
 new, fully editable **Tab5 Navigation** scene with 11 bindings, leaving existing
 scenes and Global bindings intact. A free scene and 11 free binding slots are
 required; an existing scene with that name is never overwritten.
@@ -228,7 +232,7 @@ Both ColoPlay and Tab5 need the navigation extension. Stale/disconnected feedbac
 shows the existing connecting icon. The new stream does not wake a sleeping
 ColoPlay or change scene brightness, playback lighting or settings.
 
-## Scenes
+## Controls
 
 **Default** always exists, cannot be deleted or renamed, and its bindings are
 editable. Each scene is a tab above its settings panel. Selecting a tab edits
@@ -249,8 +253,8 @@ for screen, ring and buttons, followed by the key binding table. Each LED group 
 **Save settings** to persist the scene. Colors apply when that scene is active;
 selecting an inactive tab edits its saved configuration. Each brightness channel
 has **Use General** or **Override**. Override enables that scene's saved
-percentage; Use General follows the General percentage while remembering the
-override values. General's Now values show resolved output.
+percentage; Use General follows the default percentage on the Lighting page while remembering the
+override values. Lighting's Now values show resolved output.
 Brightness actions adjust the active scene's override when enabled, otherwise
 the General setting; action-driven writes are debounced for 1.5 seconds. Temporary action effects override the
 scene colors and return to them when they expire. Proportional ring feedback
@@ -375,7 +379,7 @@ The command selector groups Device actions by purpose and adds Bluetooth control
 Adjustments take a signed per-step value; setters use an absolute percentage.
 Speaker actions control this gadget's ES8311 output, not the computer's volume.
 Bluetooth adds remote Volume Up/Down, playback controls and HID
-keys. General contains enable/pair/forget controls. Bluetooth volume/playback
+keys. Connection contains Bluetooth enable/pair/forget controls. Bluetooth volume/playback
 screens and proportional volume ring feedback use returned fractional MPD state.
 The volume screen shows a speaker icon and horizontal bar, with
 immediate prediction using the step and grid reference synchronized from Tab5.
@@ -490,7 +494,7 @@ retained. The firmware updater and log status also use title-side notifications.
 
 ### Dropdown menus
 
-Dropdowns use the same local dark styling throughout General, Scenes and the
+Dropdowns use the same local dark styling throughout Connection, Controls and the
 binding editor. Longer lists, including timezones and grouped commands, include
 **Search options**. Choose with a mouse/touch or use arrows, Home/End and
 Enter/Space. Escape closes the menu; Tab continues through the form. Menus fit
@@ -527,7 +531,7 @@ repeat without releasing it. Reversed pairs can be configured independently.
 **Ring display** remains a scene setting beside the screen/color choices.
 Select Bluetooth playback progress to opt into the playback ring. Fill styles,
 state behavior and shared appearance are configured in
-[Bluetooth playback](#bluetooth-playback). Bottom to top fills both sides from
+[Bluetooth playback](#playback). Bottom to top fills both sides from
 the bottom to the top, with partial LED brightness between steps. Action light
 effects take priority temporarily and return to playback lighting on expiry.
 The Bluetooth playback screen has a compact playback-state icon at the top and centered
@@ -537,7 +541,7 @@ glyph form; distinct simplified/traditional characters stay separate. A slim pro
 the LED ring can also show progress. By default unavailable feedback uses the local
 `andrsrxn:bluetooth-connecting` icon, without connection text.
 
-**General → Sound → Sound effects volume** controls generated tones, including
+**Device → Sound → Sound effects volume** controls generated tones, including
 scene-switch sounds. It defaults to 70%; zero mutes tones. Remote playback volume
 and the gadget codec speaker setting remain independent. See the
 [Tab5 scene mapping](tab5-integration.md#direct-navigation-profile-0632).

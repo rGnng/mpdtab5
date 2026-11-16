@@ -7,7 +7,7 @@ requests in the [API](api.md), and build/update procedures in [Flashing](flash.m
 Bluetooth controls, pairing and the bidirectional media-state contract are in the
 [Tab5 integration guide](tab5-integration.md). The firmware now lives under
 `coloplay/` in MPD Tab5; see the [migration record](../../docs/coloplay-migration.md).
-A direct USB CDC-ACM transport is planned. A PC companion is outside the current scope.
+A direct [USB CDC-ACM transport](../../docs/coloplay-usb.md) is implemented. A PC companion is outside the current scope.
 
 ## Compact scene persistence (0.6.33)
 
@@ -166,6 +166,59 @@ reload, fixed title notifications and scene saves preserving the legacy style.
 The device-served release record below remains the last verified OTA.
 
 ## Current verified release
+
+**0.7.2-usb-lease** was application-only OTA'd on **2026-11-16** to
+`ota_app1`. The image is **3,259,696 bytes**, leaving **1,458,896 bytes
+(1.39 MiB)** per 4.5 MiB slot. MD5 is `8c3aa685f912001f628eebac9b5d467d`;
+SHA-256 is `08d7e0454c918115bc55b49fd58a8cb3ed143ba6172f7c27b8b2acf33a483503`.
+The embedded ELF SHA-256 is `e7c6f67d681efc5b6bb1be16487f93964335d65559cc09d110982475bf5ebc25`.
+
+The matching Tab5 image is **2,923,008 bytes**, with verified ELF SHA-256
+`48d23f77130fef8b47d745e0e9fc67c2233fa02e38105eb04e837d370ba79de2`.
+Both devices preserve bootloaders/partitions. ColoPlay remains in default
+CDC-ACM Serial + USB JTAG mode; Tab5 retains its USB-C CDC-NCM computer/MPD link.
+The shared definitions and firmware are based on combined repository `2290a2b`.
+
+USB CDC-ACM carries the existing controls, volume prediction, playback and
+navigation feedback. A challenge/session handshake gives USB input ownership,
+with CRC framing, duplicate suppression and stale queued-command rejection.
+BLE remains available wirelessly. The dedicated serial I/O task keeps USB
+independent of HTTP. Session health uses validated heartbeats, tolerating the
+Arduino Serial/JTAG connected flag's brief SOF gaps. These fixes followed a
+reconnect observed during the initial 0.7.0/0.7.1 checks. See the
+[USB guide](../../docs/coloplay-usb.md) for implementation and limits.
+
+Live saved-binding checks cover view switching, knob focus, both paging
+directions, context/Back and volume up/down over USB. BLE sends no commands
+during those USB operations. The final image's volume round trip restores its
+starting grid position and raw readback. A partial HTTP header was then held
+beyond the USB lease while heartbeats continued. Forty-five subsequent live
+samples keep one session/open count, zero lease timeouts, zero invalid/stale
+frames and zero drops; Tab5's MPD, SD and USB network remain online.
+The user confirmed physical controls over USB, then normal wireless controls
+with another power source. A subsequent USB connection was observed with a
+new matching session and fresh focus. Physical wireless feedback is user-reported;
+this is not a measured USB-versus-BLE latency or long-duration qualification.
+
+Saved Tab5 configuration, all ColoPlay scene definitions/order/active selection,
+General and playback settings remain unchanged. The web pages now group
+Connection, Controls, Playback, Lighting and Device. Clock, Sound and Sleep
+are under Device; pairing is under Connection. Stored IDs/schemas are unchanged.
+
+The full ColoPlay host script, shared C/C++ include check, production USB
+host/device/ownership fixtures, and all 21 native Tab5 UI CTests pass. The
+feedback/framing fixture passes ASan/UBSan. Full Tab5 Python discovery ran 496
+tests with 25 skips and the same eight failures/five setup errors as before;
+subsequent handover/worker regressions pass in the 66-test focused run. Browser
+checks cover all five pages at 375/768/1280 pixels with no JavaScript errors,
+external resources, writes or horizontal overflow. Local links/anchors pass.
+
+Frozen images/ELFs, OTA logs, pre/post settings, round-trip/stability records,
+physical-test notes and browser evidence are local under ignored
+`backups/usb-controller/`. The portable `backups/recovery/` bundle now contains
+the verified final image; the preserved 0.6.33 image also supports `CSR1`.
+
+## Previous navigation and compact-NVS release
 
 **0.6.33-navigation-nvs** was application-only OTA'd on **2026-11-16** to
 `ota_app1`. The 3,248,048-byte image leaves **1,470,544 bytes

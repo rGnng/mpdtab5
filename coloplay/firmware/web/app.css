@@ -80,3 +80,5 @@ select[data-dropdown-native]{display:none!important}.dropdown-select{display:blo
 .playback-source{grid-column:1/-1}
 
 @media(max-width:600px){.scene-strip{flex-wrap:wrap}.scene-strip-actions{order:-1;width:100%;justify-content:flex-end}.scene-tabs{flex-basis:100%}}
+
+.connection-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(18rem,1fr);gap:1rem;align-items:start}.connection-grid>section{min-width:0}.device-settings-grid{align-items:start}@media(max-width:1000px){.connection-grid{grid-template-columns:minmax(0,1fr)}}

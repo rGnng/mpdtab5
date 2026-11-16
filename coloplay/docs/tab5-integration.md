@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay source: **0.6.33-navigation-nvs**; the last verified OTA
+Current ColoPlay source: **0.7.2-usb-lease**; the last verified OTA
 is in the [release record](development.md#current-verified-release).
 Both applications now live in the [MPD Tab5 repository](../../README.md), using
 the common definitions in [shared/](../../shared/README.md).
@@ -14,7 +14,7 @@ D100H support, USB, iAP2, storage, player UI and configuration remain in place.
 
 ## Pairing
 
-1. In ColoPlay **General → Bluetooth**, enable Bluetooth and choose **Start pairing**.
+1. In ColoPlay **Connection → Bluetooth**, enable Bluetooth and choose **Start pairing**.
 2. In Tab5's existing Bluetooth page, scan and select **ColoPlay**.
 3. Check Connected, extension support and fresh feedback in ColoPlay's status.
 
@@ -195,7 +195,7 @@ The custom seek state is separate from existing USB/D100H hold state.
 
 ### Direct navigation profile (0.6.32)
 
-With both applications updated, choose **Scenes → + Tab5 navigation** on
+With both applications updated, choose **Controls → + Tab5 navigation** on
 ColoPlay, then **Activate scene**. The new scene appends without replacing the
 previous Tab5 BLE scene or any other settings. Knob turn/press navigates and
 selects, Button 1 goes Back, Buttons 2/3 switch views, Button 4 toggles the
@@ -248,7 +248,7 @@ settings are skipped by screen navigation, as in the existing Tab5 UI.
 Idle **Bluetooth playback** uses a small drawn playback-state icon at the
 top, without Playing/Paused/Stopped labels, with 16 px title/artist lines surrounding the vertical center. Long text is
 measured and ellipsized at UTF-8 boundaries, or scrolls when enabled on the
-[Bluetooth playback page](firmware.md#bluetooth-playback). A slim LCD progress bar/time sits
+[Bluetooth playback page](firmware.md#playback). A slim LCD progress bar/time sits
 below; the configured LED-ring progress remains independent. There are no emoji
 or decorative boxes. By default, when feedback is unavailable, both Bluetooth screens show
 only the locally bundled `andrsrxn:bluetooth-connecting` icon, without connection
@@ -274,7 +274,7 @@ buttons. Each target returns to playback lighting after the configured duration.
 Sleep turns both groups and the screen off. The BLE wire format and Tab5 settings
 are unchanged by this local appearance feature.
 
-General **Sound effects volume** is saved independently of brightness and remote
+Device **Sound effects volume** is saved independently of brightness and remote
 MPD volume. It scales local generated tones, including scene-change cues; 0% is
 silent. Existing scene-cue enable and high/low direction tones are retained.
 The default effect gain is 70%; the existing codec speaker level remains separate.
@@ -358,20 +358,17 @@ comparison against untouched `a34fa8a` found no new failing cases. Its focused
 MPD/volume/BLE tests and native UI CTests pass. See the release record for exact
 image fingerprints and remaining live qualification limits.
 
-## Next: USB CDC-ACM transport
+## USB CDC-ACM transport
 
-The next transport is a direct wired MPD/Tab5 controller link, using Tab5's
-USB-A host port and ColoPlay's USB-C port. It is planned, not implemented by
-the repository merge. Tab5's existing USB-C CDC-NCM network connection must
-remain available for its computer/MPD link.
+The wired controller link uses Tab5's USB-A host port and ColoPlay's USB-C port.
+It carries the same controls, playback, volume-scale and navigation feedback as
+BLE. USB is preferred after the handshake; BLE remains available wirelessly.
+Tab5's existing USB-C CDC-NCM computer/MPD network stays in place. The default
+ColoPlay Serial + JTAG mode works without changing USB settings.
 
-The wired link should reuse the shared command/state model, volume-scale
-feedback, navigation snapshots and acknowledgments. Prefer USB after a valid
-handshake and retain BLE for wireless use; session ownership and request
-deduplication must prevent one input reaching MPD twice during transport
-changes. The current ColoPlay console carries logs, so framed control messages
-must be separated from arbitrary log text. CDC-ACM is USB serial; CDC-ECM/NCM
-are USB networking and do not provide this serial transport.
+The [USB transport guide](../../docs/coloplay-usb.md) covers framing, sessions,
+input ownership, stale commands, reconnects and diagnostics. Serial logs cannot
+be interpreted as controls. CDC-ACM is USB serial; CDC-ECM/NCM are networking.
 
 A PC companion and general-purpose keyboard macros are outside the current
 MPD/Tab5 focus. The original proof-of-concept firmware remains available as a

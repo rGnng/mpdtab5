@@ -36,13 +36,13 @@ Only forms, buttons, navs, tables and their required Bootstrap foundation are
 included. Layout, readable typography and density are defined in app.css.
 Inputs/table text use 16 px; labels/buttons/log text use 14 px. Narrow screens
 stack scene field labels above their controls to preserve room for the text. The configuration uses
-General, Scenes, Bluetooth playback and Device panels, a desktop navigation rail and mobile tabs.
+Connection, Controls, Playback, Lighting and Device panels, a desktop navigation rail and mobile tabs.
 Add new top-level pages to app.js's `pages` array and matching navigation/panel
 markup; APIs and NVS remain the responsibility of the firmware services.
 
 The current panels include:
 
-- General: combined read-only WiFi/USB Network overview with separate modal
+- Connection: combined read-only WiFi/USB Network overview with separate modal
   editors. Beneath it, Lighting/Sound/Sleep and Bluetooth/Time use independent
   desktop columns and stack on narrow screens. Manual brightness, scene-change
   sound, inactivity timeout, sound gain and Bluetooth enable/pair/forget remain.
@@ -121,7 +121,7 @@ in the desktop header. Connection/version and IP are in the desktop sidebar
 footer, hidden in the compact mobile layout.
 The binding-table heading has no live status text.
 
-Bluetooth playback has independent Lights and Screen panels. `playback.js`
+Playback has independent Lights and Screen panels shared by USB and BLE. `playback.js`
 loads `/api/playback`, keeps separate panel drafts, and submits partial updates
 only on Save. Notifications occupy fixed title-side space. All its selects use
 `Dropdowns.enhance`; checkbox labels are clickable. Ring progress and Bluetooth

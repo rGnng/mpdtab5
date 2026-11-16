@@ -34,7 +34,8 @@ controller; the original work remains a reference for other ColoPlay projects.
 The two devices still build separate application images. Tab5's existing build
 commands below are unchanged. For ColoPlay, follow its
 [build and recovery guide](coloplay/docs/flash.md); run its scripts from `coloplay/`.
-BLE is the working controller link. A direct USB CDC-ACM link is planned.
+ColoPlay supports [USB CDC-ACM controls and feedback](docs/coloplay-usb.md)
+through Tab5's USB-A port, with BLE for wireless use.
 See the [migration record](docs/coloplay-migration.md) for history and validation.
 
 ## First use

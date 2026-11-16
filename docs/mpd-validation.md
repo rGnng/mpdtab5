@@ -187,3 +187,17 @@ checks passed across the three themes after this settings simplification.
 
 Verified ELF SHA-256 for the 2026-11-13 audit:
 `1932e788c87dbca4b2efaa9cb405ec8e3b1be7a9ceea2fa9c4fb5d05cb144d51`.
+
+
+## ColoPlay USB CDC-ACM verification — 2026-11-16
+
+The Tab5 application was OTA'd and verified by ELF SHA-256
+`48d23f77130fef8b47d745e0e9fc67c2233fa02e38105eb04e837d370ba79de2`, paired with ColoPlay 0.7.2-usb-lease.
+USB-A carries CDC-ACM controls and feedback; USB-C CDC-NCM remains connected to
+the computer/MPD server. Saved Tab5 configuration matches the pre-OTA snapshot.
+MPD and SD remain available. Live USB navigation, paging, context/Back and
+volume up/down checks pass with no duplicate BLE commands or framing drops.
+The user confirmed USB and wireless physical controls, and a subsequent USB
+session reconnect is observed. Protocol, ownership, state and build/UI checks
+are detailed in the [USB guide](coloplay-usb.md) and
+[ColoPlay release record](../coloplay/docs/development.md#current-verified-release).

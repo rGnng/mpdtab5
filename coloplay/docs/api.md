@@ -8,12 +8,13 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.6.33-navigation-nvs**, including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.7.2-usb-lease**, including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
 contract and Tab5 setup are documented in the [integration guide](tab5-integration.md).
-Serial companion framing remains proposed.
+The [USB controller link](../../docs/coloplay-usb.md) carries the same payloads
+as BLE in a framed CDC-ACM stream. A PC companion is outside the current scope.
 The same server is reachable over WiFi and USB Ethernet; substitute the actual
 address in these examples. Requests use port 80 and form-encoded POST fields,
 not JSON request bodies. Successful configuration responses are JSON.
@@ -28,7 +29,7 @@ not JSON request bodies. Successful configuration responses are JSON.
 | `GET /api/log` | Bounded application log; optional `after` byte cursor | None; JSON, no-store |
 | `GET /api/general` | General sound and inactivity-sleep preferences | None; JSON |
 | `POST /api/general` | Partially update General sound/sleep preferences | None; JSON |
-| `GET /api/playback` | Shared Bluetooth playback appearance | None; JSON |
+| `GET /api/playback` | Playback appearance shared by USB and BLE | None; JSON |
 | `POST /api/playback` | Partially update playback light/screen appearance | None; JSON |
 | `GET /api/bluetooth` | Bluetooth configuration, pairing/link and remote state | None; JSON |
 | `POST /api/bluetooth` | Enable/disable, pair/stop or forget | None; JSON |
@@ -69,6 +70,7 @@ curl http://coloplay.local/api/status
 | `buttons` | Debounced names, pins, pressed state and counters after hardware startup; early raw inputs during startup/recovery |
 | `clock` | Primary/fallback servers, valid local/Unix time, sync history and SNTP state |
 | `general` | Persistent `sound_volume`, `scene_change_sound`, `sleep_timeout_minutes` and `stored` |
+| `controller` | Active `transport` (`usb_cdc_acm`, `ble`, `none`), USB session, fresh playback/navigation, volume scale/prediction results and frame counters |
 | `scene` | Active scene, standby/current screen, NVS state, last event/action/result and temporary feedback |
 | `usb` | Configured/active mode, stages, link, counters, DHCP and lease state |
 | `hardware` | Startup stage, page/tour, awake/paused state, `idle_ms` since the last inactivity reset and peripheral objects |

@@ -103,14 +103,14 @@ OTA writes a complete application to the inactive slot, so either slot must fit
 the full firmware. The inactive slot retains its previous application until the
 next update writes it; it is not a dedicated minimal recovery image.
 
-The verified **0.6.33-navigation-nvs** production image has this budget:
+The verified **0.7.2-usb-lease** production image has this budget:
 
 | Item | Bytes | MiB |
 |---|---:|---:|
 | Application slot capacity | 4,718,592 | 4.50 |
-| Complete production application | 3,248,048 | 3.10 |
+| Complete production application | 3,259,696 | 3.11 |
 | Embedded playback font, included in the application above | 1,477,697 | 1.41 |
-| Remaining capacity for an application of this size | 1,470,544 | 1.40 |
+| Remaining capacity for an application of this size | 1,458,896 | 1.39 |
 
 These are flash/image sizes, not free heap or PSRAM. The font stays in mapped
 flash and is not copied wholesale to RAM. Its current subset saves **875,913
