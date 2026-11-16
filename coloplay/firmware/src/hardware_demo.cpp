@@ -1,0 +1,748 @@
+#include "device_log.h"
+#include "input_trace.h"
+#include "input_worker.h"
+#include "action_lighting.h"
+#include "hardware_demo.h"
+#include "audio_demo.h"
+#include "board_pins.h"
+#include "demo_levels.h"
+#include "led_strip.h"
+#include "rotary_detents.h"
+#include "clock_service.h"
+#include "inter_clock_fonts.h"
+#include "lighting_settings.h"
+#include "scene_service.h"
+#include "scene_icons.h"
+#include "general_service.h"
+#include "idle_timer.h"
+#include "bluetooth_service.h"
+#include "volume_display.h"
+#include "playback_ring.h"
+#include "playback_service.h"
+#include "playback_assets.h"
+#include "bitmap_font.h"
+
+#include <Adafruit_NeoPixel.h>
+#include <TFT_eSPI.h>
+#include <WiFi.h>
+#include <Preferences.h>
+#include <driver/adc.h>
+#include <driver/pcnt.h>
+#include <esp_adc_cal.h>
+#include <esp_heap_caps.h>
+#include <cmath>
+#include <esp_attr.h>
+
+// Arduino numbers FSPI as 0; the IDF register macros number GPSPI2 as 2.
+// TFT_eSPI's USE_FSPI_PORT branch bridges the two. Fail the build if a
+// dependency/config change brings back the null register address.
+static_assert(SPI_PORT == 2, "TFT_eSPI must use the S3 GPSPI2 register index");
+static_assert(SPI_USER_REG(SPI_PORT) == DR_REG_SPI2_BASE + 0x10,
+              "TFT_eSPI SPI register base does not match the selected S3 bus");
+
+namespace HardwareDemo {
+namespace {
+constexpr float kTau = 6.28318530718f;
+constexpr uint16_t kBackground = 0x0843, kMuted = 0x8CB3;
+constexpr uint16_t kMint = 0x4FF4, kViolet = 0xA37F, kAmber = 0xFD87;
+constexpr const char *kPages[] = {"ORBIT", "INPUTS", "AUDIO", "SENSORS", "CLOCK"};
+constexpr int kPageCount = sizeof(kPages) / sizeof(kPages[0]);
+constexpr int kClockPage = 4;
+TFT_eSPI gTft;
+TFT_eSprite gCanvas(&gTft);
+struct Key {
+  const char *name;
+  int pin;
+  bool pullup;
+  bool raw = false, pressed = false;
+  uint32_t changed = 0, presses = 0;
+  Key(const char *label, int gpio, bool up) : name(label), pin(gpio), pullup(up) {}
+};
+Key gKeys[] = {{"KEY1", Board::kKey1, true}, {"KEY2", Board::kKey2, true},
+               {"KEY3", Board::kKey3, true}, {"KEY4", Board::kKey4, true},
+               {"KNOB", Board::kKnobButton, false},
+               {"OPEN_KEY", Board::kOpenButton, true},
+               {"REC_KEY", Board::kRecoveryButton, true}};
+bool gReady = false, gPaused = false, gDisplay = false, gEncoder = false;
+bool gAwake = true, gAuto = false, gPsramTest = false, gBacklight = false;
+int gPage = kClockPage;
+LightingSettings::Stored gLighting;
+Preferences gLightingPrefs;
+bool gLightingPrefsOpen = false, gLightingStored = false;
+bool gLightingDirty = false;
+uint32_t gLightingChangedAt = 0;
+uint8_t gSceneShown=0;
+uint32_t gSceneOverlayUntil=0;
+int gScreenLevel = 70, gRingLevel = 70, gKeysLevel = 70;
+int gLedTest = 0;
+uint32_t gLedTestUntil = 0;
+int32_t gEncoderEdges = 0, gKnobPosition = 0;
+uint32_t gInputGeneration=0,gInputActivity=0,gInputDropped=0;
+IdleTimer gIdle;
+uint32_t gSleepMinutes=60;
+uint32_t gSceneEpoch = 0;
+uint32_t gLastPage = 0, gLastFrame = 0, gFrames = 0, gLastSensors = 0;
+uint32_t gLastMetrics = 0, gPreviousFrames = 0, gPreviousTe = 0;
+uint32_t gLastLeds = 0, gLedFrames = 0, gPsramTestBytes = 0;
+float gFps = 0, gTeHz = 0;
+volatile uint32_t gTePulses = 0;
+int gSupplyRaw = 0;
+uint32_t gSupplyMv = 0;
+esp_adc_cal_characteristics_t gSupplyCal = {};
+enum Stage : uint32_t {
+  kNotStarted, kPsram, kEncoder, kSensors, kLeds, kBacklight,
+  kLcdInit, kFramebuffer, kLcdTe, kAudio, kFirstFrame, kRunning, kLedPower, kStageCount
+};
+const char *const kStageNames[] = {"not-started", "psram-test", "encoder",
+  "sensors", "leds", "backlight", "lcd-init", "framebuffer", "lcd-te",
+  "audio", "first-frame", "running", "led-power"};
+constexpr uint32_t kStageMagic = 0xC010D1A6;
+RTC_NOINIT_ATTR uint32_t gRetainedMagic;
+RTC_NOINIT_ATTR uint32_t gRetainedStage;
+Stage gStage = kNotStarted, gLastBootStage = kNotStarted;
+
+void setStage(Stage stage) {
+  gStage = stage;
+  gRetainedStage = stage;
+  gRetainedMagic = kStageMagic;
+  DeviceLog::printf("[hardware] stage=%s\n", kStageNames[stage]);
+}
+
+void IRAM_ATTR onTe() { ++gTePulses; }
+
+bool sceneOverlayVisible(uint32_t now){return gSceneOverlayUntil&&static_cast<int32_t>(gSceneOverlayUntil-now)>0;}
+bool playbackContext(){
+  const auto standby=SceneService::standbyScreen(),screen=SceneService::screen();
+  return standby==SceneSettings::kBluetoothPlaybackScreen||standby==SceneSettings::kBluetoothVolumeScreen||standby==SceneSettings::kBluetoothNavigationScreen||
+    screen==SceneSettings::kBluetoothPlaybackScreen||screen==SceneSettings::kBluetoothVolumeScreen||screen==SceneSettings::kBluetoothNavigationScreen||
+    SceneService::ringDisplay()==SceneSettings::kRingBluetoothProgress;
+}
+bool playbackAvailable(const BluetoothService::Snapshot &s){return s.fresh&&s.available&&s.playback>=0&&s.playback<=2;}
+bool screenVisible(uint32_t now){
+  if(!gAwake)return false;
+  if(sceneOverlayVisible(now))return true;
+  const auto screen=SceneService::screen();
+  if(screen==SceneSettings::kBlank)return false;
+  if(screen==SceneSettings::kBluetoothPlaybackScreen){const auto s=BluetoothService::snapshot();return PlaybackSettings::screen(PlaybackService::settings(),playbackAvailable(s),s.playback)!=2;}
+  if(screen==SceneSettings::kBluetoothNavigationScreen){const auto s=BluetoothService::snapshot();if(s.navigation.fresh&&s.navigation.ui.view==0&&!(s.navigation.ui.flags&(CP_NAV_CONTEXT|CP_NAV_QUEUE|CP_NAV_LOADING|CP_NAV_EDITING)))return PlaybackSettings::screen(PlaybackService::settings(),playbackAvailable(s),s.playback)!=2;}
+  return true;
+}
+
+void setBacklight() {
+  if (gBacklight) ledcWrite(0, screenVisible(millis()) ? gScreenLevel * 1023 / 100 : 0);
+}
+
+void updateBrightness() {
+  gScreenLevel = SceneSettings::resolvedLevel(SceneService::brightness(0),gLighting.screen).percent;
+  gRingLevel = SceneSettings::resolvedLevel(SceneService::brightness(1),gLighting.ring).percent;
+  gKeysLevel = SceneSettings::resolvedLevel(SceneService::brightness(2),gLighting.keys).percent;
+  setBacklight();
+}
+
+bool saveLighting(const LightingSettings::Stored &candidate) {
+  return gLightingPrefsOpen && gLightingPrefs.putBytes("settings", &candidate,
+      sizeof(candidate)) == sizeof(candidate);
+}
+
+void loadLighting() {
+  gLightingPrefsOpen = gLightingPrefs.begin("lighting", false);
+  LightingSettings::Stored stored;
+  if (gLightingPrefsOpen && gLightingPrefs.getBytesLength("settings") == sizeof(stored) &&
+      gLightingPrefs.getBytes("settings", &stored, sizeof(stored)) == sizeof(stored) &&
+      LightingSettings::valid(stored)) {
+    gLighting = stored;
+    gLightingStored = true;
+  } else {
+    gLightingStored = saveLighting(gLighting);
+  }
+  updateBrightness();
+}
+
+void selectPage(int page, bool automatic) {
+  gPage = constrain(page, 0, kPageCount - 1);
+  gAuto = automatic;
+  gLastPage = millis();
+}
+
+void readSensors() {
+  uint32_t sum = 0;
+  for (int i = 0; i < 16; ++i) sum += adc1_get_raw(ADC1_CHANNEL_6);
+  gSupplyRaw = sum / 16;
+  // Legacy supply estimate: calibrated ADC x3. The physical divider and
+  // scale are not established by the factory analysis; this is not battery SOC.
+  gSupplyMv = esp_adc_cal_raw_to_voltage(gSupplyRaw, &gSupplyCal) * 3;
+}
+
+void checkPsram() {
+  if (!psramFound()) return;
+  constexpr size_t kBytes = 256 * 1024;
+  auto *memory = static_cast<uint32_t *>(heap_caps_malloc(kBytes, MALLOC_CAP_SPIRAM));
+  if (!memory) return;
+  bool ok = true;
+  for (uint32_t seed : {0xA55A1234u, 0x5AA5EDCBu}) {
+    for (size_t i = 0; i < kBytes / sizeof(uint32_t); ++i) memory[i] = seed ^ (i * 2654435761u);
+    for (size_t i = 0; i < kBytes / sizeof(uint32_t); ++i) {
+      if (memory[i] != (seed ^ (i * 2654435761u))) { ok = false; break; }
+    }
+  }
+  heap_caps_free(memory);
+  gPsramTest = ok;
+  gPsramTestBytes = kBytes;
+}
+
+void setupEncoder() {
+  pinMode(Board::kEncoderA, INPUT_PULLUP);
+  pinMode(Board::kEncoderB, INPUT_PULLUP);
+  pcnt_config_t channel = {};
+  channel.unit = PCNT_UNIT_0;
+  channel.channel = PCNT_CHANNEL_0;
+  channel.pulse_gpio_num = Board::kEncoderA;
+  channel.ctrl_gpio_num = Board::kEncoderB;
+  channel.pos_mode = PCNT_COUNT_INC;
+  channel.neg_mode = PCNT_COUNT_DEC;
+  channel.lctrl_mode = PCNT_MODE_REVERSE;
+  channel.hctrl_mode = PCNT_MODE_KEEP;
+  channel.counter_h_lim = 32767;
+  channel.counter_l_lim = -32768;
+  if (pcnt_unit_config(&channel) != ESP_OK) return;
+  channel.channel = PCNT_CHANNEL_1;
+  channel.pulse_gpio_num = Board::kEncoderB;
+  channel.ctrl_gpio_num = Board::kEncoderA;
+  channel.lctrl_mode = PCNT_MODE_KEEP;
+  channel.hctrl_mode = PCNT_MODE_REVERSE;
+  if (pcnt_unit_config(&channel) != ESP_OK) return;
+  // Reject pulses shorter than 12.5 us; complete quadrature transitions
+  // cancel contact bounce before the UI consumes a full detent.
+  pcnt_set_filter_value(PCNT_UNIT_0, 1000);
+  pcnt_filter_enable(PCNT_UNIT_0);
+  pcnt_counter_clear(PCNT_UNIT_0);
+  gEncoder = pcnt_counter_resume(PCNT_UNIT_0) == ESP_OK;
+}
+
+void pollInputs(uint32_t now) {
+  if (gSceneEpoch != SceneService::epoch()) {
+    gSceneEpoch = SceneService::epoch(); gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
+    gAwake = true; gIdle.activity(now); updateBrightness();
+    if(gSceneShown!=SceneService::activeScene()){gSceneShown=SceneService::activeScene();gSceneOverlayUntil=now+1600;gLastFrame=now-200;}
+  }
+  const auto sampled=InputWorker::snapshot();
+  gEncoderEdges=sampled.edges;gKnobPosition=sampled.position;
+  const bool activity=sampled.activity!=gInputActivity;gInputActivity=sampled.activity;
+  const bool held=sampled.down!=0;
+  for(int i=0;i<SceneSettings::kInputCount;++i){gKeys[i].pressed=(sampled.down&(1u<<i))!=0;gKeys[i].presses=sampled.presses[i];}
+  if(sampled.dropped!=gInputDropped){
+    gInputDropped=sampled.dropped;InputWorker::discard();
+    gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
+    BluetoothService::cancel();DeviceLog::println("[inputs] queue overflow; cancelled pending inputs");
+  }
+  if(held||activity)gIdle.activity(now);
+  const bool wakeByInput=activity&&!gAwake;
+  InputWorker::Event event;
+  for(int i=0;i<64&&InputWorker::next(event);++i){
+    if(event.generation!=gInputGeneration)continue;
+    SceneService::event(event.input,event.gesture,event.repeat);
+    if (gSceneEpoch!=SceneService::epoch()) {
+      gSceneEpoch=SceneService::epoch(); gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
+      gAwake=true;gIdle.activity(now);updateBrightness();
+      if(gSceneShown!=SceneService::activeScene()){gSceneShown=SceneService::activeScene();gSceneOverlayUntil=now+1600;gLastFrame=now-200;}
+      break;
+    }
+  }
+  if(wakeByInput){gAwake=true;gLastFrame=now-200;updateBrightness();DeviceLog::println("[sleep] wake by input");}
+}
+
+void drawClock() {
+  const auto clock = ClockService::snapshot();
+  gCanvas.loadFont(kInterClock64);
+  gCanvas.setTextColor(TFT_WHITE, kBackground);
+  gCanvas.setTextDatum(MC_DATUM);
+  // Fixed positions keep the digits still when the sync colon appears.
+  gCanvas.drawString(String(clock.hhmm).substring(0, 2), 72, 120);
+  gCanvas.drawString(String(clock.hhmm).substring(3, 5), 168, 120);
+  if (clock.valid && clock.synced) gCanvas.drawString(":", 120, 120);
+  gCanvas.unloadFont();
+}
+
+const BitmapFont::Font &playbackFont(){static const BitmapFont::Font font(PlaybackAssets::kJapanese16,sizeof(PlaybackAssets::kJapanese16));return font;}
+void playbackText(const char *text,int baseline,uint16_t color,int maxWidth=208,uint32_t scrollMs=0){
+  char fitted[64];const auto &font=playbackFont();
+  const int width=font.width(text),left=120-maxWidth/2;
+  const bool scrolling=PlaybackService::settings()[PlaybackSettings::LongText]==1&&scrollMs&&width>maxWidth;
+  int x;
+  if(scrolling){
+    const uint32_t travel=uint32_t(width-maxWidth)*1000/24;
+    const uint32_t phase=scrollMs%(travel+2000);
+    x=left-int(phase<1000?0:phase>travel+1000?width-maxWidth:(phase-1000)*24/1000);
+  }else {font.fit(text,maxWidth,fitted,sizeof(fitted));text=fitted;x=120-font.width(text)/2;}
+  uint16_t palette[16];for(int a=0;a<16;++a)palette[a]=gCanvas.alphaBlend(a*17,color,kBackground);
+  font.draw(text,x,baseline,[&](int px,int py,uint8_t alpha){if(px>=left&&px<left+maxWidth&&py>=0&&py<240)gCanvas.drawPixel(px,py,palette[alpha]);});
+}
+void bluetoothConnecting(){
+  uint16_t palette[16];for(int a=0;a<16;++a)palette[a]=gCanvas.alphaBlend(a*17,kMuted,kBackground);
+  for(int i=0;i<32*32;++i){const uint8_t packed=PlaybackAssets::kBluetoothConnecting32[i/2],alpha=i&1?packed&15:packed>>4;if(alpha)gCanvas.drawPixel(104+i%32,104+i/32,palette[alpha]);}
+}
+
+void render(uint32_t now) {
+  setBacklight();
+  if (!gDisplay || !screenVisible(now)) return;
+  gCanvas.fillSprite(kBackground);
+  if(sceneOverlayVisible(now)) {
+    gCanvas.drawXBitmap(88,60,SceneIcons::kBitmaps[SceneService::icon()],64,64,TFT_WHITE);
+    const String name=SceneService::name();
+    const int font=gCanvas.textWidth(name,4)>200?2:4;
+    gCanvas.setTextColor(TFT_WHITE,kBackground);gCanvas.setTextDatum(MC_DATUM);
+    gCanvas.drawString(name,120,157,font);
+  } else switch (SceneService::screen()) {
+    case SceneSettings::kClock: drawClock(); break;
+    case SceneSettings::kBluetoothVolumeScreen: {
+      const auto s=BluetoothService::snapshot();
+      if(!s.fresh||!s.available){bluetoothConnecting();break;}
+      const float value=VolumeDisplay::value(s.fresh,s.available,s.displayVolume);
+      // Fixed geometry keeps command acknowledgements from shifting the layout.
+      gCanvas.drawXBitmap(104,55,SceneIcons::kVolumeUp32,32,32,TFT_WHITE);
+      constexpr int x=30,y=135,width=180,height=20;
+      gCanvas.fillRoundRect(x,y,width,height,10,gCanvas.alphaBlend(45,TFT_WHITE,kBackground));
+      const int filled=VolumeDisplay::pixels(value,width);
+      if(filled){
+        // Clip a full rounded bar so even a 1/64 step remains visible.
+        gCanvas.setViewport(x,y,filled,height);
+        gCanvas.fillRoundRect(0,0,width,height,10,TFT_WHITE);
+        gCanvas.resetViewport();
+      }
+      break;
+    }
+    case SceneSettings::kBluetoothNavigationScreen:
+    case SceneSettings::kBluetoothPlaybackScreen: {
+      using namespace PlaybackSettings;
+      const auto s=BluetoothService::snapshot();const auto &prefs=PlaybackService::settings();
+      if(SceneService::screen()==SceneSettings::kBluetoothNavigationScreen){
+        const auto &nav=s.navigation;const auto &ui=nav.ui;
+        if(!nav.fresh){bluetoothConnecting();break;}
+        if(ui.view!=0||(ui.flags&(CP_NAV_CONTEXT|CP_NAV_QUEUE|CP_NAV_LOADING|CP_NAV_EDITING))){
+          static uint16_t revision=0;static uint32_t since=0;
+          if(revision!=nav.revision){revision=nav.revision;since=now;}
+          playbackText(NavigationFeedback::viewName(ui),62,kMuted,172);
+          if(ui.flags&CP_NAV_LOADING)playbackText("Loading...",125,kMuted);
+          else if(ui.flags&CP_NAV_FOCUS)playbackText(ui.focus,125,TFT_WHITE,208,now-since);
+          if(ui.count){char count[32];snprintf(count,sizeof(count),"%lu / %lu",(unsigned long)ui.index+1,(unsigned long)ui.count);playbackText(count,181,kMuted,160);}
+          break;
+        }
+      }
+      const int mode=screen(prefs,playbackAvailable(s),s.playback);
+      if(mode==3){bluetoothConnecting();break;}
+      if(mode==1){drawClock();break;}
+      if(mode==2)break;
+      static uint64_t lastTrack=0;static char lastTitle[64]={},lastArtist[64]={};static uint32_t textSince=0;
+      if(lastTrack!=s.track||std::strcmp(lastTitle,s.title)||std::strcmp(lastArtist,s.artist)){
+        lastTrack=s.track;std::memcpy(lastTitle,s.title,sizeof(lastTitle));std::memcpy(lastArtist,s.artist,sizeof(lastArtist));textSince=now;
+      }
+      const int left=110,cy=54;
+      if(prefs[ShowStatus]){
+        if(s.seek){const int direction=s.seek==1?1:-1;for(int n=0;n<2;++n){const int x=left+(direction>0?n*8:18-n*8);gCanvas.fillTriangle(x,cy-7,x,cy+7,x+direction*7,cy,TFT_WHITE);}}
+        else if(s.playback==1)gCanvas.fillTriangle(left+2,cy-8,left+2,cy+8,left+16,cy,TFT_WHITE);
+        else if(s.playback==2){gCanvas.fillRect(left+2,cy-7,5,14,TFT_WHITE);gCanvas.fillRect(left+11,cy-7,5,14,TFT_WHITE);}
+        else gCanvas.fillRect(left+3,cy-6,12,12,TFT_WHITE);
+      }
+      const bool title=prefs[ShowTitle]&&s.title[0],artist=prefs[ShowArtist]&&s.artist[0];
+      if(title)playbackText(s.title,artist?115:127,TFT_WHITE,208,now-textSince);
+      if(artist)playbackText(s.artist,title?139:127,kMuted,208,now-textSince);
+      const uint32_t position=s.positionValid?(s.positionMs>s.durationMs?s.durationMs:s.positionMs):0;
+      if(prefs[ShowProgress]){gCanvas.drawRoundRect(46,171,148,4,2,kMuted);if(s.durationMs)gCanvas.fillRoundRect(46,171,int(uint64_t(position)*148/s.durationMs),4,2,TFT_WHITE);}
+      if(prefs[TimeDisplay]!=2){
+        char time[32];
+        if(prefs[TimeDisplay]==1){const uint32_t remaining=s.durationMs-position;snprintf(time,sizeof(time),"-%lu:%02lu",(unsigned long)(remaining/60000),(unsigned long)(remaining/1000%60));}
+        else snprintf(time,sizeof(time),"%lu:%02lu / %lu:%02lu",(unsigned long)(position/60000),(unsigned long)(position/1000%60),(unsigned long)(s.durationMs/60000),(unsigned long)(s.durationMs/1000%60));
+        playbackText(time,196,kMuted,160);
+      }
+      break;
+    }
+    default: break;
+  }
+  gCanvas.pushSprite(0, 0);
+  ++gFrames;
+}
+
+void animateLeds(uint32_t now) {
+  if (gLedTest && static_cast<int32_t>(now - gLedTestUntil) >= 0) gLedTest = 0;
+  const auto feedback = SceneService::feedback();
+  const auto remote=BluetoothService::snapshot();
+  const float remoteVolume=VolumeDisplay::value(remote.fresh,remote.available,remote.displayVolume);
+  const float remotePercent=remoteVolume<0?-1.0f:remoteVolume*100.0f;
+  const int progress=PlaybackRing::progress(remote.fresh&&remote.available,remote.playback,remote.positionMs,remote.durationMs,remote.positionValid);
+  const auto ring = SceneSettings::resolveLighting(SceneService::lighting(true),gLighting.mode==LightingSettings::kStatic,gLighting.color);
+  const auto keys = SceneSettings::resolveLighting(SceneService::lighting(false),gLighting.mode==LightingSettings::kStatic,gLighting.color);
+  const auto &prefs=PlaybackService::settings();
+  const bool playback=playbackContext();
+  const auto state=PlaybackSettings::state(playbackAvailable(remote),remote.playback);
+  const bool customRing=playback&&prefs.plan(state,PlaybackSettings::RingSource)==PlaybackSettings::Custom;
+  const bool customKeys=playback&&prefs.plan(state,PlaybackSettings::KeysSource)==PlaybackSettings::Custom;
+  const int ringMode=customRing?prefs.plan(state,PlaybackSettings::RingDisplay):PlaybackSettings::Lighting;
+  const int ringStyle=PlaybackSettings::style(prefs,state,ringMode==PlaybackSettings::Volume);
+  constexpr uint32_t kTestColors[] = {0, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF};
+  for (int i = 0; i < Board::kPixelCount; ++i) {
+    const uint16_t hue = now * 12 + i * 65536 / Board::kPixelCount;
+    const auto &light=i<Board::kRingPixels?ring:keys;
+    uint32_t color = gLedTest ? kTestColors[gLedTest] : Adafruit_NeoPixel::gamma32(
+        light.mode == SceneSettings::kSceneStatic ? light.color
+        : Adafruit_NeoPixel::ColorHSV(hue, 220, 255));
+    int level=i<Board::kKeyPixelStart?gRingLevel:gKeysLevel;
+    if(!gLedTest){
+      const bool isRing=i<Board::kRingPixels;
+      const int key=i-Board::kKeyPixelStart;
+      if(isRing?customRing:customKeys){
+        const int colorMode=prefs.plan(state,isRing?PlaybackSettings::RingColorMode:PlaybackSettings::KeysMode);
+        if(isRing?colorMode==1:colorMode==0)color=Adafruit_NeoPixel::gamma32(prefs.plan(state,isRing?PlaybackSettings::RingColor:PlaybackSettings::KeysColor));
+        else if(isRing?colorMode==2:colorMode==1)color=Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue,220,255));
+        level=PlaybackSettings::brightness(prefs,state,isRing,level);
+      }
+      const ActionFeedback::Light empty;
+      const auto &cue=isRing?feedback.ring:key>=0&&key<Board::kKeyPixels?feedback.keys[key]:empty;
+      ActionLighting::Result effect{color,level,false};
+      if(cue.led!=SceneSettings::kInherit)effect=ActionLighting::resolve(cue,color,Adafruit_NeoPixel::gamma32(cue.color),
+        cue.led==SceneSettings::kFeedbackRainbow?Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue,220,255)):0,
+        level,isRing,i,Board::kRingPixels,remote.fresh&&remote.available,remotePercent,cue.remote?PlaybackSettings::style(prefs,state,true):ringStyle,Board::kRingTopPixel);
+      color=effect.color;level=effect.brightness;
+      if(!effect.applied){
+        if(!isRing&&customKeys&&prefs.plan(state,PlaybackSettings::KeysMode)==2)color=0;
+        if(isRing){
+          if(ringMode==PlaybackSettings::Off)color=0;
+          else if(ringMode==PlaybackSettings::Progress||ringMode==PlaybackSettings::Volume){
+            const int value=ringMode==PlaybackSettings::Progress?progress:remoteVolume<0?-1:int(remoteVolume*1000+.5f);
+            int coverage=value<0?0:PlaybackRing::coverage(value,i,Board::kRingPixels,ringStyle,Board::kRingTopPixel);
+            if(playback&&value>=0){
+              const uint32_t unfilled=prefs.plan(state,PlaybackSettings::UnfilledColorMode)==0?color:Adafruit_NeoPixel::gamma32(prefs.plan(state,PlaybackSettings::UnfilledColor));
+              color=PlaybackSettings::ringColor(color,unfilled,coverage,prefs.plan(state,PlaybackSettings::UnfilledBrightness));
+            }else color=DemoLevels::scaleRgb(color,(coverage*255+500)/1000);
+          }
+        }
+      }
+    }
+    if(i>=Board::kKeyPixelStart+Board::kKeyPixels)color=0;
+    if(!gAwake)level=0;
+    LedStrip::setPixel(i, DemoLevels::scaleRgb(color, LightingSettings::pwm(level)));
+  }
+  LedStrip::show();
+  ++gLedFrames;
+}
+
+bool argument(WebServer &server, const char *name, int low, int high,
+              int &value, String &error) {
+  if (!server.hasArg(name)) return true;
+  const String raw = server.arg(name);
+  if (!raw.length()) { error = String(name) + " requires an integer"; return false; }
+  for (size_t i = 0; i < raw.length(); ++i) {
+    if (raw[i] < '0' || raw[i] > '9') {
+      error = String(name) + " requires an integer"; return false;
+    }
+  }
+  if (raw.length() > 6 || raw.toInt() < low || raw.toInt() > high) {
+    error = String(name) + " out of range"; return false;
+  }
+  value = raw.toInt();
+  return true;
+}
+}  // namespace
+
+int applyAction(const SceneSettings::Action &a, int repetitions) {
+  using namespace SceneSettings;
+  int result=-1; bool lightingChanged=false;
+  auto level = [&](uint32_t &field, bool change,int channel) {
+    const int local=SceneService::adjustBrightness(channel,change?int(a.value)*repetitions:a.value,change);
+    if(local>=0){result=local;return;}
+    field=constrain(change?int(field)+int(a.value)*repetitions:int(a.value),0,100);
+    result=field; lightingChanged=true;
+  };
+  switch (a.type) {
+    case kScreenChange: case kScreenSet: level(gLighting.screen,a.type==kScreenChange,0); break;
+    case kRingChange: case kRingSet: level(gLighting.ring,a.type==kRingChange,1); break;
+    case kKeysChange: case kKeysSet: level(gLighting.keys,a.type==kKeysChange,2); break;
+    case kVolumeChange: case kVolumeSet:
+      AudioDemo::setVolume(a.type==kVolumeChange?AudioDemo::snapshot().volume+a.value*repetitions:a.value);
+      result=AudioDemo::snapshot().volume; break;
+    case kRainbow: gLighting.mode=LightingSettings::kRainbow; lightingChanged=true; break;
+    case kStatic: gLighting.mode=LightingSettings::kStatic; gLighting.color=a.colorRgb(); lightingChanged=true; break;
+    case kToggleAwake: gAwake=!gAwake;gIdle.activity(millis());break;
+    case kSync: ClockService::requestSync(); break;
+    case kTone: break; // SceneService applies the per-action sound switch.
+    case kBluetoothVolume: {
+      const auto s=BluetoothService::snapshot();const int usage=a.value>0?0xe9:0xea;
+      if(s.extension)BluetoothService::send(CP_VOLUME,usage,repetitions);
+      else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_VOLUME,usage,1))break;
+      result=VolumeDisplay::percent(BluetoothService::snapshot().displayVolume);break;
+    }
+    case kBluetoothMedia:
+      if(a.target==2)BluetoothService::send(CP_RELEASE,a.value,1);
+      else {const auto s=BluetoothService::snapshot();if(s.extension&&(a.value==0xb5||a.value==0xb6))BluetoothService::send(CP_MEDIA,a.value,repetitions,a.target,a.target?0:200);else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_MEDIA,a.value,1,a.target,a.target?0:200))break;}
+      break;
+    case kBluetoothKey: {const auto s=BluetoothService::snapshot();if(s.extension)BluetoothService::send(CP_KEY,a.value,repetitions,a.target);else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_KEY,a.value,1,a.target))break;break;}
+    default: break;
+  }
+  if (lightingChanged) { gLightingDirty=true; gLightingChangedAt=millis(); }
+  if(a.type>=kBluetoothVolume)gLastFrame=millis()-200;
+  updateBrightness();
+  return result;
+}
+
+void captureBootStage() {
+  if (esp_reset_reason() != ESP_RST_POWERON && gRetainedMagic == kStageMagic &&
+      gRetainedStage < kStageCount) {
+    gLastBootStage = static_cast<Stage>(gRetainedStage);
+  }
+}
+
+void begin() {
+  DeviceLog::println("[hardware] initialise ColoPLAY V1 peripherals");
+  loadLighting();
+  for (Key &key : gKeys) {
+    pinMode(key.pin, key.pullup ? INPUT_PULLUP : INPUT);
+    key.raw = key.pressed = digitalRead(key.pin) == LOW;
+  }
+  gSceneShown=SceneService::activeScene();gSceneOverlayUntil=0;
+  gSceneEpoch=SceneService::epoch();gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
+  pinMode(Board::kCharge, INPUT_PULLUP);
+  setStage(kLedPower);
+  pinMode(Board::kLedPowerEnable, OUTPUT);
+  digitalWrite(Board::kLedPowerEnable, HIGH);
+  delay(2); // retain the working output-settle delay before LED traffic
+  setStage(kPsram);
+  checkPsram();
+  DeviceLog::printf("[psram] bytes=%u checked=%u passed=%d\n",
+                ESP.getPsramSize(), gPsramTestBytes, gPsramTest);
+  setStage(kEncoder);
+  setupEncoder();
+  setStage(kSensors);
+  adc1_config_width(ADC_WIDTH_BIT_12);
+  adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_12);
+  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &gSupplyCal);
+  readSensors();
+
+  setStage(kLeds);
+  LedStrip::begin();
+  // LEDC channel 0 / timer 0 matches the factory backlight configuration.
+  setStage(kBacklight);
+  gBacklight = ledcSetup(0, 5000, 10) > 0;
+  ledcAttachPin(Board::kBacklight, 0);
+  ledcWrite(0, 0);
+  setStage(kLcdInit);
+  gTft.init();
+  gTft.setRotation(0);
+  gTft.fillScreen(kBackground);
+  setStage(kFramebuffer);
+  gCanvas.setColorDepth(16);
+  gCanvas.setAttribute(PSRAM_ENABLE, true);
+  gDisplay = gCanvas.createSprite(240, 240) != nullptr;
+  // GC9A01 TE output provides physical panel scan feedback on GPIO17.
+  // This does not establish that the pixels or backlight look correct.
+  setStage(kLcdTe);
+  pinMode(Board::kLcdTe, INPUT);
+  attachInterrupt(digitalPinToInterrupt(Board::kLcdTe), onTe, RISING);
+  gTft.startWrite();
+  gTft.writecommand(0x35);  // TEON: vertical blanking only
+  gTft.writedata(0);
+  gTft.endWrite();
+  setBacklight();
+  setStage(kAudio);
+  AudioDemo::begin();
+  const bool key2Down=digitalRead(Board::kKey2)==LOW;InputTrace::begin(key2Down,key2Down);
+  if(!InputWorker::begin(gEncoder)){DeviceLog::println("[inputs] sampling task failed to start");return;}
+  gReady = true;
+  gSleepMinutes=GeneralService::sleepTimeoutMinutes();gIdle.configure(gSleepMinutes,millis());
+  gLastPage = gLastMetrics = millis();
+  setStage(kFirstFrame);
+  render(millis());
+  setStage(kRunning);
+  DeviceLog::println("[hardware] desktop gadget ready; scene bindings control inputs");
+}
+
+bool ready() { return gReady; }
+
+void tick() {
+  if (!gReady || gPaused) return;
+  const uint32_t now = millis();
+  if(gSleepMinutes!=GeneralService::sleepTimeoutMinutes()){
+    gSleepMinutes=GeneralService::sleepTimeoutMinutes();gIdle.configure(gSleepMinutes,now);
+  }
+  pollInputs(now);
+  if(gAwake&&gIdle.due(now)){
+    gAwake=false;gSceneOverlayUntil=0;setBacklight();animateLeds(now);
+    DeviceLog::println("[sleep] inactivity timeout; screen and LEDs off");
+  }
+  // Debounce knob writes so continuous turning does not wear NVS.
+  if (gLightingDirty && now - gLightingChangedAt >= 1500) {
+    gLightingStored = saveLighting(gLighting);
+    gLightingDirty = !gLightingStored;
+    gLightingChangedAt = now;
+  }
+
+  if (now - gLastSensors >= 500) { gLastSensors = now; readSensors(); }
+  if (now - gLastLeds >= 33) { gLastLeds = now; animateLeds(now); }
+  if (now - gLastFrame >= (SceneService::screen()>=SceneSettings::kBluetoothVolumeScreen ? 50u : 200u)) {
+    gLastFrame = now; render(now);
+  }
+  if (now - gLastMetrics >= 1000) {
+    const uint32_t elapsed = now - gLastMetrics, pulses = gTePulses;
+    gFps = (gFrames - gPreviousFrames) * 1000.0f / elapsed;
+    gTeHz = (pulses - gPreviousTe) * 1000.0f / elapsed;
+    gPreviousFrames = gFrames;
+    gPreviousTe = pulses;
+    gLastMetrics = now;
+  }
+}
+
+void pause(bool paused) {
+  if(gPaused!=paused){
+    InputWorker::discard();
+    gInputGeneration=InputWorker::configure(paused?0:SceneService::combinations(),paused?GestureBindings{}:SceneService::gestureBindings(),SceneService::epoch());
+  }
+  gPaused = paused;
+  if (gReady) AudioDemo::pause(paused);
+}
+
+String buttonsJson() {
+  String json = "[";
+  for (size_t i = 0; i < sizeof(gKeys) / sizeof(gKeys[0]); ++i) {
+    if (i) json += ',';
+    const Key &key = gKeys[i];
+    json += "{\"name\":\"" + String(key.name) + "\",\"pin\":" + String(key.pin);
+    json += ",\"pressed\":" + String(key.pressed ? "true" : "false");
+    json += ",\"presses\":" + String(key.presses) + "}";
+  }
+  return json + "]";
+}
+
+String statusJson() {
+  String json;
+  json.reserve(1500);
+  json += "{\"ready\":" + String(gReady ? "true" : "false");
+  json += ",\"stage\":\"" + String(kStageNames[gStage]) + "\"";
+  json += ",\"last_boot_stage\":\"" + String(kStageNames[gLastBootStage]) + "\"";
+  json += ",\"page\":" + String(gPage) + ",\"page_name\":\"" + kPages[gPage] + "\"";
+  json += ",\"auto\":" + String(gAuto ? "true" : "false");
+  json += ",\"awake\":" + String(gAwake ? "true" : "false");
+  json += ",\"idle_ms\":" + String(gIdle.elapsed(millis()));
+  json += ",\"paused\":" + String(gPaused ? "true" : "false");
+  json += ",\"display\":{\"driver\":\"GC9A01\",\"width\":240,\"height\":240";
+  json += ",\"scene_overlay\":"+String(gSceneOverlayUntil&&static_cast<int32_t>(gSceneOverlayUntil-millis())>0?"true":"false");
+  json += ",\"playback_font\":\"Noto Sans JP 16\",\"playback_font_glyphs\":"+String(PlaybackAssets::kGlyphCount)+",\"playback_font_bytes\":"+String(PlaybackAssets::kFontBytes);
+  json += ",\"framebuffer_ready\":" + String(gDisplay ? "true" : "false");
+  json += ",\"frames\":" + String(gFrames) + ",\"fps\":" + String(gFps, 1);
+  json += ",\"te_pulses\":" + String(gTePulses) + ",\"te_hz\":" + String(gTeHz, 1);
+  json += ",\"brightness\":" + String(gLighting.screen);
+  json += ",\"effective_brightness\":" + String(screenVisible(millis()) ? gScreenLevel : 0) + ",\"spi_hz\":40000000}";
+  const auto inputs=InputWorker::snapshot();
+  json += ",\"inputs\":{\"ready\":"+String(inputs.ready?"true":"false")+",\"sample_period_ms\":1,\"samples\":"+String(inputs.samples)+",\"max_sample_gap_us\":"+String(inputs.maxGapUs)+",\"queue_drops\":"+String(inputs.dropped)+"}";
+  json += ",\"encoder\":{\"ready\":" + String(gEncoder ? "true" : "false");
+  json += ",\"edges\":" + String(gEncoderEdges) + ",\"position\":" + String(gKnobPosition);
+  json += ",\"edges_per_detent\":" + String(RotaryDetents::kEdgesPerDetent);
+  json += ",\"a\":" + String(digitalRead(Board::kEncoderA));
+  json += ",\"b\":" + String(digitalRead(Board::kEncoderB)) + "}";
+  json += ",\"leds\":{\"pin\":48,\"frame_pixels\":14,\"ring_pixels\":9,\"key_pixels\":4";
+  json += ",\"key_start\":9,\"power_pin\":8,\"protocol\":\"factory-SPI3-GRB\",\"spi_hz\":3200000";
+  json += ",\"ready\":" + String(LedStrip::ready() ? "true" : "false");
+  json += ",\"transfers\":" + String(LedStrip::transfers());
+  json += ",\"error\":" + String(LedStrip::error()) + ",\"errors\":" + String(LedStrip::errors());
+  // Retain the legacy byte-scale ring brightness for older API clients.
+  json += ",\"brightness\":" + String(LightingSettings::pwm(gLighting.ring));
+  json += ",\"ring_brightness\":" + String(gLighting.ring);
+  json += ",\"keys_brightness\":" + String(gLighting.keys);
+  const auto remote=BluetoothService::snapshot();
+  json += ",\"progress_permille\":"+String(PlaybackRing::progress(remote.fresh&&remote.available,remote.playback,remote.positionMs,remote.durationMs,remote.positionValid));
+  json += ",\"ring_effective\":" + String(gAwake ? gRingLevel : 0);
+  json += ",\"keys_effective\":" + String(gAwake ? gKeysLevel : 0);
+  json += ",\"mode\":\"" + String(gLighting.mode == LightingSettings::kStatic ? "static" : "rainbow") + "\"";
+  char color[8];
+  snprintf(color, sizeof(color), "#%06lx", static_cast<unsigned long>(gLighting.color));
+  json += ",\"color\":\"" + String(color) + "\",\"test_mode\":" + String(gLedTest);
+  json += ",\"frames\":" + String(gLedFrames) + ",\"key_colors\":[";
+  for(int i=0;i<Board::kKeyPixels;++i){if(i)json+=',';snprintf(color,sizeof(color),"#%06lx",static_cast<unsigned long>(LedStrip::pixelColor(Board::kKeyPixelStart+i)));json+='"';json+=color;json+='"';}
+  json+="],\"ring_colors\":[";
+  for(int i=0;i<Board::kRingPixels;++i){if(i)json+=',';snprintf(color,sizeof(color),"#%06lx",static_cast<unsigned long>(LedStrip::pixelColor(i)));json+='"';json+=color;json+='"';}
+  json+="]}";
+  json += ",\"lighting\":{\"stored\":" + String(gLightingStored && !gLightingDirty ? "true" : "false");
+  json += "}";
+  json += ",\"sensors\":{\"vdd_raw\":" + String(gSupplyRaw);
+  json += ",\"vdd_mv_approx\":" + String(gSupplyMv);
+  json += ",\"charge_pin_low\":" + String(digitalRead(Board::kCharge) == LOW ? "true" : "false") + "}";
+  json += ",\"psram\":{\"test_passed\":" + String(gPsramTest ? "true" : "false");
+  json += ",\"tested_bytes\":" + String(gPsramTestBytes);
+  json += ",\"free_bytes\":" + String(ESP.getFreePsram()) + "}";
+  json += ",\"audio\":" + AudioDemo::statusJson() + "}";
+  return json;
+}
+
+bool configure(WebServer &server, String &error) {
+  if (!gReady) { error = "hardware not started (or recovery mode)"; return false; }
+  int page = gPage, automatic = gAuto;
+  int volume = AudioDemo::snapshot().volume, ledTest = 0;
+  int tone = 0, duration = 250, awake = gAwake;
+  if (!argument(server, "page", 0, kPageCount - 1, page, error) ||
+      !argument(server, "auto", 0, 1, automatic, error) ||
+      !argument(server, "volume", 0, 100, volume, error) ||
+      !argument(server, "led_test", 0, 4, ledTest, error) ||
+      !argument(server, "tone", 100, 4000, tone, error) ||
+      !argument(server, "duration", 30, 1500, duration, error) ||
+      !argument(server, "awake", 0, 1, awake, error)) return false;
+  if (page != kClockPage || automatic) { error = "scene mode currently supports the Clock screen only"; return false; }
+  LightingSettings::Stored candidate = gLighting;
+  if (server.hasArg("leds")) {
+    int legacy = 0;
+    if (!argument(server, "leds", 0, 64, legacy, error)) return false;
+    candidate.ring = candidate.keys = (legacy * 100 + 127) / 255;
+  }
+  auto setting = [&](const char *name, uint32_t &value, int maximum) {
+    int number = value;
+    if (!argument(server, name, 0, maximum, number, error)) return false;
+    value = number;
+    return true;
+  };
+  if (!setting("brightness", candidate.screen, 100) ||
+      !setting("ring_brightness", candidate.ring, 100) ||
+      !setting("keys_brightness", candidate.keys, 100)) return false;
+  for(const char *retired:{"auto_screen","auto_ring","auto_keys","auto_dark_raw","auto_bright_raw"})
+    if(server.hasArg(retired)){error="automatic brightness is no longer supported";return false;}
+  if (server.hasArg("led_mode")) {
+    const String mode = server.arg("led_mode");
+    if (mode != "rainbow" && mode != "static") {
+      error = "led_mode must be rainbow or static"; return false;
+    }
+    candidate.mode = mode == "static" ? LightingSettings::kStatic : LightingSettings::kRainbow;
+  }
+  if (server.hasArg("led_color")) {
+    const String color = server.arg("led_color");
+    if (color.length() != 7 || color[0] != '#') {
+      error = "led_color must be #RRGGBB"; return false;
+    }
+    uint32_t rgb = 0;
+    for (int i = 1; i < 7; ++i) {
+      const char c = color[i];
+      const int digit = c >= '0' && c <= '9' ? c - '0' :
+        c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+      if (digit < 0) { error = "led_color must be #RRGGBB"; return false; }
+      rgb = (rgb << 4) | digit;
+    }
+    candidate.color = rgb;
+  }
+  if (!LightingSettings::valid(candidate)) {
+    error = "invalid lighting settings"; return false;
+  }
+  if (memcmp(&candidate, &gLighting, sizeof(candidate)) != 0) {
+    if (!saveLighting(candidate)) { error = "could not save lighting settings"; return false; }
+    gLighting = candidate;
+    gLightingStored = true;
+    gLightingDirty = false;
+  }
+  if (server.hasArg("page") && !server.hasArg("auto")) automatic = false;
+  selectPage(page, automatic);
+  if (server.hasArg("led_test")) {
+    gLedTest = ledTest;
+    gLedTestUntil = millis() + 5000;
+  }
+  gAwake = awake;
+  if(server.hasArg("awake"))gIdle.activity(millis());
+  updateBrightness();
+  if (server.hasArg("volume")) AudioDemo::setVolume(volume);
+  if (tone) AudioDemo::beep(tone, duration);
+  return true;
+}
+
+}  // namespace HardwareDemo
