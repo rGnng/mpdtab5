@@ -216,6 +216,11 @@ void player_play_all_shuffled(void);
 void player_queue_jump(int index);
 typedef enum { PLAYER_SELECTION_TRACK, PLAYER_SELECTION_ALBUM, PLAYER_SELECTION_ARTIST } player_selection_t;
 bool player_queue_add(player_selection_t type, uint64_t id, bool next);
+/* Frozen server playlist names; index zero/Stared is managed through Star. */
+#define PLAYER_PLAYLIST_DESTINATIONS_MAX 32
+typedef struct {char name[256];uint32_t generation;} player_playlist_destination_t;
+int player_playlist_destinations(player_playlist_destination_t *out,int capacity);
+bool player_playlist_add(const player_playlist_destination_t *destination,uint64_t track_id);
 uint64_t player_queue_entry(int index);
 bool player_queue_edit(uint64_t entry, bool remove);
 bool player_track_starred(uint64_t id);

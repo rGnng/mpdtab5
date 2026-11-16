@@ -1,8 +1,39 @@
 # MPD controller validation
 
+## Add to Playlist OTA — 2026-11-16
+
+Tab5 adds a song-context destination picker, including song
+rows inside playlist details. The native UI fixture covers append/cancel, Back
+to the parent menu, preserved playback/queue/selection, track changes while the
+picker is open, deleted destinations, empty/full 32-playlist lists, cleanup and
+touch holds. Production MPD socket fixtures cover quoting, missing/reserved
+names, permission errors, full destination names and connection-generation
+rejection. Request ownership tests cover caller-buffer changes, allocation
+failures, offline/full queues and cleanup. These checks do not modify a live
+server. The firmware builds and all 21 native UI CTests pass; the 67-case MPD
+client suite and request/playback/queue fixtures pass.
+
+Tab5 accepted OTA and rebooted into ELF SHA-256
+`7c6a1e56968040e6eecfb554c3c723a059586c35fa3aa5fa50fb29204f650a29`
+(application 2,929,200 bytes). ColoPlay stayed on **0.8.1-navigation-details**,
+MD5 `16786370425fc7188f3416d290527a2f`. Saved Tab5 settings, ColoPlay scenes,
+Global bindings and active scene matched the pre-OTA snapshots.
+
+The live USB test opened Add to Playlist from Now Playing, checked the regular
+destination and Back entries, confirmed Stared was excluded, returned to the
+parent menu and closed it. Playlists, playback, volume, shuffle and repeat were
+unchanged. No live playlist append was performed; writes and failure paths were
+tested against the production MPD socket fixture and native UI mock. MPD, SD,
+USB-C CDC-NCM networking and the ColoPlay USB session remained healthy over ten
+post-test samples, with fresh secure BLE standby and no new drops, invalid or
+stale frames, or lease timeouts. Private snapshots and exact images are retained
+in the ignored `coloplay/backups/add-to-playlist-release/` bundle.
+
+The paired hashes below are historical release records.
+
 ## ColoPlay Global and star-feedback OTA — 2026-11-16
 
-The current paired release uses source **`5aeb1c3`**, ColoPlay
+The 0.8.0 paired release uses source **`5aeb1c3`**, ColoPlay
 **0.8.0-global-bindings** in `ota_app0`, and Tab5 ELF SHA-256
 `102fbf7bb669c06dca09d461f56eeb56d3cd51cad252a4cb984bdaf4380ffa3d`.
 Both application identities were verified after OTA. MPD, SD and USB-C CDC-NCM

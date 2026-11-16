@@ -22,7 +22,10 @@ or a direct [USB CDC-ACM link](../docs/coloplay-usb.md). See the
 
 ## Current baseline
 
-Current verified release: **`0.8.0-global-bindings`**, OTA-tested on 2026-11-16.
+Current verified release: **`0.8.1-navigation-details`**, OTA-tested on 2026-11-16.
+The new source corrects detail-view headings, Play/Shuffle labels and track-only
+positions across Albums, Artists and Playlists; Settings returns names/values.
+Its star indicator is a small dot below the playback time line.
 Global is a protected bindings-only scope, separate from the selectable scenes.
 Tab5 owns the selected volume scale:
 **1/16 Squared Curve**, **1/64 Squared Curve** (default), **2% Integer**, or
@@ -40,14 +43,14 @@ and Buttons independently follow the scene or use custom colors, fills and
 brightness. Screen elements, text scrolling and screen state fallbacks are
 configured separately. Its settings
 save independently to NVS; action feedback and sleep retain priority.
-Playback shows a small star beside the play/pause icon: gold fill for starred,
-muted outline for unstarred, using Tab5-confirmed state over USB or Bluetooth.
+Playback shows a small gold dot below the time line only when Tab5 confirms
+the current song is starred, over USB or Bluetooth. There is no star icon.
 Saved scene order, manual brightness, symmetric ring fills, source-key
 lighting and searchable HID keys remain available.
 Both devices use application-only OTA. Source/build identity, validation results
 and image fingerprints are in the
 [release record](docs/development.md#current-verified-release).
-The deployed 0.8.0 production image occupies **3.11 MiB**, leaving **1.39 MiB** of
+The deployed 0.8.1 production image occupies **3.11 MiB**, leaving **1.39 MiB** of
 headroom in either 4.5 MiB OTA slot. The embedded playback font uses **1.41 MiB**
 of that image; see the [application storage budget](docs/flash.md#application-slots-and-storage-budget).
 The working firmware provides:

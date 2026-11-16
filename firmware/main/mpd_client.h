@@ -95,6 +95,10 @@ uint64_t mpd_client_queue_entry(int index);
 esp_err_t mpd_client_queue_add(const uint64_t *keys, int count, bool next);
 esp_err_t mpd_client_queue_edit(uint64_t entry, bool remove);
 bool mpd_client_track_starred(uint64_t key);
+/* Full names are copied from the worker's latest playlist list, not UI labels. */
+int mpd_client_playlist_destination_count(void);
+bool mpd_client_playlist_destination(int index,char *name,size_t size,uint32_t *generation);
+esp_err_t mpd_client_playlist_add(const char *name,uint32_t generation,uint64_t key);
 
 #define MPD_ARTWORK_SIZE 360
 uint32_t mpd_client_artwork_revision(void);

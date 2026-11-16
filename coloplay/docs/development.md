@@ -15,6 +15,18 @@ controller I/O. The [verified release](#current-verified-release) records exact
 images and live checks. Version-labelled sections retain historical behavior
 and sizes; use the current architecture and persistence table for new work.
 
+## Navigation detail feedback (0.8.1)
+
+Verified source **0.8.1-navigation-details** sends album/artist/playlist names as
+headings, readable Play/Shuffle controls without counters, and song-only
+positions. Settings feedback includes row values and clock-editor field names;
+reading a blinking value does not change the UI. Updated USB/BLE peers
+negotiate a bounded heading stream, committed atomically with its focus text.
+The playback star icon is replaced by a small dot below the time line, shown
+only for confirmed starred state. Scene schema 9 and all NVS records stay
+unchanged. Both applications were OTA-tested on 2026-11-16; paired image hashes
+and the live navigation checks are recorded below.
+
 ## Compact scene persistence (0.6.33)
 
 The first live navigation-scene creation exposed an NVS save failure with the
@@ -190,6 +202,53 @@ preserved all 14 saved bindings, the active Navigation scene, scene order,
 brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
+
+The subsequent Tab5-only **Add to Playlist** OTA uses a **2,929,200-byte**
+application with ELF SHA-256
+`7c6a1e56968040e6eecfb554c3c723a059586c35fa3aa5fa50fb29204f650a29`.
+ColoPlay remains on the 0.8.1 image below. The [Tab5 validation record](../../docs/mpd-validation.md#add-to-playlist-ota--2026-11-16)
+describes live picker/cancel checks and host append tests. Its private evidence
+is in `backups/add-to-playlist-release/`; the paired navigation update is
+recorded below.
+
+**0.8.1-navigation-details** was application-only OTA-tested on **2026-11-16**
+in `ota_app1`. The image is **3,266,096 bytes**, leaving **1,452,496 bytes
+(1.39 MiB)** in either 4.5 MiB slot. MD5:
+`16786370425fc7188f3416d290527a2f`; SHA-256:
+`5da30da9abc4bbc5e83257c03690c3c5999bc86af94cb21e1462bc8052a53f84`.
+Embedded ELF SHA-256:
+`995c35400a484a12caf3d2278112f42286fcbeb4c8ddb88e6bd5e318bbfb1380`.
+
+The original paired Tab5 image was **2,926,176 bytes**, with verified ELF SHA-256
+`e73612c3e31ed7693135eca186892df699ed55a88d6b720989eb7c9ade4e1c7a`.
+Both images were built from the uncommitted navigation/display working tree
+based on **`3c4e519`**. The private evidence bundle retains that source patch,
+exact images/ELFs, manifests and pre/post-update settings. No bootloader,
+partition, C6 or saved-settings format was changed.
+
+Live saved USB bindings focused Play and Shuffle in album, artist and playlist
+details. Each showed its readable label, the correct detail heading and no song
+counter. The tested first songs reported **1/51**, **1/6** and **1/64**;
+artist album headers had their own positions. Settings showed **Key Feedback**
+with a Volume name/value pair. Tests did not activate Play/Shuffle or edit a
+setting. Now Playing was restored afterward. Scenes, Global bindings, General,
+Playback, clock/NTP, USB and Tab5 configuration matched the saved snapshots.
+
+Ten post-update samples over **23.6 seconds** kept one USB session, with no
+resets, invalid/stale frames, dropped frames or lease timeouts. MPD, SD,
+USB-C network and secure Bluetooth standby feedback remained online. The dot
+replaces the star icon in the exact verified ColoPlay image; LCD pixels were
+not captured remotely. Native tests cover editing values and clock blink;
+the live check did not retest physical gesture timing.
+
+The default local recovery bundle now contains the exact boot-verified 0.8.1
+application, with the previous 0.8.0 images archived separately. Scene schema 9,
+CSR1 and the version-2 order remain compatible with 0.8.0. The host suite,
+production USB/BLE fixtures, shared-header checks, decoder sanitizer checks and
+all **21** native UI CTests passed before deployment.
+
+## Previous Global and star-feedback release
+
 
 **0.8.0-global-bindings**, source commit **`5aeb1c3`**, was application-only
 OTA-tested on **2026-11-16** in `ota_app0`. Its image is **3,264,896 bytes**,

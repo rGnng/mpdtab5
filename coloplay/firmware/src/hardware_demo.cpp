@@ -281,17 +281,6 @@ void bluetoothConnecting(){
   uint16_t palette[16];for(int a=0;a<16;++a)palette[a]=gCanvas.alphaBlend(a*17,kMuted,kBackground);
   for(int i=0;i<32*32;++i){const uint8_t packed=PlaybackAssets::kBluetoothConnecting32[i/2],alpha=i&1?packed&15:packed>>4;if(alpha)gCanvas.drawPixel(104+i%32,104+i/32,palette[alpha]);}
 }
-void playbackStar(bool starred){
-  // Fixed slot beside the transport icon; no font glyph or extra image asset.
-  static constexpr int8_t points[10][2]={{0,-10},{3,-3},{10,-3},{5,2},{6,9},{0,5},{-6,9},{-5,2},{-10,-3},{-3,-3}};
-  const uint16_t color=starred?gCanvas.color565(255,202,72):kMuted;
-  constexpr int x=158,y=54;
-  for(int i=0;i<10;++i){
-    const auto &a=points[i],&b=points[(i+1)%10];
-    if(starred)gCanvas.fillTriangle(x,y,x+a[0],y+a[1],x+b[0],y+b[1],color);
-    gCanvas.drawLine(x+a[0],y+a[1],x+b[0],y+b[1],color);
-  }
-}
 
 void render(uint32_t now) {
   setBacklight();
@@ -334,7 +323,14 @@ void render(uint32_t now) {
           if(revision!=nav.revision){revision=nav.revision;since=now;}
           playbackText(NavigationFeedback::viewName(ui),62,kMuted,172);
           if(ui.flags&CP_NAV_LOADING)playbackText("Loading...",125,kMuted);
-          else if(ui.flags&CP_NAV_FOCUS)playbackText(ui.focus,125,TFT_WHITE,208,now-since);
+          else if(ui.flags&CP_NAV_FOCUS){
+            const char *value=nullptr;
+            if(ui.view==6)for(const char *at=std::strstr(ui.focus,": ");at;at=std::strstr(at+2,": "))value=at;
+            if(value){
+              char name[96];const size_t length=size_t(value-ui.focus);std::memcpy(name,ui.focus,length);name[length]=0;
+              playbackText(name,115,TFT_WHITE,208,now-since);playbackText(value+2,139,kMuted,208,now-since);
+            }else playbackText(ui.focus,125,TFT_WHITE,208,now-since);
+          }
           if(ui.count){char count[32];snprintf(count,sizeof(count),"%lu / %lu",(unsigned long)ui.index+1,(unsigned long)ui.count);playbackText(count,181,kMuted,160);}
           break;
         }
@@ -353,7 +349,6 @@ void render(uint32_t now) {
         else if(s.playback==1)gCanvas.fillTriangle(left+2,cy-8,left+2,cy+8,left+16,cy,TFT_WHITE);
         else if(s.playback==2){gCanvas.fillRect(left+2,cy-7,5,14,TFT_WHITE);gCanvas.fillRect(left+11,cy-7,5,14,TFT_WHITE);}
         else gCanvas.fillRect(left+3,cy-6,12,12,TFT_WHITE);
-        if(s.starKnown)playbackStar(s.starred);
       }
       const bool title=prefs[ShowTitle]&&s.title[0],artist=prefs[ShowArtist]&&s.artist[0];
       if(title)playbackText(s.title,artist?115:127,TFT_WHITE,208,now-textSince);
@@ -366,6 +361,7 @@ void render(uint32_t now) {
         else snprintf(time,sizeof(time),"%lu:%02lu / %lu:%02lu",(unsigned long)(position/60000),(unsigned long)(position/1000%60),(unsigned long)(s.durationMs/60000),(unsigned long)(s.durationMs/1000%60));
         playbackText(time,196,kMuted,160);
       }
+      if(s.starKnown&&s.starred)gCanvas.fillCircle(120,210,2,gCanvas.color565(255,202,72));
       break;
     }
     default: break;

@@ -2141,6 +2141,42 @@ bool player_queue_add(player_selection_t type,uint64_t id,bool next)
 #endif
 }
 
+int player_playlist_destinations(player_playlist_destination_t *out,int capacity)
+{
+    if(!out||capacity<=0)return 0;
+    int count=0;
+#if defined(ESP_PLATFORM)
+    if(!mpd_client_is_enabled())return 0;
+    int available=mpd_client_playlist_destination_count();
+    for(int i=0;i<available&&count<capacity;i++){
+        if(!mpd_client_playlist_destination(i,out[count].name,sizeof(out[count].name),&out[count].generation))return 0;
+        if(count&&out[count].generation!=out[0].generation)return 0;
+        ++count;
+    }
+#else
+    for(int i=0;i<playlist_count&&count<capacity;i++){
+        if(!strcasecmp(playlists[i].name,"Stared")||!strcasecmp(playlists[i].name,"Starred"))continue;
+        copy_str(out[count].name,sizeof(out[count].name),playlists[i].name);out[count].generation=0;++count;
+    }
+#endif
+    return count;
+}
+
+bool player_playlist_add(const player_playlist_destination_t *destination,uint64_t id)
+{
+    if(!destination||!id||!destination->name[0])return false;
+#if defined(ESP_PLATFORM)
+    return mpd_client_is_enabled()&&mpd_client_playlist_add(destination->name,destination->generation,id)==ESP_OK;
+#else
+    if(track_index_by_id(id)<0)return false;
+    for(int i=0;i<playlist_count;i++)if(!strcmp(playlists[i].name,destination->name)){
+        if(!strcasecmp(destination->name,"Stared")||!strcasecmp(destination->name,"Starred")||playlists[i].track_count>=MAX_PLAYLIST_TRACKS)return false;
+        playlists[i].track_ids[playlists[i].track_count++]=id;live_playlist_revision++;return true;
+    }
+    return false;
+#endif
+}
+
 bool player_queue_edit(uint64_t entry,bool remove)
 {
 #if defined(ESP_PLATFORM)

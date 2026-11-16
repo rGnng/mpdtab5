@@ -54,8 +54,8 @@ The current panels include:
   tags for all eight modifier bits; the existing numeric API/NVS value is retained.
 - Playback: independent Playing/Paused/Stopped light plans for ring and buttons,
   clockwise/symmetric progress and volume-feedback fills, colors, brightness,
-  and screen elements/fallbacks. The Status icon switch includes the confirmed
-  star indicator beside play/pause on the device screen.
+  and screen elements/fallbacks. The Status icon switch controls play/pause;
+  a confirmed starred song has a small dot below the device playback time line.
 - Device: diagnostics, runtime sleep/wake control, incremental logs, telemetry
   and the authenticated firmware updater link.
 

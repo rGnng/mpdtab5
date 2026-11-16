@@ -38,8 +38,9 @@ ColoPlay supports [USB CDC-ACM controls and feedback](docs/coloplay-usb.md)
 through Tab5's USB-A port, with BLE for wireless use. USB has priority after
 its handshake; both web interfaces show the active ColoPlay connection.
 ColoPlay's **Global** view holds shared bindings and cannot be activated as a
-scene. Playback shows Tab5's confirmed star state beside the play/pause icon.
-The [verified 0.8.0 release](coloplay/docs/development.md#current-verified-release)
+scene. Release 0.8.1 shows Tab5's confirmed starred state as a dot below the time line
+and corrects detail-view headings and counters.
+The [verified 0.8.1 release](coloplay/docs/development.md#current-verified-release)
 records the paired OTA images, preserved settings and live checks.
 See the [migration record](docs/coloplay-migration.md) for history and validation.
 
@@ -117,20 +118,28 @@ uses a separate queue action.
 
 Press **C** (including ColoPlay's Context binding), or hold a touch row, to open
 its context menu. Albums and artists offer **Play**, **Shuffle Play**,
-**Add to Queue**, and **Play Next**. Song rows in Albums, Artists, and Songs
-offer **Play**, **Add to Queue**, **Play Next**, **Star/Unstar**, and navigation
+**Add to Queue**, and **Play Next**. Song rows in Albums, Artists, Songs and playlist details
+offer **Play**, **Add to Queue**, **Play Next**, **Star/Unstar**, **Add to Playlist**, and navigation
 to that song's album/artist. These actions use the selected item, including
 when another song is playing. Releasing a touch hold does not activate the row.
 
 **Add to Queue** appends without interrupting playback. **Play Next** inserts
 after the current track, or at the front without starting playback when there
 is no current track. Album/artist additions preserve their displayed song order.
-In Up Next, the context menu offers **Play Next** and **Remove from Queue**:
+In Up Next, the context menu offers **Play Next**, **Remove from Queue** and
+**Add to Playlist**:
 moving an entry does not duplicate it, and removal uses its server queue-entry
 ID so duplicate songs are distinguishable. Menus retain the page's selection
 and viewport; a page rebuild safely dismisses a menu that belongs to it.
 Tracks uses explicit queue positions. Standard MPD random mode uses `prioid`
 when advertised, promoting each requested next entry as playback advances.
+
+**Add to Playlist** is available for the current song and song
+context menus. Choose an existing MPD playlist using touch or Up/Down/Enter;
+Back returns to the song menu. Adding appends without changing playback or the
+queue. The reserved Stared list remains managed through Star/Unstar. This
+addition is OTA-verified on Tab5. The live picker/cancel check preserved playlists
+and playback; append behavior is covered by native UI and production socket tests.
 
 Tap or drag the Now Playing progress bar to seek, including with Up Next open.
 The position previews while dragging and sends one seek on release. Paused
@@ -191,7 +200,7 @@ fallback glyphs instead of routing all Latin text through runtime font rendering
 A separate ColoPlay peer driver supports MPD volume, playback/seek controls and
 returned state over the existing bonded BLE connection. D100H support remains
 available; one controller is active at a time. See [pairing, protocol and validation](docs/coloplay-ble.md).
-For Star/Unstar, bind a ColoPlay **Bluetooth HID key** action to keypad `*`
+For Star/Unstar, bind a ColoPlay **MPD Tab5 → Tab5 key** action to keypad `*`
 (usage **85**, modifiers **0**). This toggles the currently playing song in the
 server's Stared playlist. Context menu is **C** (usage **6**, modifiers **0**)
 on Now Playing and the album, artist, song, and Up Next lists. Turn the knob

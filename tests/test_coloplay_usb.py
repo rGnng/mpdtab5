@@ -3,7 +3,7 @@ from pathlib import Path
 import re,subprocess,tempfile,unittest
 from test_coloplay_ble import PREFIX as BLE_PREFIX
 ROOT=Path(__file__).resolve().parents[1]
-PREFIX=BLE_PREFIX.split('static unsigned navigation_frames')[0].replace('cap<=32','cap<=64').replace('bytes[32][128]','bytes[64][128]')
+PREFIX=BLE_PREFIX.split('static unsigned navigation_frames')[0].replace('cap<=32','cap<=64').replace('bytes[32][256]','bytes[64][256]')
 PREFIX += r'''
 #include "coloplay_usb_frame.h"
 #define ESP_LOGE(...) ((void)0)
@@ -73,7 +73,20 @@ int main(void){
  assert(cp_state_valid(tx_data[before],20)&&(tx_data[before][10]&CP_STATE_STAR_KNOWN)&&(tx_data[before][10]&CP_STATE_STARRED));
  remote_star=false;before=tx_count;assert(state(0,0));assert((tx_data[before][10]&CP_STATE_STAR_KNOWN)&&!(tx_data[before][10]&CP_STATE_STARRED));
  remote_track=0;before=tx_count;assert(state(0,0));assert(!(tx_data[before][10]&CP_STATE_STAR_KNOWN));
- disconnect();assert(!s_star_feedback);
+ // Upgrade the same peer's offer and verify both full-length text fields.
+ offer.bytes[17]=CP_FEATURE_STAR|CP_FEATURE_NAV_HEADING;consume(&offer,220);
+ assert(s_navigation_heading&&tx_data[tx_count-1][17]&CP_FEATURE_NAV_HEADING);
+ memset(nav.heading,'h',95);nav.heading[95]=0;coloplay_usb_publish_navigation(&nav);
+ before=tx_count;navigation(3000);assert(tx_count==before+21);
+ assert(tx_data[before][1]==CP_NAVIGATION_HEADING&&tx_data[before][18]==95&&tx_data[before][19]==95);
+ unsigned focus_used=0,title_used=0;
+ for(unsigned i=before+1;i<tx_count;i++) {
+   uint8_t *p=tx_data[i];unsigned *used=p[1]==CP_NAV_TEXT?&focus_used:&title_used;
+   assert(p[1]==CP_NAV_TEXT||p[1]==CP_NAV_HEADING_TEXT);assert(p[8]==*used);
+   assert(!memcmp(p+10,(p[1]==CP_NAV_TEXT?nav.focus:nav.heading)+*used,p[9]));*used+=p[9];
+ }
+ assert(focus_used==95&&title_used==95);
+ disconnect();assert(!s_star_feedback&&!s_navigation_heading);
  puts("PASS USB host handshake/challenge, ownership, deduplication, stale session, volume/media replies, navigation fragmentation and disconnect");
  return 0;
 }

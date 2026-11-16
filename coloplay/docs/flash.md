@@ -97,7 +97,7 @@ new application's runtime later crashes.
 
 ## Global profile compatibility
 
-The verified **0.8.0-global-bindings** release writes scene schema 9 (3364 raw
+The verified **0.8.1-navigation-details** release writes scene schema 9 (3364 raw
 bytes) and a version-2 order record. The local default recovery bundle now
 contains this matching, boot-verified application and understands schema 9 and
 CSR1. The previous 0.7.2 image is archived separately; its schema-8 loader cannot
@@ -113,14 +113,14 @@ OTA writes a complete application to the inactive slot, so either slot must fit
 the full firmware. The inactive slot retains its previous application until the
 next update writes it; it is not a dedicated minimal recovery image.
 
-The verified **0.8.0-global-bindings** production image has this budget:
+The verified **0.8.1-navigation-details** production image has this budget:
 
 | Item | Bytes | MiB |
 |---|---:|---:|
 | Application slot capacity | 4,718,592 | 4.50 |
-| Complete production application | 3,264,896 | 3.11 |
+| Complete production application | 3,266,096 | 3.11 |
 | Embedded playback font, included in the application above | 1,477,697 | 1.41 |
-| Remaining capacity for an application of this size | 1,453,696 | 1.39 |
+| Remaining capacity for an application of this size | 1,452,496 | 1.39 |
 
 These are flash/image sizes, not free heap or PSRAM. The font stays in mapped
 flash and is not copied wholesale to RAM. Its current subset saves **875,913
@@ -277,10 +277,10 @@ finding does not generalize to other checksum failures.
 
 ## Bluetooth test recovery
 
-Current 0.8.0 builds write scene schema 9 (3364 logical bytes, normally CSR1),
+Current 0.8.x builds write scene schema 9 (3364 logical bytes, normally CSR1),
 a version-2 16-byte scene-order record, and General version 3. Use a recovery
 application that supports schema 9 and CSR1; the local default recovery bundle
-contains the exact boot-verified 0.8.0 image. Earlier recovery firmware cannot
+contains the exact boot-verified 0.8.1 image. Earlier recovery firmware cannot
 use the Global profile, even if it supports the CSR1 envelope. Prefer disabling
 Bluetooth over downgrading the application.
 

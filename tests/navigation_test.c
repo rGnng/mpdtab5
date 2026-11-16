@@ -1104,6 +1104,21 @@ static void playlist_updates_retain_album_covers(void)
     check(playlist_view_deleted,"The visible Playlists page refreshes when server membership changes");
 }
 
+static void remote_play_controls(const char *heading,focus_activate_fn play,focus_activate_fn shuffle)
+{
+    ui_navigation_t nav;bool saw_play=false,saw_shuffle=false;
+    for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==play || g_focus[i].activate==shuffle) {
+        focus_select(i);const int before=g_focus_index;ui_navigation_snapshot(&nav);
+        bool is_play=g_focus[i].activate==play;
+        check((nav.flags&8) && !strcmp(nav.focus,is_play?"Play":"Shuffle"),"Icon-only controls have semantic remote labels");
+        check(!nav.count && !nav.index,"Playback controls have no song counter");
+        check(!strcmp(nav.heading,heading),"Detail feedback uses the album, artist or playlist heading");
+        check(before==g_focus_index,"Feedback never changes the selected control");
+        if(is_play)saw_play=true;else saw_shuffle=true;
+    }
+    check(saw_play && saw_shuffle,"Detail fixture exposes both Play and Shuffle");
+}
+
 static void remote_navigation_snapshot(void)
 {
     ui_navigation_t nav;
@@ -1114,9 +1129,12 @@ static void remote_navigation_snapshot(void)
     check(nav.index==(uint32_t)albums_selected && nav.count==(uint32_t)player_album_count(),"Remote album position uses library indices");
     check(focus==g_focus_index,"Reading remote focus never moves selection");
     ui_handle_key(UI_KEY_ENTER);pump(600);
+    remote_play_controls(album.title,albums_play_all_action,albums_shuffle_action);
     for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==albums_track_action){
         focus_select(i);ui_navigation_snapshot(&nav);player_track_t selected;
         check(player_album_track_get(album.id,(int)(intptr_t)g_focus[i].user,&selected) && !strcmp(nav.focus,selected.title),"Album track focus reports its title, not the leading track number");
+        check(nav.index==0 && nav.count==album.track_count,"First album song is 1/n without the Play and Shuffle controls");
+        check(!strcmp(nav.heading,album.title),"Album name stays in the heading for tracks");
         break;
     }
     ui_handle_key(UI_KEY_BACK);pump(100);
@@ -1128,20 +1146,123 @@ static void remote_navigation_snapshot(void)
     ui_select_screen(SCR_SONGS);pump(600);songs_select(2);pump(60);
     player_track_t track;check(player_song_get(songs_selected,&track),"Song fixture exists");ui_navigation_snapshot(&nav);
     check(nav.view==SCR_SONGS && !strcmp(nav.focus,track.title),"Virtual song focus reports its metadata");
-    ui_select_screen(SCR_ARTISTS);pump(600);artists_select(1);pump(60);
+    ui_select_screen(SCR_ARTISTS);pump(600);
+    int artist_fixture=-1;
+    for(int i=0;i<player_artist_count() && artist_fixture<0;i++) {
+        player_artist_t a;player_track_t first;player_album_t album;
+        if(!player_artist_get(i,&a) || !player_artist_song_get(a.id,0,&first))continue;
+        for(int j=0;j<player_album_count();j++)if(player_album_get(j,&album) && album.id==first.album_id){artist_fixture=i;break;}
+    }
+    check(artist_fixture>=0,"Artist navigation fixture has a visible album and song");artists_select(artist_fixture);pump(60);
     player_artist_t artist;check(player_artist_get(artists_selected,&artist),"Artist fixture exists");ui_navigation_snapshot(&nav);
     check(!strcmp(nav.focus,artist.name),"Virtual artist focus reports its metadata");
+    ui_handle_key(UI_KEY_ENTER);pump(600);
+    remote_play_controls(artist.name,artists_play_all_action,artists_shuffle_action);
+    bool artist_track=false,artist_album=false;
+    for(int i=0;i<g_focus_count;i++) {
+        if(g_focus[i].activate==artists_album_action && !artist_album) {
+            focus_select(i);ui_navigation_snapshot(&nav);artist_album=true;
+            check(nav.index==0 && nav.count==artist.album_count,"Artist album positions exclude controls and songs");
+        }
+        if(g_focus[i].activate==artists_track_action && !artist_track) {
+            focus_select(i);ui_navigation_snapshot(&nav);artist_track=true;
+            player_track_t selected;check(player_artist_song_get(artist.id,(int)(intptr_t)g_focus[i].user,&selected),"Artist song exists");
+            check(!strcmp(nav.focus,selected.title) && !strcmp(nav.heading,artist.name),"Artist track has metadata and the artist heading");
+            check(nav.index==(uint32_t)(intptr_t)g_focus[i].user && nav.count==(uint32_t)player_artist_song_count(artist.id),"Artist song positions exclude album headers and controls");
+        }
+    }
+    check(artist_track && artist_album,"Artist fixture includes albums and songs");
     ui_select_screen(SCR_PLAYLISTS);pump(600);ui_navigation_snapshot(&nav);
     check(nav.view==SCR_PLAYLISTS && (nav.flags&8) && nav.focus[0],"Playlist focus extracts readable row text");
     if(g_focus_index>=0 && g_focus[g_focus_index].activate==playlists_open){
         player_playlist_t playlist;check(player_playlist_get((int)(intptr_t)g_focus[g_focus_index].user,&playlist) && !strcmp(nav.focus,playlist.name),"Playlist focus reports the metadata name");
     }
+    playlists_open((void*)(intptr_t)1);pump(300);
+    player_playlist_t playlist;check(player_playlist_get(1,&playlist) && playlist.track_count,"Playlist detail fixture has songs");
+    remote_play_controls(playlist.name,playlists_play_action,playlists_shuffle_action);
+    for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==playlists_track_action) {
+        focus_select(i);ui_navigation_snapshot(&nav);
+        check(nav.index==0 && nav.count==playlist.track_count,"First playlist song is 1/n without playback controls");
+        check(!strcmp(nav.heading,playlist.name),"Playlist heading uses its name");break;
+    }
     ui_select_screen(SCR_SETTINGS);pump(600);ui_navigation_snapshot(&nav);
     check(nav.view==SCR_SETTINGS && (nav.flags&8) && nav.focus[0],"Settings focus excludes icon-only labels");
+    check(!strcmp(nav.heading,"Settings"),"Settings root has a semantic heading");
+    settings_open((void*)(intptr_t)SETTING_KEY_FEEDBACK);pump(200);focus_select(0);ui_navigation_snapshot(&nav);
+    char expected[32];snprintf(expected,sizeof(expected),"Volume: %d%%",g_system_config.volume);
+    check(!strcmp(nav.heading,"Key Feedback") && !strcmp(nav.focus,expected),"Settings feedback includes the actual row name and current value");
+    check(nav.index==0 && nav.count==(uint32_t)g_focus_count,"Settings position counts actionable rows");
+    ui_handle_key(UI_KEY_ENTER);ui_handle_key(UI_KEY_UP);ui_navigation_snapshot(&nav);
+    snprintf(expected,sizeof(expected),"Volume: %d%%",g_system_config.volume);
+    check((nav.flags&2) && !strcmp(nav.focus,expected),"Settings feedback updates while editing");ui_handle_key(UI_KEY_BACK);
+    settings_open((void*)(intptr_t)SETTING_DATETIME);pump(200);ui_navigation_snapshot(&nav);
+    check(strcmp(nav.focus,"Increase") && strcmp(nav.focus,"Decrease"),"Clock format row retains its own setting and value");
+    for(int i=0;i<g_focus_count;i++)if(g_focus[i].obj==settings_time_year_value){focus_select(i);break;}
+    ui_navigation_snapshot(&nav);
+    check(!strcmp(nav.heading,"Set time") && !strncmp(nav.focus,"Year: ",6),"Clock editor includes its field label");
+    ui_handle_key(UI_KEY_ENTER);ui_navigation_snapshot(&nav);char before_blink[96];strcpy(before_blink,nav.focus);
+    settings_time_blink_on=false;settings_time_apply_blink();ui_navigation_snapshot(&nav);
+    check((nav.flags&2) && !strcmp(nav.focus,before_blink),"Clock editing blink does not blank the remote value");
+    for(int i=0;i<g_focus_count;i++)if(g_focus[i].obj==settings_time_up_button) {
+        focus_select(i);ui_navigation_snapshot(&nav);check(!strcmp(nav.focus,"Increase") && !nav.count,"Clock arrow controls have readable names and no field counter");break;
+    }
     g_page_loading=true;ui_navigation_snapshot(&nav);g_page_loading=false;
     check((nav.flags&4) && !(nav.flags&8) && !nav.focus[0],"Page loading clears old remote focus");
     char clipped[6];navigation_copy(clipped,sizeof(clipped),"日本語");
     check(!strcmp(clipped,"日"),"Navigation truncation preserves UTF-8 boundaries");
+}
+
+static void playlist_context_picker(void)
+{
+    player_track_t selected,current,added;player_snapshot_t before,after;player_playlist_t list;
+    check(player_song_get(1,&selected) && player_song_get(0,&current),"Playlist picker fixture has two songs");
+    player_library_playlists_reset();player_library_playlist_item(0,"Mix A",0);player_library_playlist_item(0,NULL,current.id);
+    player_library_playlist_item(1,"Mix B",0);pump(300);
+    ui_select_screen(SCR_SONGS);pump(500);songs_select(1);pump(50);
+    player_get_snapshot(&before);int queue_before=player_queue_count();
+    int selected_row=songs_selected;menu_open_key(CTX_TRACK,selected.id);
+    check(menu_item_named("Add to Playlist")>=0,"Song context includes Add to Playlist");
+    menu_choose("Add to Playlist");check(g_ctx_playlist_picker && g_ctx_playlist_count==2,"Destination picker uses existing regular playlists");
+    check(menu_item_named("Stared")==-1 && menu_item_named("Starred")==-1,"Reserved star playlist is excluded from destinations");
+    ui_navigation_t nav;ui_navigation_snapshot(&nav);
+    check((nav.flags&1) && !strcmp(nav.focus,"Mix A"),"ColoPlay's modal navigation reports the focused destination");
+    ui_handle_key(UI_KEY_BACK);check(g_ctx_menu_open && !g_ctx_playlist_picker && !strcmp(lv_label_get_text(g_ctx_menu_items[g_ctx_menu_focus].label),"Add to Playlist"),"Picker Back returns to its parent action");
+    check(songs_selected==selected_row,"Picker cancellation preserves underlying song selection");
+    menu_choose("Add to Playlist");menu_choose("Mix A");check(!g_ctx_menu_open,"Selecting a destination closes the picker");
+    check(player_playlist_get(1,&list) && list.track_count==2,"Adding a song appends once to the chosen list");
+    check(player_playlist_track_get(1,1,&added) && added.id==selected.id,"Playlist append uses captured song identity");
+    player_get_snapshot(&after);check(after.track.id==before.track.id && after.status==before.status && player_queue_count()==queue_before,"Playlist append leaves playback and queue unchanged");
+    menu_open_key(CTX_TRACK,selected.id);menu_choose("Add to Playlist");player_next();pump(30);
+    menu_choose("Mix B");check(player_playlist_track_get(2,0,&added) && added.id==selected.id,"Track changes do not redirect an open destination picker");
+    menu_open_key(CTX_TRACK,selected.id);menu_choose("Add to Playlist");menu_choose("Back");
+    check(g_ctx_menu_open && !g_ctx_playlist_picker,"Touch/Enter Back row returns to song actions");ui_handle_key(UI_KEY_BACK);
+    // A deleted list cannot redirect to the item occupying its former index.
+    menu_open_key(CTX_TRACK,selected.id);menu_choose("Add to Playlist");
+    player_library_playlists_reset();player_library_playlist_item(0,"Replacement",0);pump(200);
+    menu_choose("Mix A");check(player_playlist_get(1,&list) && list.track_count==0,"Frozen destination name is not replaced by an index after refresh");
+    player_library_playlists_reset();pump(100);menu_open_key(CTX_TRACK,selected.id);menu_choose("Add to Playlist");
+    check(menu_item_named("No playlists available")>=0 && g_ctx_playlist_count==0,"An empty destination list has a readable state and Back");
+    menu_choose("Back");ui_handle_key(UI_KEY_BACK);
+    // Every supported destination remains reachable, with a bounded scroll panel.
+    for(int i=0;i<PLAYER_PLAYLIST_DESTINATIONS_MAX;i++){char name[32];snprintf(name,sizeof(name),"Destination %02d",i);player_library_playlist_item(i,name,0);}
+    player_library_playlist_item(0,NULL,selected.id);pump(300);
+    menu_open_key(CTX_TRACK,selected.id);menu_choose("Add to Playlist");
+    check(g_ctx_playlist_count==PLAYER_PLAYLIST_DESTINATIONS_MAX && g_ctx_menu_item_count==PLAYER_PLAYLIST_DESTINATIONS_MAX+1,"Picker supports all 32 destinations plus Back");
+    for(int i=0;i<PLAYER_PLAYLIST_DESTINATIONS_MAX;i++)ui_handle_key(UI_KEY_DOWN);
+    check(g_ctx_menu_focus==g_ctx_menu_item_count-1,"Knob/key navigation reaches the last picker item");
+    ui_handle_key(UI_KEY_CONTEXT);check(!g_ctx_menu_open && !g_ctx_playlist_destinations,"Closing the picker releases its name snapshot");
+    // Playlist-detail songs expose the same context action through keys and touch.
+    ui_select_screen(SCR_PLAYLISTS);pump(300);playlists_open((void*)(intptr_t)1);pump(300);
+    int song_focus=-1;for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==playlists_track_action){song_focus=i;break;}
+    check(song_focus>=0,"Playlist detail has a song");focus_select(song_focus);menu_open_key(CTX_TRACK,selected.id);
+    menu_choose("Add to Playlist");menu_choose("Destination 01");
+    check(player_playlist_track_get(2,0,&added) && added.id==selected.id,"Playlist song can be copied to another playlist");
+    touch=lv_indev_create();lv_indev_set_type(touch,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(touch,lv_display_get_default());lv_indev_set_read_cb(touch,read_touch);ui_set_touch_enabled(true);ui_attach_touch(touch);
+    player_get_snapshot(&before);hold_row_for_menu(g_focus[song_focus].obj,CTX_TRACK,selected.id);
+    check(menu_item_named("Add to Playlist")>=0,"Playlist touch hold includes the destination action");
+    ui_handle_key(UI_KEY_BACK);player_get_snapshot(&after);check(after.track.id==before.track.id,"Playlist long press does not play on release");
+    ui_attach_touch(NULL);lv_indev_delete(touch);touch=NULL;
 }
 
 int main(int argc,char **argv)
@@ -1164,6 +1285,7 @@ int main(int argc,char **argv)
     playlist_updates_retain_album_covers();
     volume_step_settings();
     remote_navigation_snapshot();
+    playlist_context_picker();
     puts("PASS: transparent text fade, Artists viewport restoration, column scrollbar geometry, page scrolling and theme cursor feedback");
     return 0;
 }

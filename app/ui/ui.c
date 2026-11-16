@@ -2455,7 +2455,9 @@ static void ui_rebuild_page(void);
 static bool ui_list_page(int direction);
 static void np_toggle_queue(void);
 enum { CTX_TOUCH_ALBUM, CTX_TOUCH_ARTIST, CTX_TOUCH_ALBUM_TRACK,
-       CTX_TOUCH_ARTIST_TRACK, CTX_TOUCH_SONG, CTX_TOUCH_QUEUE };
+       CTX_TOUCH_ARTIST_TRACK, CTX_TOUCH_SONG, CTX_TOUCH_QUEUE, CTX_TOUCH_PLAYLIST_TRACK };
+static int playlists_selected;
+static void playlists_track_action(void *user);
 static void context_touch_bind(lv_obj_t *row,int type,int index);
 static bool songs_context_track(player_track_t *track);
 static void context_menu_refresh(void);
@@ -6901,7 +6903,7 @@ static void artists_create(lv_obj_t * parent)
 #define CTX_MENU_WIDTH      440
 #define CTX_MENU_GROUP_H    38
 #define CTX_MENU_ROW_H      64
-#define CTX_MENU_MAX_ITEMS  8
+#define CTX_MENU_MAX_ITEMS  (PLAYER_PLAYLIST_DESTINATIONS_MAX+1)
 
 #define COL_CTX_PANEL       (g_theme->context_panel)
 #define COL_CTX_GROUP       (g_theme->context_group)
@@ -6923,12 +6925,16 @@ static int g_ctx_menu_focus;
 static int g_ctx_star_item = -1;
 static int g_ctx_shuffle_item = -1;
 static int g_ctx_repeat_item = -1;
+static bool g_ctx_playlist_picker;
+static player_playlist_destination_t *g_ctx_playlist_destinations;
+static int g_ctx_playlist_count,g_ctx_playlist_return_focus;
 
 typedef enum { CTX_NOW, CTX_ALBUM, CTX_ARTIST, CTX_TRACK, CTX_QUEUE } context_kind_t;
 typedef struct {
     context_kind_t kind;
     uint64_t id, album_id, artist_id, entry, parent_id;
     screen_id_t source;
+    int position;uint32_t source_revision;
     char title[96];
 } context_target_t;
 static context_target_t g_ctx_target;
@@ -6962,6 +6968,11 @@ static bool context_resolve(context_target_t *out,int type,int index)
     if(type==CTX_TOUCH_ARTIST_TRACK && player_artist_get(artists_selected,&artist) &&
        player_artist_song_get(artist.id,index,&track)) return context_track(out,&track,SCR_ARTISTS,artist.id);
     if(type==CTX_TOUCH_SONG && player_song_get(index,&track)) return context_track(out,&track,SCR_SONGS,0);
+    if(type==CTX_TOUCH_PLAYLIST_TRACK && player_playlist_track_get(playlists_selected,index,&track)) {
+        player_playlist_t playlist;
+        if(!player_playlist_get(playlists_selected,&playlist)||!context_track(out,&track,SCR_PLAYLISTS,playlist.id))return false;
+        out->position=index;out->source_revision=player_playlist_revision();return true;
+    }
     if(type==CTX_TOUCH_QUEUE && np_last_queue_rev==player_queue_revision() && player_queue_at(index,&track)) {
         if(!context_track(out,&track,SCR_NOW_PLAYING,0)) return false;
         out->kind=CTX_QUEUE;out->entry=player_queue_entry(index);return out->entry!=0;
@@ -6989,6 +7000,8 @@ static bool context_capture(context_target_t *out)
         player_track_t track;
         return songs_context_track(&track) && context_track(out,&track,SCR_SONGS,0);
     }
+    if(g_current_screen==SCR_PLAYLISTS && focus && focus->activate==playlists_track_action)
+        return context_resolve(out,CTX_TOUCH_PLAYLIST_TRACK,index);
     if(g_current_screen==SCR_NOW_PLAYING) {
         if(np_queue_visible && focus && focus->activate==np_queue_action)
             return context_resolve(out,CTX_TOUCH_QUEUE,index);
@@ -7227,6 +7240,13 @@ static void context_menu_play(void *user)
         ui_set_hint("Selection changed; reopen the menu");
     }
     else if(target.source==SCR_ARTISTS) player_play_artist_from(target.parent_id,target.id);
+    else if(target.source==SCR_PLAYLISTS) {
+        player_playlist_t playlist;player_track_t track;
+        if(target.source_revision==player_playlist_revision()&&player_playlist_get(playlists_selected,&playlist)&&playlist.id==target.parent_id&&
+           player_playlist_track_get(playlists_selected,target.position,&track)&&track.id==target.id)
+            player_play_playlist_from(playlists_selected,target.position);
+        else ui_set_hint("Playlist changed; reopen the menu");
+    }
     else player_play_song(target.id);
 }
 static void context_menu_shuffle_play(void *user)
@@ -7294,10 +7314,27 @@ static void context_menu_backdrop_cb(lv_event_t * event)
     context_menu_close();
 }
 
-static void context_menu_open_target(const context_target_t *target)
+static void context_menu_open_target_mode(const context_target_t *target,bool picker);
+static void context_menu_open_target(const context_target_t *target){context_menu_open_target_mode(target,false);}
+static void context_menu_playlist_back(void *user){
+    LV_UNUSED(user);context_target_t target=g_ctx_target;int focus=g_ctx_playlist_return_focus;
+    context_menu_close();context_menu_open_target(&target);context_menu_focus_set(focus);
+}
+static void context_menu_playlist_choose(void *user){
+    LV_UNUSED(user);int index=g_ctx_menu_focus;
+    if(!g_ctx_playlist_picker||index<0||index>=g_ctx_playlist_count)return;
+    player_playlist_destination_t destination=g_ctx_playlist_destinations[index];uint64_t track=g_ctx_target.id;
+    context_menu_close();bool ok=player_playlist_add(&destination,track);
+    ui_set_hint(ok?"Add to Playlist requested":"Playlist action unavailable");
+}
+static void context_menu_add_playlist(void *user){
+    LV_UNUSED(user);context_target_t target=g_ctx_target;int focus=g_ctx_menu_focus;
+    context_menu_close();context_menu_open_target_mode(&target,true);g_ctx_playlist_return_focus=focus;
+}
+static void context_menu_open_target_mode(const context_target_t *target,bool picker)
 {
     if(g_ctx_menu_open || ui_device_blocked()) return;
-    g_ctx_target=*target;
+    g_ctx_target=*target;g_ctx_playlist_picker=picker;
     g_ctx_generation++;
     g_ctx_star_item=g_ctx_shuffle_item=g_ctx_repeat_item=-1;
 
@@ -7338,7 +7375,15 @@ static void context_menu_open_target(const context_target_t *target)
                           LV_FLEX_ALIGN_START);
     lv_obj_set_scrollable(panel, true);
 
-    if(target->kind==CTX_NOW) {
+    if(picker){
+        context_menu_group(panel,"Add to Playlist");
+        g_ctx_playlist_destinations=malloc(PLAYER_PLAYLIST_DESTINATIONS_MAX*sizeof(*g_ctx_playlist_destinations));
+        g_ctx_playlist_count=g_ctx_playlist_destinations?player_playlist_destinations(g_ctx_playlist_destinations,PLAYER_PLAYLIST_DESTINATIONS_MAX):0;
+        for(int i=0;i<g_ctx_playlist_count;i++)context_menu_item(panel,ICON_MUSIC_LIST,g_ctx_playlist_destinations[i].name,NULL,false,context_menu_playlist_choose);
+        if(!g_ctx_playlist_count)context_menu_item(panel,ICON_MUSIC_LIST,g_ctx_playlist_destinations?"No playlists available":"Not enough memory",NULL,false,NULL);
+        context_menu_item(panel,ICON_BACK,"Back",NULL,false,context_menu_playlist_back);
+    }
+    else if(target->kind==CTX_NOW) {
     const char * repeat_icon = ICON_REPEAT;
     const char * repeat_value = "Off";
     if(snapshot.repeat == PLAYER_REPEAT_ALL) repeat_value = "All";
@@ -7359,6 +7404,8 @@ static void context_menu_open_target(const context_target_t *target)
                                         player_track_starred(target->id) ? "Unstar" : "Star",
                                         NULL, player_track_starred(target->id),
                                         context_menu_star);
+
+    if(target->id){context_menu_group(panel,"Playlists");context_menu_item(panel,ICON_MUSIC_LIST,"Add to Playlist",NULL,false,context_menu_add_playlist);}
 
     context_menu_group(panel, "Playback");
     g_ctx_shuffle_item = context_menu_item(panel, ICON_SHUFFLE, "Shuffle",
@@ -7389,6 +7436,8 @@ static void context_menu_open_target(const context_target_t *target)
                     starred ? "Unstar" : "Star",NULL,starred,context_menu_star);
             }
         }
+        if(target->kind==CTX_TRACK || target->kind==CTX_QUEUE)
+            context_menu_item(panel,ICON_MUSIC_LIST,"Add to Playlist",NULL,false,context_menu_add_playlist);
         if((target->kind==CTX_TRACK || target->kind==CTX_QUEUE) && target->album_id)
             context_menu_item(panel,ICON_DISC,"Go to album",NULL,false,context_menu_go_album);
         if(target->kind!=CTX_ARTIST && target->artist_id)
@@ -7426,6 +7475,7 @@ static void context_menu_close(void)
 {
     if(!g_ctx_menu_open) return;
     g_ctx_menu_open = false;
+    free(g_ctx_playlist_destinations);g_ctx_playlist_destinations=NULL;g_ctx_playlist_count=0;g_ctx_playlist_picker=false;
     g_ctx_generation++;
     if(g_ctx_menu) {
         lv_obj_delete(g_ctx_menu);
@@ -7457,6 +7507,9 @@ static bool context_menu_key(ui_key_t key)
             context_menu_activate();
             break;
         case UI_KEY_BACK:
+            if(g_ctx_playlist_picker)context_menu_playlist_back(NULL);
+            else context_menu_close();
+            break;
         case UI_KEY_CONTEXT:
             context_menu_close();
             break;
@@ -7933,7 +7986,6 @@ static void songs_create(lv_obj_t * parent)
 #define PLAYLIST_HEADER_H      56
 #define PLAYLIST_TRACK_LIST_H  (PLAYLIST_TRACK_ROWS * PLAYLIST_TRACK_ROW_H)
 
-static int playlists_selected;
 static bool playlists_detail_open;
 static int playlists_play_focus = -1;
 static bool playlists_detail_dirty;
@@ -8256,6 +8308,7 @@ static void playlists_render_detail(lv_obj_t * parent, bool interactive)
             touch_add_clickable(row, playlists_track_touch_cb,
                                 (void *)(intptr_t)i);
         }
+        context_touch_bind(row,CTX_TOUCH_PLAYLIST_TRACK,i);
         shown++;
     }
     if(max_tracks < count) {
@@ -11698,12 +11751,66 @@ static void navigation_copy(char *out,size_t capacity,const char *text)
     out[used]=0;
 }
 
+// Count peers with the same semantic action, excluding headers and buttons.
+static void navigation_position(ui_navigation_t *out,focus_activate_fn action)
+{
+    out->index=out->count=0;
+    for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==action) {
+        if(i==g_focus_index)out->index=out->count;
+        ++out->count;
+    }
+}
+
+static void navigation_setting_labels(lv_obj_t *obj,char *out,size_t room)
+{
+    if(!obj || lv_obj_is_hidden(obj))return;
+    if(lv_obj_check_type(obj,&lv_label_class)) {
+        const char *text=navigation_label(obj);
+        if(!text && !strcmp(lv_label_get_text(obj),ICON_CHECK))text="Selected";
+        if(text && *text) {
+            const size_t used=strlen(out);
+            if(used && used+2<room){out[used]=':';out[used+1]=' ';out[used+2]=0;}
+            navigation_copy(out+strlen(out),room-strlen(out),text);
+        }
+        return;
+    }
+    for(uint32_t i=0;i<lv_obj_get_child_count(obj);i++)navigation_setting_labels(lv_obj_get_child(obj,i),out,room);
+}
+
+static void navigation_setting(ui_navigation_t *out,focus_item_t *focus)
+{
+    navigation_copy(out->heading,sizeof(out->heading),settings_detail_open ? settings_names[settings_selected] : "Settings");
+    if(settings_time_open) {
+        const char *caption=NULL;
+        if(focus->obj==settings_time_year_value)caption="Year";
+        else if(focus->obj==settings_time_month_value)caption="Month";
+        else if(focus->obj==settings_time_day_value)caption="Day";
+        else if(focus->obj==settings_time_hour_value)caption="Hour";
+        else if(focus->obj==settings_time_minute_value)caption="Minute";
+        else if(focus->obj==settings_time_ampm_value)caption="AM/PM";
+        if(caption) {
+            navigation_copy(out->heading,sizeof(out->heading),"Set time");
+            // Read the value even during its visual editing blink.
+            char value[96];snprintf(value,sizeof(value),"%s: %s",caption,lv_label_get_text(focus->obj));
+            navigation_copy(out->focus,sizeof(out->focus),value);
+            navigation_position(out,settings_time_start_edit);
+        }
+        else if(focus->obj==settings_time_up_button || focus->obj==settings_time_down_button) {
+            navigation_copy(out->heading,sizeof(out->heading),"Set time");
+            navigation_copy(out->focus,sizeof(out->focus),focus->obj==settings_time_up_button ? "Increase" : "Decrease");
+            out->index=out->count=0;
+        }
+        else navigation_setting_labels(focus->obj,out->focus,sizeof(out->focus));
+    }
+    else navigation_setting_labels(focus->obj,out->focus,sizeof(out->focus));
+}
+
 void ui_navigation_snapshot(ui_navigation_t *out)
 {
     memset(out,0,sizeof(*out));out->view=(uint8_t)g_current_screen;
     /* Flags match the optional ColoPlay navigation contract. */
     if(ui_screen_is_on())out->flags|=32;
-    if(g_edit_mode)out->flags|=2;
+    if(g_edit_mode || (g_current_screen==SCR_SETTINGS && settings_time_editing))out->flags|=2;
     if(g_page_loading || g_afc_sync_mode){out->flags|=4;return;}
     const char *text=NULL;
     if(g_ctx_menu_open) {
@@ -11712,8 +11819,12 @@ void ui_navigation_snapshot(ui_navigation_t *out)
             text=lv_label_get_text(g_ctx_menu_items[g_ctx_menu_focus].label);
     }
     else if(g_current_screen==SCR_ALBUMS && !albums_detail_open) {
-        player_album_t album;out->index=albums_selected;out->count=player_album_count();
-        if(player_album_get(albums_selected,&album))navigation_copy(out->focus,sizeof(out->focus),album.title);
+        player_album_t album;
+        if(albums_selected<0)text="Shuffle";
+        else if(player_album_get(albums_selected,&album)) {
+            out->index=albums_selected;out->count=player_album_count();
+            navigation_copy(out->focus,sizeof(out->focus),album.title);
+        }
     }
     else if(g_current_screen==SCR_ARTISTS && !artists_detail_open) {
         player_artist_t artist;out->index=artists_selected;out->count=player_artist_count();
@@ -11725,24 +11836,57 @@ void ui_navigation_snapshot(ui_navigation_t *out)
     }
     else {
         if(g_current_screen==SCR_NOW_PLAYING && np_queue_visible)out->flags|=16;
+        if(g_current_screen==SCR_ALBUMS && albums_detail_open) {
+            player_album_t album;
+            if(player_album_get(albums_selected,&album))navigation_copy(out->heading,sizeof(out->heading),album.title);
+        }
+        else if(g_current_screen==SCR_ARTISTS && artists_detail_open) {
+            player_artist_t artist;
+            if(player_artist_get(artists_selected,&artist))navigation_copy(out->heading,sizeof(out->heading),artist.name);
+        }
+        else if(g_current_screen==SCR_PLAYLISTS && playlists_detail_open) {
+            player_playlist_t playlist;
+            if(player_playlist_get(playlists_selected,&playlist))navigation_copy(out->heading,sizeof(out->heading),playlist.name);
+        }
+        if(g_current_screen==SCR_SETTINGS)navigation_copy(out->heading,sizeof(out->heading),settings_detail_open?settings_names[settings_selected]:"Settings");
         if(g_focus_index>=0 && g_focus_index<g_focus_count) {
             out->index=g_focus_index;out->count=g_focus_count;
             focus_item_t *focus=&g_focus[g_focus_index];
-            if(focus->activate==albums_track_action || focus->activate==artists_track_action ||
-               focus->activate==artists_album_action || focus->activate==np_queue_action) {
+            if(focus->activate==albums_play_all_action || focus->activate==artists_play_all_action || focus->activate==playlists_play_action) {
+                text="Play";out->index=out->count=0;
+            }
+            else if(focus->activate==albums_shuffle_action || focus->activate==artists_shuffle_action || focus->activate==playlists_shuffle_action) {
+                text="Shuffle";out->index=out->count=0;
+            }
+            else if(focus->activate==albums_track_action || focus->activate==artists_track_action ||
+                    focus->activate==artists_album_action || focus->activate==np_queue_action) {
                 context_target_t target;
                 if(context_capture(&target))navigation_copy(out->focus,sizeof(out->focus),target.title);
+                navigation_position(out,focus->activate);
+                if(focus->activate==albums_track_action) {
+                    player_album_t album;
+                    if(player_album_get(albums_selected,&album)){out->index=(uint32_t)(intptr_t)focus->user;out->count=album.track_count;}
+                }
+                else if(focus->activate==artists_track_action) {
+                    player_artist_t artist;
+                    if(player_artist_get(artists_selected,&artist)){out->index=(uint32_t)(intptr_t)focus->user;out->count=player_artist_song_count(artist.id);}
+                }
             }
             else if(focus->activate==playlists_track_action) {
                 player_track_t track;
                 if(player_playlist_track_get(playlists_selected,(int)(intptr_t)focus->user,&track))
                     navigation_copy(out->focus,sizeof(out->focus),track.title);
+                navigation_position(out,playlists_track_action);
+                player_playlist_t playlist;
+                if(player_playlist_get(playlists_selected,&playlist)){out->index=(uint32_t)(intptr_t)focus->user;out->count=playlist.track_count;}
             }
             else if(focus->activate==playlists_open) {
                 player_playlist_t playlist;
                 if(player_playlist_get((int)(intptr_t)focus->user,&playlist))
                     navigation_copy(out->focus,sizeof(out->focus),playlist.name);
+                navigation_position(out,playlists_open);
             }
+            else if(g_current_screen==SCR_SETTINGS)navigation_setting(out,focus);
             else text=navigation_label(focus->obj);
         }
     }

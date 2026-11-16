@@ -30,6 +30,35 @@ int main(){
  header(p,1,"Wrapped");assert(nav.accept(p,20,1));text(nav,1,"Wrapped",1);assert(nav.snapshot(2,true).revision==1);
  header(p,65535,"Stale");assert(!nav.accept(p,20,3));
  nav.reset();assert(!nav.snapshot(1,true).valid);
+ // Heading and focus publish atomically, including out-of-order field arrival.
+ nav.reset();cp_navigation_t detail={};detail.view=1;detail.flags=CP_NAV_FOCUS;
+ std::strcpy(detail.focus,"Play");std::strcpy(detail.heading,u8"日本語 Album");
+ cp_navigation_header(p,1,123,&detail,true);assert(nav.accept(p,20,10));
+ text(nav,1,detail.focus,11);assert(!nav.snapshot(11,true).valid);
+ auto headingText=[&](uint16_t revision,const std::string &value,uint32_t now){
+   for(unsigned offset=0;offset<value.size();offset+=10){
+     cp_header(p,CP_NAV_HEADING_TEXT,revision,123);p[8]=offset;p[9]=std::min(size_t(10),value.size()-offset);
+     std::memcpy(p+10,value.data()+offset,p[9]);assert(nav.accept(p,20,now));
+   }
+ };
+ headingText(1,detail.heading,12);s=nav.snapshot(13,true);
+ assert(s.valid&&!s.ui.count&&std::string(s.ui.focus)=="Play"&&std::string(NavigationFeedback::viewName(s.ui))==detail.heading);
+ std::strcpy(detail.focus,"Shuffle");std::strcpy(detail.heading,"Next album");
+ cp_navigation_header(p,2,123,&detail,true);assert(nav.accept(p,20,20));headingText(2,detail.heading,21);
+ assert(std::string(nav.snapshot(21,true).ui.focus)=="Play"); // Retain complete prior revision.
+ cp_header(p,CP_NAV_HEADING_TEXT,1,123);p[9]=1;assert(!nav.accept(p,20,21));
+ text(nav,2,detail.focus,22);assert(std::string(nav.snapshot(22,true).ui.focus)=="Shuffle");
+ cp_navigation_header(p,2,123,&detail,true);assert(nav.accept(p,20,4000)&&nav.snapshot(4000,true).fresh);
+ cp_navigation_header(p,3,123,&detail,true);p[19]=96;assert(!nav.accept(p,20,4001));
+ cp_navigation_header(p,3,123,&detail,true);assert(nav.accept(p,20,4002));
+ cp_header(p,CP_NAV_HEADING_TEXT,3,123);p[8]=1;p[9]=1;assert(!nav.accept(p,20,4003));
+ // A newer, empty heading clears the previous detail name; legacy text still works.
+ detail.heading[0]=0;std::strcpy(detail.focus,"Artists");detail.view=2;
+ cp_navigation_header(p,4,123,&detail,true);assert(nav.accept(p,20,4010));text(nav,4,detail.focus,4011);
+ assert(!nav.snapshot(4011,true).ui.heading[0]&&std::string(NavigationFeedback::viewName(nav.snapshot(4011,true).ui))=="Artists");
+ cp_navigation_header(p,5,123,&detail,false);assert(nav.accept(p,20,4020));
+ cp_header(p,CP_NAV_HEADING_TEXT,5,123);p[9]=1;assert(!nav.accept(p,20,4021));
+ text(nav,5,detail.focus,4022);assert(nav.snapshot(4022,true).valid);
  using namespace SceneSettings;
  auto settings=defaults(),before=settings;settings.version=7;assert(migrateV7(settings)&&!std::memcmp(&settings,&before,sizeof(settings)));
  assert(Tab5NavigationProfile::install(settings,3)&&valid(settings));

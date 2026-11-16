@@ -28,6 +28,15 @@ int main(){
   cp_header(data,CP_NAVIGATION,1,7);data[8]=1;data[9]=CP_NAV_FOCUS;cp_put16(data+18,5);
   assert(peer.accept(data,20,7,250));cp_header(data,CP_NAV_TEXT,1,7);data[9]=5;memcpy(data+10,"Focus",5);
   assert(peer.accept(data,20,7,250));assert(!strcmp(peer.snapshot(260).navigation.ui.focus,"Focus"));
+  cp_navigation_t detail={};detail.view=1;detail.flags=CP_NAV_FOCUS;strcpy(detail.focus,"Play");strcpy(detail.heading,"Album");
+  cp_navigation_header(data,2,7,&detail,true);assert(!peer.accept(data,20,7,270)); // Not negotiated.
+  cp_header(data,CP_HELLO,0,7);data[16]=CP_CAP_NAVIGATION;data[17]=CP_FEATURE_STAR|CP_FEATURE_NAV_HEADING;
+  assert(peer.accept(data,20,7,271)&&peer.state.navigationHeadingSupported);
+  cp_navigation_header(data,2,7,&detail,true);assert(peer.accept(data,20,7,272));
+  cp_header(data,CP_NAV_TEXT,2,7);data[9]=4;memcpy(data+10,"Play",4);assert(peer.accept(data,20,7,273));
+  assert(!strcmp(peer.snapshot(273).navigation.ui.focus,"Focus"));
+  cp_header(data,CP_NAV_HEADING_TEXT,2,7);data[9]=5;memcpy(data+10,"Album",5);assert(peer.accept(data,20,7,274));
+  assert(!strcmp(peer.snapshot(274).navigation.ui.focus,"Play")&&!strcmp(peer.snapshot(274).navigation.ui.heading,"Album"));
   assert(!peer.snapshot(6000).fresh&&!peer.snapshot(6000).navigation.fresh);
   assert(!peer.snapshot(6000).starKnown&&!peer.snapshot(6000).starred);
   peer.clear();assert(!peer.snapshot(6000).connected&&!peer.snapshot(6000).predictionReady);

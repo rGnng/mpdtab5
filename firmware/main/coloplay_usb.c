@@ -31,7 +31,7 @@ static uint16_t s_recent[32],s_nav_revision;
 static uint8_t s_recent_result[32];static unsigned s_recent_at;
 static ui_navigation_t s_navigation;
 static bool s_have_nav;
-static bool s_star_feedback;
+static bool s_star_feedback,s_navigation_heading;
 static uint64_t s_track;
 static char s_title[64],s_artist[64];
 
@@ -65,6 +65,7 @@ static void hello(uint8_t *data){
     cp_put_float(data+12,1.0f/volume_grid_count(data[8]));
     data[16]=CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;
     if(s_star_feedback)data[17]|=CP_FEATURE_STAR;
+    if(s_navigation_heading)data[17]|=CP_FEATURE_NAV_HEADING;
 }
 static bool state(uint16_t request,uint8_t result){
     mpd_state_t state={0};mpd_client_get_remote_state(&state);
@@ -114,6 +115,7 @@ static void consume(const frame_t *frame,int64_t now){
         if(!s_nonce)s_nonce=cp_u32(data+4);
         if(s_nonce!=cp_u32(data+4))return;
         s_star_feedback=(data[17]&CP_FEATURE_STAR)!=0;
+        s_navigation_heading=(data[8]&CP_CAP_NAVIGATION)&&(data[17]&CP_FEATURE_NAV_HEADING);
         s_last_rx=now;uint8_t out[CP_BLE_BYTES];hello(out);send_frame(CP_USB_HELLO,out);return;
     }
     if(!s_nonce||!cp_packet(data,CP_BLE_BYTES)||cp_u32(data+4)!=s_nonce){atomic_fetch_add(&s_invalid,1);return;}
@@ -149,21 +151,27 @@ static void navigation(int64_t now){
     if(s_have_nav&&!memcmp(&latest,&s_navigation,sizeof(latest))&&now<s_next_nav)return;
     s_navigation=latest;s_have_nav=true;s_next_nav=now+1000000;
     if(!++s_nav_revision)++s_nav_revision;
-    uint8_t data[CP_BLE_BYTES];cp_header(data,CP_NAVIGATION,s_nav_revision,s_nonce);
-    data[8]=latest.view;data[9]=latest.flags;cp_put32(data+10,latest.index);cp_put32(data+14,latest.count);cp_put16(data+18,strlen(latest.focus));
+    uint8_t data[CP_BLE_BYTES];
+    cp_navigation_t wire={.view=latest.view,.flags=latest.flags,.index=latest.index,.count=latest.count};
+    memcpy(wire.focus,latest.focus,sizeof(wire.focus));memcpy(wire.heading,latest.heading,sizeof(wire.heading));
+    cp_navigation_header(data,s_nav_revision,s_nonce,&wire,s_navigation_heading);
     if(!send_frame(CP_USB_DATA,data))return;
-    for(unsigned offset=0,length=strlen(latest.focus);offset<length;){
-        unsigned n=length-offset;if(n>10)n=10;cp_header(data,CP_NAV_TEXT,s_nav_revision,s_nonce);
-        data[8]=offset;data[9]=n;memcpy(data+10,latest.focus+offset,n);
-        if(!send_frame(CP_USB_DATA,data))return;
-        offset+=n;
+    for(unsigned field=0;field<(s_navigation_heading?2u:1u);++field){
+        const char *text=field?latest.heading:latest.focus;
+        for(unsigned offset=0,length=strlen(text);offset<length;){
+            unsigned n=length-offset;if(n>10)n=10;
+            cp_header(data,field?CP_NAV_HEADING_TEXT:CP_NAV_TEXT,s_nav_revision,s_nonce);
+            data[8]=offset;data[9]=n;memcpy(data+10,text+offset,n);
+            if(!send_frame(CP_USB_DATA,data))return;
+            offset+=n;
+        }
     }
 }
 static void disconnect(void){
     const bool was_ready=atomic_exchange(&s_ready,false);atomic_store(&s_session,0);
     if(was_ready){mpd_client_coloplay_usb_release();ESP_LOGI(TAG,"USB controller released; BLE may resume");}
     if(s_device){cdc_acm_host_close(s_device);s_device=NULL;}
-    atomic_store(&s_open,false);s_nonce=0;s_last_rx=s_probe_at=0;s_star_feedback=false;
+    atomic_store(&s_open,false);s_nonce=0;s_last_rx=s_probe_at=0;s_star_feedback=s_navigation_heading=false;
     xQueueReset(s_rx);xQueueReset(s_results);memset(s_recent,0,sizeof(s_recent));s_recent_at=0;
     // Driver callbacks have stopped after close; parser has one producer again.
     memset(&s_parser,0,sizeof(s_parser));atomic_store(&s_gone,false);

@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current verified release: **0.8.0-global-bindings**, OTA-tested on 2026-11-16.
+Current verified release: **0.8.1-navigation-details**, OTA-tested on 2026-11-16.
 The gadget is configured
 through the **Connection**, **Controls**, **Playback**, **Lighting** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
@@ -177,12 +177,12 @@ Lighting. Legacy button color inheritance with a brightness override resolves
 the current scene color/mode when creating Custom. Screen preferences persist.
 
 **Screen** has switches for the status icons, title, artist and progress bar.
-Beside the play/pause icon, a small star shows the current track's confirmed
-Tab5 state: gold fill when starred, muted outline when unstarred. The fixed slot
-keeps titles and progress stationary. It works in Playback and in Tab5
-Navigation's Now Playing view over USB or Bluetooth. The Status icon switch
-controls both icons. Older Tab5 firmware, stale feedback or no current track
-hide the star instead of implying the track is unstarred.
+A small gold dot centered below the elapsed/total or remaining-time line shows
+that Tab5 confirms the current song is starred. Unstarred, unknown, stale or
+missing-track feedback hides it. The former star icon is removed. The marker
+keeps its footer position when time is hidden; Status icon controls only the
+playback-state icon. This works in Playback and Navigation's Now Playing view
+over USB or Bluetooth.
 Time can show Elapsed / Total, Remaining, or Off. Long titles/artists use
 Ellipsis or Scrolling (24 pixels/second, with a one-second pause at each end).
 Japanese, common Chinese and Korean text use the embedded 16 px font and stay
@@ -296,6 +296,20 @@ Current bounded NVS storage supports **8 selectable scenes plus Global**,
 **64 configured gestures** shared by all scopes, and **3 ordered actions per
 gesture**. New scenes start with no assigned actions. Reordering preserves IDs,
 bindings, scene settings and active selection.
+
+### Add to Playlist on Tab5
+
+Tab5 offers **Add to Playlist** in song context menus, including
+Now Playing, Up Next and playlist-detail songs. Use the existing Context binding,
+turn the knob to Add to Playlist and press to open its destination list. Turn to
+an existing playlist and press to append. Back returns to song actions; Context
+closes the picker. ColoPlay shows the focused destination through its existing
+navigation feedback. No new ColoPlay binding, wire feature or NVS setting is
+required. The Tab5 update was OTA-verified on 2026-11-16 with ColoPlay unchanged
+at 0.8.1. Live picker/cancel checks preserved playlists and playback; append
+behavior is covered by native UI and production socket tests. See the
+[Tab5 validation record](../../docs/mpd-validation.md#add-to-playlist-ota--2026-11-16)
+for its image fingerprint and test scope.
 
 ### Global bindings
 

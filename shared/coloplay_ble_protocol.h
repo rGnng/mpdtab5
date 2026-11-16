@@ -12,14 +12,14 @@
 #define CP_BLE_STATE "a91c0004-c169-4acb-9f5d-121d621d17b5"
 #define CP_BLE_BYTES 20
 enum {CP_BLE_VERSION=1,CP_MEDIA=1,CP_VOLUME=2,CP_KEY=3,CP_RELEASE=4,
-      CP_HELLO=16,CP_STATE=17,CP_TEXT=18,CP_TRACK=19,CP_VOLUME_STATE=20,CP_NAVIGATION=21,CP_NAV_TEXT=22};
+      CP_HELLO=16,CP_STATE=17,CP_TEXT=18,CP_TRACK=19,CP_VOLUME_STATE=20,CP_NAVIGATION=21,CP_NAV_TEXT=22,CP_NAVIGATION_HEADING=23,CP_NAV_HEADING_TEXT=24};
 enum {CP_PENDING=0,CP_ACCEPTED=1,CP_APPLIED=2,CP_FAILED=3,CP_NO_CHANGE=4,CP_UNSUPPORTED=5,CP_BUSY=6};
 enum {CP_CAP_MEDIA=1,CP_CAP_VOLUME=2,CP_CAP_KEY=4,CP_CAP_STATE=8,CP_CAP_VOLUME_FLOAT=16,CP_CAP_VOLUME_PREDICT=32,CP_CAP_VOLUME_SCALE=64,CP_CAP_NAVIGATION=128};
 /* Optional feature byte 17 in capabilities, USB OFFER and host HELLO. */
-enum {CP_FEATURE_STAR=1};
+enum {CP_FEATURE_STAR=1,CP_FEATURE_NAV_HEADING=2};
 enum {CP_STATE_STAR_KNOWN=4,CP_STATE_STARRED=8,CP_STATE_CONNECTED=128};
 enum {CP_NAV_CONTEXT=1,CP_NAV_EDITING=2,CP_NAV_LOADING=4,CP_NAV_FOCUS=8,CP_NAV_QUEUE=16,CP_NAV_SCREEN_ON=32};
-typedef struct {uint8_t view,flags;uint32_t index,count;char focus[96];} cp_navigation_t;
+typedef struct {uint8_t view,flags;uint32_t index,count;char focus[96],heading[96];} cp_navigation_t;
 static inline uint16_t cp_u16(const uint8_t *p){return (uint16_t)p[0]|((uint16_t)p[1]<<8);}
 static inline uint32_t cp_u32(const uint8_t *p){return (uint32_t)cp_u16(p)|((uint32_t)cp_u16(p+2)<<16);}
 static inline void cp_put16(uint8_t *p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
@@ -42,6 +42,16 @@ static inline bool cp_command_valid(const uint8_t *p,size_t n){
   return p[1]==CP_RELEASE;
 }
 static inline void cp_header(uint8_t *p,uint8_t kind,uint16_t id,uint32_t session){memset(p,0,CP_BLE_BYTES);p[0]=CP_BLE_VERSION;p[1]=kind;cp_put16(p+2,id);cp_put32(p+4,session);}
+/* Heading-capable peers use byte lengths at 18/19 and send both text fields
+ * under one revision. Legacy peers retain the uint16 focus length at 18. */
+static inline void cp_navigation_header(uint8_t *out,uint16_t revision,uint32_t session,
+                                       const cp_navigation_t *nav,bool heading){
+  cp_header(out,heading?CP_NAVIGATION_HEADING:CP_NAVIGATION,revision,session);
+  out[8]=nav->view;out[9]=nav->flags;cp_put32(out+10,nav->index);cp_put32(out+14,nav->count);
+  if(heading){out[18]=(uint8_t)strlen(nav->focus);out[19]=(uint8_t)strlen(nav->heading);}
+  else cp_put16(out+18,(uint16_t)strlen(nav->focus));
+}
+
 /* State: header; signed volume, playback (0/1/2 or 255 unknown),
  * seek direction in flags bits 0..1, negotiated star known/starred in bits 2/3,
  * backend connected in bit 7, result;

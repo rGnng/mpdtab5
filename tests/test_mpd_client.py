@@ -118,6 +118,7 @@ void test_init(int fd) {
     coloplay_volume_completed=0;volume_steps=16;memset(&volume_cursor,0,sizeof(volume_cursor));server_volume=-1;volume_integer_only=false;muted_volume=0.5f;
     complete_count=0;
     free(queue_next_ids);queue_next_ids=NULL;queue_next_count=0;queue_next_head_valid=false;queue_priority_support=-1;queue_epoch=1;
+    free(playlist_destinations);playlist_destinations=NULL;playlist_destination_generation=0;playlists_refresh_pending=false;playlist_connection_generation=config_revision=1;
     diagnostic[0]=0; mpd_wire_init(&wire); mpd_wire_attach(&wire,fd,1000);
 }
 int test_sync_queue(unsigned size,unsigned budget) {
@@ -130,6 +131,14 @@ int test_completions(void) { return complete_count; }
 int test_queue_pending(void) { return queue_refresh_pending; }
 int test_sync_stars(unsigned budget) { allocation_limit=budget;return sync_stars(); }
 int test_sync_playlists(void) { return sync_playlists(); }
+int test_playlist_add(const char *name,uint64_t key,unsigned captured,unsigned queued){
+    command_t c={.kind=CMD_PLAYLIST_ADD,.keys=&key,.playlist=(char*)name,.playlist_generation=captured,.generation=queued};
+    return run_command(&c);
+}
+int test_playlists_pending(void){return playlists_refresh_pending;}
+int test_destination_count(unsigned revision,int connected){config_revision=revision;state.connected=connected;return mpd_client_playlist_destination_count();}
+const char *test_destination_name(int index){static char name[256];uint32_t generation=0;return mpd_client_playlist_destination(index,name,sizeof(name),&generation)?name:NULL;}
+
 int test_star_count(void) { return star_count; }
 uint64_t test_star_key(int i) { return i>=0 && i<star_count ? star_keys[i] : 0; }
 void test_current_key(uint64_t key) { state.track_key=key; }
@@ -218,22 +227,32 @@ class ClientTest(unittest.TestCase):
         start=SOURCE.index('typedef struct {\n    player_media_item_t item;')
         song_type=SOURCE[start:SOURCE.index('} song_parser_t;',start)+len('} song_parser_t;')]
         globals_='typedef struct { char names[32][256]; int count; } playlists_t;\n'+uri_type+'''
+static playlists_t *playlist_destinations;
+static uint32_t playlist_destination_generation,playlist_connection_generation=1,config_revision=1;
+static bool playlists_refresh_pending;static void *mutex=(void*)1;
+typedef struct {const char *name;bool found;} playlist_search_t;
 static uri_entry_t uris[TRACK_LIMIT];
 static uint16_t uri_slots[URI_SLOTS];
 static char uri_pool[URI_BYTES];
 static unsigned uri_count,uri_used;
 '''
         queue_types=re.search(r'typedef struct \{ int position; uint32_t id; bool have_id; \} queue_entry_info_t;',SOURCE).group()+'\n'+re.search(r'typedef struct \{ uint32_t \*ids;int count,capacity; \} queue_added_t;',SOURCE).group()+'\n'
-        functions='\n'.join(function(SOURCE,name) for name in [
+        public_source=re.sub(r'^((?:int|bool) mpd_client_playlist_[^(]+\()',r'static \1',SOURCE,flags=re.M)
+        def production(name):
+            if name.startswith('mpd_client_playlist_'):return function(public_source,name).removeprefix('static ')
+            return function(SOURCE,name)
+        functions='\n'.join(production(name) for name in [
             'publish','uri_lookup','uri_insert','song_reset','song_finish','song_field',
             'status_field','stat_field','simple','sync_library','sync_queue','star_position',
-            'sync_stars','change_star','playlist_field','sync_playlists','play_selection','poll_state','set_volume','queue_next_queue_changed','queue_priority_field','queue_priority_capability','queue_next_tick','queue_next_install','queue_added_field','queue_entry_field','queue_add_selection','queue_edit_entry','run_command','coloplay_volume_complete'])
+            'sync_stars','change_star','playlist_field','sync_playlists','mpd_client_playlist_destination_count','mpd_client_playlist_destination','playlist_search_field','playlist_add_track','play_selection','poll_state','set_volume','queue_next_queue_changed','queue_priority_field','queue_priority_capability','queue_next_tick','queue_next_install','queue_added_field','queue_entry_field','queue_add_selection','queue_edit_entry','run_command','coloplay_volume_complete'])
         (directory/'client.c').write_text(PREFIX+globals_+command_type+song_type+queue_types+functions+SUFFIX)
         subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Wno-unused-function','-shared','-fPIC',
                         '-I'+str(directory),'-I'+str(ROOT/'app/mpd'),'-I'+str(ROOT/'app/backend'),
                         '-I'+str(ROOT/'firmware/main'),str(directory/'client.c'),
                         str(ROOT/'app/mpd/mpd_wire.c'),'-o',str(directory/'client.so')],check=True)
         cls.lib=C.CDLL(str(directory/'client.so'))
+        cls.lib.test_playlist_add.argtypes=[C.c_char_p,C.c_uint64,C.c_uint,C.c_uint]
+        cls.lib.test_destination_name.argtypes=[C.c_int];cls.lib.test_destination_name.restype=C.c_char_p
         cls.lib.test_fraction.restype=C.c_float
         cls.lib.test_grid_target.restype=C.c_float
         cls.lib.test_insert.argtypes=[C.c_char_p]; cls.lib.test_insert.restype=C.c_uint64
@@ -276,6 +295,58 @@ static unsigned uri_count,uri_used;
 
     def star_reply(self,*uris):
         return b''.join(b'file: '+uri+b'\nTitle: Song\nAlbum: Album\nArtist: Artist\n' for uri in uris)+b'OK\n'
+
+    def test_add_to_playlist_quotes_name_and_uri_without_playback_commands(self):
+        uri=b'album/a "quoted" \\ song.flac';name=b'Evening "mix" \\ 2026'
+        key=self.lib.test_insert(uri)
+        def quote(value):return b'"'+value.replace(b'\x5c',b'\x5c\x5c').replace(b'\x22',b'\x5c\x22')+b'"'
+        self.server([(b'listplaylists\n',b'playlist: '+name+b'\nOK\n'),
+                     (b'playlistadd '+quote(name)+b' '+quote(uri)+b'\n',b'OK\n')])
+        self.assertEqual(self.lib.test_playlist_add(name,key,1,1),1)
+        self.assertEqual(self.lib.test_playlists_pending(),1)
+        self.assertEqual(self.lib.test_queue_pending(),0)
+
+    def test_deleted_destination_is_not_recreated_or_redirected(self):
+        key=self.lib.test_insert(b'album/song.flac')
+        self.server([(b'listplaylists\n',b'playlist: Another list\nOK\n')])
+        self.assertEqual(self.lib.test_playlist_add(b'Deleted list',key,1,1),1)
+        self.assertIn(b'Playlist changed',self.lib.test_message())
+        self.assertEqual(self.lib.test_playlists_pending(),1)
+
+    def test_playlist_connection_change_rejects_old_picker_without_io(self):
+        key=self.lib.test_insert(b'album/song.flac')
+        self.assertEqual(self.lib.test_playlist_add(b'Mix',key,1,2),1)
+        self.assertIn(b'connection changed',self.lib.test_message())
+        self.peer.settimeout(.05)
+        with self.assertRaises(socket.timeout):self.peer.recv(1)
+
+    def test_playlist_add_rejects_reserved_name_missing_track_and_line_injection(self):
+        key=self.lib.test_insert(b'album/song.flac')
+        self.assertEqual(self.lib.test_playlist_add(b'sTaReD',key,1,1),1)
+        self.assertEqual(self.lib.test_playlist_add(b'Mix',key+1,1,1),1)
+        self.assertEqual(self.lib.test_playlist_add(b'Bad\nclear',key,1,1),0)
+        self.peer.settimeout(.05)
+        with self.assertRaises(socket.timeout):self.peer.recv(1)
+
+    def test_playlist_write_error_keeps_socket_and_does_not_claim_success(self):
+        key=self.lib.test_insert(b'album/song.flac')
+        self.server([(b'listplaylists\n',b'playlist: Mix\nOK\n'),
+                     (b'playlistadd "Mix" "album/song.flac"\n',b'ACK [4@0] {playlistadd} permission denied\n')])
+        self.assertEqual(self.lib.test_playlist_add(b'Mix',key,1,1),0)
+        self.assertEqual(self.lib.test_playlists_pending(),0)
+        self.assertIn(b'permission denied',self.lib.test_wire_error())
+
+    def test_playlist_destinations_keep_full_names_and_connection_identity(self):
+        name=b'A'*180+b' mix'
+        self.server([(b'listplaylists\n',b'playlist: Stared\nplaylist: '+name+b'\nOK\n'),
+                     (b'listplaylistinfo "'+name+b'"\n',b'OK\n'),
+                     (b'listplaylistinfo "Stared"\n',b'ACK [50@0] {listplaylistinfo} missing\n')])
+        self.assertEqual(self.lib.test_sync_playlists(),1)
+        self.assertEqual(self.lib.test_destination_count(1,1),1)
+        self.assertEqual(self.lib.test_destination_name(0),name)
+        self.assertEqual(self.lib.test_destination_count(2,1),0)
+        self.assertIsNone(self.lib.test_destination_name(0))
+        self.assertEqual(self.lib.test_destination_count(1,0),0)
 
     def test_elapsed_polls_preserve_revision_but_publish_real_changes(self):
         revision=self.lib.test_publish(1000,50,0,b"Song")

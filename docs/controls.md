@@ -48,12 +48,12 @@ physical Page Up/Down keys remain list-paging controls.
 | --- | --- |
 | Album in Albums, or album header in artist detail | Play, Shuffle Play, Add to Queue, Play Next, Go to artist |
 | Artist in Artists | Play, Shuffle Play, Add to Queue, Play Next |
-| Song in album detail, artist detail, or Songs | Play, Add to Queue, Play Next, Star/Unstar, Go to album, Go to artist |
-| Entry in Up Next | Play Next, Remove from Queue, Go to album, Go to artist |
-| Now Playing controls / queue closed | Go to album, Go to artist, Star/Unstar, Shuffle, Repeat |
+| Song in album detail, artist detail, Songs or playlist detail | Play, Add to Queue, Play Next, Star/Unstar, Add to Playlist, Go to album, Go to artist |
+| Entry in Up Next | Play Next, Remove from Queue, Add to Playlist, Go to album, Go to artist |
+| Now Playing controls / queue closed | Go to album, Go to artist, Star/Unstar, Add to Playlist, Shuffle, Repeat |
 
 Album/artist/song menus show the selected item's title and applicable actions.
-Now Playing retains its Go To, Star, and Playback sections. Destinations without
+Now Playing groups actions under Go To, Star, Playlists and Playback. Destinations without
 an album/artist identity are omitted from library/queue menus.
 
 - **Play** uses the view's existing playback action. Starting an album or artist
@@ -73,9 +73,25 @@ an album/artist identity are omitted from library/queue menus.
 - **Remove from Queue** removes that occurrence by server queue-entry ID.
   Removing a currently playing entry, if playback advances while the menu is
   open, follows the server's normal delete behavior.
+- **Add to Playlist** opens an existing-playlist picker for the captured song.
+  Touch a destination or use Up/Down and Enter. Back returns to the song menu;
+  Context or a backdrop tap closes it. The operation appends without changing
+  playback, queue order, volume or shuffle. Repeated additions append repeated
+  entries, following MPD's normal playlist behavior. Stared is excluded; use
+  Star/Unstar for that list. Empty destination lists show a message and Back.
 - **Star/Unstar** targets the selected song, including when another song is
   playing. MPD writes Tracks' server-side **Stared** playlist. Its confirmed
   server state controls the label; a network round trip may be visible.
+
+The Add to Playlist implementation is built, host-tested and OTA-verified. The
+live check exercised the picker and cancel without writing to user playlists.
+It uses up to the 32 regular server playlists supported by the
+existing catalog. Create a new playlist in the MPD client/server first. The
+picker freezes full names and the server connection identity; a later list
+reorder does not redirect the selected destination. The worker verifies the
+name still exists immediately before `playlistadd`, then refreshes stored
+playlists after success. Queued acceptance is shown as a request; server errors
+remain in MPD diagnostics.
 
 Menus capture item IDs when opening. Queue handles also carry a connection
 epoch, so an old menu cannot edit a reused ID after reconnect. Queue ID zero is
@@ -113,9 +129,10 @@ ColoPlay accepts these unmodified keyboard HID usages:
 For ColoPlay Star/Unstar, use keypad multiply `0x55` (85), modifiers zero, or
 Shift+8 (`0x25`, left Shift `0x02` or right Shift `0x20`). This shortcut toggles
 the **currently playing song**. ColoPlay's Playback screen and Navigation's
-Now Playing view show the confirmed state beside the play/pause icon: gold fill
-for starred, muted outline for unstarred. Unknown, stale or disconnected state
-hides it. The playback **Status icon** switch controls both icons. To star a
+Now Playing view show a small gold dot below the time line only for a confirmed
+starred song. Unstarred, unknown, stale or disconnected state hides it. The
+former star icon is removed in release 0.8.1; the **Status icon**
+switch now controls only the playback-state icon. To star a
 different song, select it and choose
 Star/Unstar in its context menu. Other modified navigation keys are rejected.
 

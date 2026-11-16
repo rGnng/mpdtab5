@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay source: **0.8.0-global-bindings**; the verified OTA
+Current ColoPlay source: **0.8.1-navigation-details**; the verified OTA
 is in the [release record](development.md#current-verified-release).
 Both applications now live in the [MPD Tab5 repository](../../README.md), using
 the common definitions in [shared/](../../shared/README.md).
@@ -28,16 +28,19 @@ Bluetooth is initially disabled on a new installation.
 
 ## Star feedback
 
-ColoPlay's playback status row has a small star beside the play/pause icon:
-filled gold means starred; a muted outline means unstarred. This is Tab5's
+ColoPlay shows a small gold dot below the playback elapsed/total or remaining
+time only when the current song is starred. The former star icon is removed.
+This is Tab5's
 confirmed current-track state, including changes made directly on Tab5. The
 existing keypad `*` HID shortcut still toggles the current track. No new key
 mapping is installed and failed commands do not predict a star change.
 
 The same indicator appears in Tab5 Navigation's Now Playing view. Its visibility
-follows the existing playback Status icon switch; stale/disconnected state,
-missing track and older Tab5 firmware hide it. Both application images need
-this feature for the indicator to appear. The matching applications were OTA-tested on 2026-11-16. The saved Button 4
+is independent of the playback Status icon switch and remains in the footer
+when time is hidden. Unstarred, stale/disconnected state, missing track and
+older Tab5 firmware hide it. Both application images need
+the star-feedback feature for the indicator to appear. The 0.8.0 applications
+and the 0.8.1 replacement dot image were OTA-tested on 2026-11-16. The saved Button 4
 hold binding starred/unstarred the current track over USB; both USB and
 Bluetooth feedback confirmed each state, and the original star state was restored.
 USB retained command ownership. Wireless-only command routing was host-tested;
@@ -403,3 +406,21 @@ Tab5's existing HTTP controls remain available for IP integrations:
 `POST /api/mpd/volume`, `/api/mpd/control` and `GET /api/status`. Root `volume`
 is Tab5's feedback speaker setting; `mpd_volume` is MPD playback volume.
 No BLE-versus-Wi-Fi latency comparison has been measured.
+
+## Detail navigation feedback (0.8.1)
+
+Both updated images were OTA-tested on 2026-11-16. They send semantic feedback over
+USB and Bluetooth without changing Tab5's input actions or saved settings:
+
+| View | Heading | Focus and position |
+| --- | --- | --- |
+| Album detail | Album name | Play/Shuffle without a counter; songs start at 1/n |
+| Artist detail | Artist name | Play/Shuffle without a counter; album and song positions count their own items |
+| Playlist detail | Playlist name | Play/Shuffle without a counter; songs start at 1/n |
+| Settings | Settings or selected section | Setting name/current value; actionable-row position |
+| Clock editor | Set time | Field name/value through editing blink; Increase/Decrease controls without a field counter |
+
+Settings values refresh during editing. Decorative headers and playback
+buttons do not inflate song positions. The optional heading stream uses
+`CP_FEATURE_NAV_HEADING`; see the [shared protocol](../../shared/README.md) for its frame layout.
+Legacy peers retain the original navigation frame format and generic headings.

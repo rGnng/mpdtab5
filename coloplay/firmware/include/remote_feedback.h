@@ -8,7 +8,7 @@ class RemoteFeedback {
  public:
   struct Snapshot {
     NavigationFeedback::State navigation;
-    bool navigationSupported=false;
+    bool navigationSupported=false,navigationHeadingSupported=false;
     bool starSupported=false,starKnown=false,starred=false;
     bool wired=false,floatVolume=false,enabled=false,ready=false,connected=false,secured=false,extension=false,fresh=false,available=false,pending=false,positionValid=false;
     int playback=255,seek=0,result=0;
@@ -33,6 +33,7 @@ class RemoteFeedback {
   }
   bool accept(const uint8_t *p,size_t size,uint32_t session,uint32_t now){
     if(!session||!cp_packet(p,size)||cp_u32(p+4)!=session)return false;
+    if(p[1]==CP_NAVIGATION_HEADING||p[1]==CP_NAV_HEADING_TEXT)return state.navigationSupported&&state.navigationHeadingSupported&&navigation.accept(p,size,now);
     if(p[1]==CP_NAVIGATION||p[1]==CP_NAV_TEXT)return state.navigationSupported&&navigation.accept(p,size,now);
     if(p[1]==CP_TEXT){
       const unsigned field=p[2]&0x7f,offset=p[3],n=p[8];
@@ -52,6 +53,7 @@ class RemoteFeedback {
       state.starSupported=(p[17]&CP_FEATURE_STAR)!=0;
       if(!state.starSupported)state.starKnown=state.starred=false;
       state.navigationSupported=(p[16]&CP_CAP_NAVIGATION)!=0;
+      state.navigationHeadingSupported=state.navigationSupported&&(p[17]&CP_FEATURE_NAV_HEADING);
       state.floatVolume=(p[16]&CP_CAP_VOLUME_FLOAT)!=0;
       state.volumePrediction=state.floatVolume&&(p[16]&CP_CAP_VOLUME_PREDICT)&&(p[16]&CP_CAP_VOLUME_SCALE);
       prediction.configure(state.volumePrediction,p[8]);

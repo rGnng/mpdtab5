@@ -8,7 +8,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.8.0-global-bindings** (OTA-tested on 2026-11-16), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.8.1-navigation-details** (OTA-tested on 2026-11-16), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
@@ -128,7 +128,8 @@ Playback star feedback is reported in `controller.star_supported`,
 `controller.star_known` and `controller.starred` (and the Bluetooth diagnostics
 for that transport). Check `star_known` before interpreting `starred`; stale,
 disconnected or missing-track feedback clears known/value. The playback Status
-icon switch includes the star beside the transport icon. No playback NVS change
+icon switch controls only play/pause. A small gold dot below the time line
+marks confirmed starred state; unstarred/unknown state hides it. No playback NVS change
 is needed. Wire negotiation is documented in the
 [shared protocol](../../shared/README.md).
 

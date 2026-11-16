@@ -2,7 +2,7 @@
 
 The separate ColoPlay peer driver adds bidirectional controls to the existing
 Bluetooth controller selection. The current paired release is ColoPlay
-**0.8.0-global-bindings**, verified with Tab5 source **`5aeb1c3`**; image hashes
+**0.8.1-navigation-details**, built from the working tree based on **`3c4e519`**; image hashes
 and live checks are in the [release record](../coloplay/docs/development.md#current-verified-release).
 The driver originally built on `a34fa8a` and retains the existing
 `volume_grid_step` helper and MPD command worker. D100H discovery/heartbeat and
@@ -60,9 +60,10 @@ and feedback; USB owns input after its handshake.
 
 ## Current-track star feedback
 
-ColoPlay draws a small star beside the playback-state icon: gold fill when
-starred, muted outline when unstarred. It also appears in Navigation's Now
-Playing view and follows the playback Status icon switch. This describes the
+Release 0.8.1 replaces the star icon with a small gold dot below
+the elapsed/total or remaining-time line, shown only for a confirmed starred
+song. It also appears in Navigation's Now Playing view. The dot keeps its
+footer position when time is hidden and is independent of the Status icon switch. This describes the
 current track, independently of the item selected in a library/context menu.
 No current track, stale/disconnected feedback or an older peer hides the icon.
 
@@ -233,3 +234,21 @@ checks cover all four choices. Application-only OTA verified ELF SHA-256
 `ff8d0e65d739760ce8ecd418658e95951cf83d530d5c6aca91676210f0da8c68`.
 The live check synchronized all four profiles to ColoPlay, matched both
 readouts, preserved raw playing volume and restored the saved profile.
+
+## Detail navigation feedback (0.8.1)
+
+Both updated images were OTA-tested on 2026-11-16. They send semantic feedback over
+USB and Bluetooth without changing Tab5's input actions or saved settings:
+
+| View | Heading | Focus and position |
+| --- | --- | --- |
+| Album detail | Album name | Play/Shuffle without a counter; songs start at 1/n |
+| Artist detail | Artist name | Play/Shuffle without a counter; album and song positions count their own items |
+| Playlist detail | Playlist name | Play/Shuffle without a counter; songs start at 1/n |
+| Settings | Settings or selected section | Setting name/current value; actionable-row position |
+| Clock editor | Set time | Field name/value through editing blink; Increase/Decrease controls without a field counter |
+
+Settings values refresh during editing. Decorative headers and playback
+buttons do not inflate song positions. The optional heading stream uses
+`CP_FEATURE_NAV_HEADING`; see the [shared protocol](../shared/README.md) for its frame layout.
+Legacy peers retain the original navigation frame format and generic headings.

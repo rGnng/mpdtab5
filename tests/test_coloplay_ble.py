@@ -42,7 +42,7 @@ static bool mpd_client_coloplay_accepts(uint32_t session){return session!=0;}
 static int native_steps=64;
 static int player_volume_steps(void){return native_steps;}
 typedef struct {bool connected,starred;float volume,volume_grid_target;uint8_t volume_grid_steps;uint16_t volume_request;int play_status;uint32_t elapsed_ms,duration_ms,revision;uint64_t track_key;char title[128],artist[128];} mpd_state_t;
-static float remote_volume=.67f;static bool float_peer,predict_peer,scale_peer,navigation_peer,star_peer,remote_star;
+static float remote_volume=.67f;static bool float_peer,predict_peer,scale_peer,navigation_peer,star_peer,heading_peer,remote_star;
 static bool remote_connected=true;static uint64_t remote_track=123;
 static float remote_target=.25f;static uint16_t remote_completed=7;
 static uint32_t backend_session;static unsigned commands,releases,key_events;static int backend_error;
@@ -61,18 +61,19 @@ static struct ble_npl_event *last_event;static unsigned event_wakes;
 static void ble_npl_eventq_put(void *queue,struct ble_npl_event *event){(void)queue;assert(event->callback);last_event=event;event_wakes++;}
 #define pdTRUE 1
 typedef cp_navigation_t ui_navigation_t;
-typedef struct {unsigned cap,size,read,count;uint8_t bytes[32][128];} *QueueHandle_t;
-static QueueHandle_t xQueueCreate(unsigned cap,unsigned size){assert(cap<=32&&size<=128);QueueHandle_t q=calloc(1,sizeof(*q));q->cap=cap;q->size=size;return q;}
+typedef struct {unsigned cap,size,read,count;uint8_t bytes[32][256];} *QueueHandle_t;
+static QueueHandle_t xQueueCreate(unsigned cap,unsigned size){assert(cap<=32&&size<=256);QueueHandle_t q=calloc(1,sizeof(*q));q->cap=cap;q->size=size;return q;}
 static void xQueueReset(QueueHandle_t q){q->read=q->count=0;}
 static int xQueueSend(QueueHandle_t q,const void *data,int wait){(void)wait;if(q->count==q->cap)return 0;memcpy(q->bytes[(q->read+q->count)%q->cap],data,q->size);q->count++;return 1;}
 static int xQueueOverwrite(QueueHandle_t q,const void *data){assert(q->cap==1);memcpy(q->bytes[0],data,q->size);q->read=0;q->count=1;return 1;}
 static int xQueuePeek(QueueHandle_t q,void *data,int wait){(void)wait;if(!q->count)return 0;memcpy(data,q->bytes[q->read],q->size);return 1;}
 static int xQueueReceive(QueueHandle_t q,void *data,int wait){(void)wait;if(!q->count)return 0;memcpy(data,q->bytes[q->read],q->size);q->read=(q->read+1)%q->cap;q->count--;return 1;}
-static unsigned navigation_frames,navigation_used;static uint16_t navigation_revision;static char navigation_text[96];static uint8_t navigation_header[20];
+static unsigned navigation_frames,navigation_used,heading_used,heading_frames;static char heading_text[96];static uint16_t navigation_revision;static char navigation_text[96];static uint8_t navigation_header[20];
 static int writes;static uint8_t last_write[20],last_volume[20],last_hello[20];
 static int (*write_cb)(uint16_t,const struct ble_gatt_error*,struct ble_gatt_attr*,void*);static void *write_arg;
-static int ble_gattc_write_flat(uint16_t c,uint16_t h,const void *data,unsigned len,int(*cb)(uint16_t,const struct ble_gatt_error*,struct ble_gatt_attr*,void*),void *arg){(void)c;(void)h;assert(len==2||len==20);memcpy(last_write,data,len);if(len==20&&((const uint8_t*)data)[1]==CP_VOLUME_STATE)memcpy(last_volume,data,20);if(len==20&&((const uint8_t*)data)[1]==CP_HELLO)memcpy(last_hello,data,20);if(len==20&&((const uint8_t*)data)[1]==CP_NAVIGATION){const uint8_t *p=data;navigation_frames++;if(cp_u16(p+2)!=navigation_revision){navigation_revision=cp_u16(p+2);navigation_used=0;memset(navigation_text,0,sizeof(navigation_text));}memcpy(navigation_header,p,20);}
+static int ble_gattc_write_flat(uint16_t c,uint16_t h,const void *data,unsigned len,int(*cb)(uint16_t,const struct ble_gatt_error*,struct ble_gatt_attr*,void*),void *arg){(void)c;(void)h;assert(len==2||len==20);memcpy(last_write,data,len);if(len==20&&((const uint8_t*)data)[1]==CP_VOLUME_STATE)memcpy(last_volume,data,20);if(len==20&&((const uint8_t*)data)[1]==CP_HELLO)memcpy(last_hello,data,20);if(len==20&&(((const uint8_t*)data)[1]==CP_NAVIGATION||((const uint8_t*)data)[1]==CP_NAVIGATION_HEADING)){const uint8_t *p=data;navigation_frames++;if(cp_u16(p+2)!=navigation_revision){navigation_revision=cp_u16(p+2);navigation_used=heading_used=0;memset(navigation_text,0,sizeof(navigation_text));memset(heading_text,0,sizeof(heading_text));}memcpy(navigation_header,p,20);}
 if(len==20&&((const uint8_t*)data)[1]==CP_NAV_TEXT){const uint8_t *p=data;assert(cp_u16(p+2)==navigation_revision&&p[8]==navigation_used&&p[9]<=10);memcpy(navigation_text+p[8],p+10,p[9]);navigation_used+=p[9];}
+if(len==20&&((const uint8_t*)data)[1]==CP_NAV_HEADING_TEXT){const uint8_t *p=data;assert(cp_u16(p+2)==navigation_revision&&p[8]==heading_used&&p[9]<=10);memcpy(heading_text+p[8],p+10,p[9]);heading_used+=p[9];heading_frames++;}
 writes++;write_cb=cb;write_arg=arg;return 0;}
 #define ble_gattc_read(...) 0
 #define ble_gattc_disc_all_dscs(...) 0
@@ -90,7 +91,7 @@ static void connect_peer(uint32_t session,bool reordered){
  chr.uuid.u128=s_service;chr.uuid.u128.value[12]=reordered?4:2;chr.val_handle=11;chr.def_handle=10;characteristic(7,&ok,&chr,generation());
  chr.uuid.u128.value[12]=reordered?2:3;chr.val_handle=14;chr.def_handle=13;characteristic(7,&ok,&chr,generation());
  chr.uuid.u128.value[12]=reordered?3:4;chr.val_handle=18;chr.def_handle=17;characteristic(7,&ok,&chr,generation());characteristic(7,&done,NULL,generation());
- struct fake_mbuf mb={.len=20};cp_header(mb.bytes,CP_HELLO,0,session);mb.bytes[8]=(float_peer?CP_CAP_VOLUME_FLOAT:0)|(predict_peer?CP_CAP_VOLUME_PREDICT:0)|(scale_peer?CP_CAP_VOLUME_SCALE:0)|(navigation_peer?CP_CAP_NAVIGATION:0);mb.bytes[17]=star_peer?CP_FEATURE_STAR:0;struct ble_gatt_attr attr={&mb};caps_read(7,&ok,&attr,generation());
+ struct fake_mbuf mb={.len=20};cp_header(mb.bytes,CP_HELLO,0,session);mb.bytes[8]=(float_peer?CP_CAP_VOLUME_FLOAT:0)|(predict_peer?CP_CAP_VOLUME_PREDICT:0)|(scale_peer?CP_CAP_VOLUME_SCALE:0)|(navigation_peer?CP_CAP_NAVIGATION:0);mb.bytes[17]=(star_peer?CP_FEATURE_STAR:0)|(heading_peer?CP_FEATURE_NAV_HEADING:0);struct ble_gatt_attr attr={&mb};caps_read(7,&ok,&attr,generation());
  struct ble_gatt_dsc d={.uuid.u16={{BLE_UUID_TYPE_16},0x2902},.handle=(uint16_t)(s_command+1)};descriptor(7,&ok,12,&d,generation());descriptor(7,&done,12,NULL,generation());ack();
  assert(last_write[1]==CP_HELLO&&last_write[8]==native_steps&&cp_u32(last_write+4)==session);assert((last_write[16]&CP_CAP_VOLUME_FLOAT)==(float_peer?CP_CAP_VOLUME_FLOAT:0));ack();assert(coloplay_ble_connected()&&backend_session==session);
  coloplay_ble_tick(clock_us);drain();
@@ -180,6 +181,20 @@ int main(void){
  remote_track=0;state_packet(status,0,0);assert(!(status[10]&CP_STATE_STAR_KNOWN));
  remote_track=123;remote_connected=false;state_packet(status,0,0);assert(!(status[10]&(CP_STATE_CONNECTED|CP_STATE_STAR_KNOWN)));
  remote_connected=true;star_peer=false;connect_peer(2222,false);assert(!s_star_feedback&&!(last_hello[17]&CP_FEATURE_STAR));
+ coloplay_ble_reset();
+ // Negotiated headings share the focus revision and remain bounded under GATT backpressure.
+ heading_peer=navigation_peer=true;navigation_revision=0;connect_peer(3330,false);
+ assert(last_hello[17]&CP_FEATURE_NAV_HEADING);
+ nav.view=1;nav.flags=CP_NAV_FOCUS;nav.index=nav.count=0;
+ memset(nav.focus,'f',95);nav.focus[95]=0;memset(nav.heading,'h',95);nav.heading[95]=0;
+ coloplay_ble_publish_navigation(&nav);last_event->callback(last_event);drain();
+ assert(navigation_header[1]==CP_NAVIGATION_HEADING&&navigation_header[18]==95&&navigation_header[19]==95);
+ assert(navigation_used==95&&heading_used==95&&!strcmp(navigation_text,nav.focus)&&!strcmp(heading_text,nav.heading));
+ strcpy(nav.focus,"Shuffle");strcpy(nav.heading,"New album");coloplay_ble_publish_navigation(&nav);
+ strcpy(nav.heading,"Latest album");coloplay_ble_publish_navigation(&nav);last_event->callback(last_event);drain();
+ assert(!strcmp(navigation_text,"Shuffle")&&!strcmp(heading_text,"Latest album"));
+ unsigned title_frames=heading_frames;heading_peer=false;navigation_revision=0;connect_peer(3331,false);
+ assert(!(last_hello[17]&CP_FEATURE_NAV_HEADING)&&navigation_header[1]==CP_NAVIGATION&&heading_frames==title_frames);
  coloplay_ble_reset();
  puts("ColoPlay GATT discovery/handshake, raw state, duplicates, key mapping, queue errors and stale-session isolation passed");return 0;
 }

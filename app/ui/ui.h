@@ -50,7 +50,7 @@ void ui_init(void);
 void ui_handle_key(ui_key_t key);
 
 /* Read-only UI-thread snapshot; never retain LVGL objects in a transport task. */
-typedef struct {uint8_t view,flags;uint32_t index,count;char focus[96];} ui_navigation_t;
+typedef struct {uint8_t view,flags;uint32_t index,count;char focus[96],heading[96];} ui_navigation_t;
 void ui_navigation_snapshot(ui_navigation_t *out);
 
 /** Apply a burst of the same key in one UI pass.  Used by rotary input so a

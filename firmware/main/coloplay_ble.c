@@ -39,9 +39,9 @@ static struct ble_npl_event s_navigation_event;
 static ui_navigation_t s_ui_navigation;
 static bool s_ui_navigation_have;
 static ui_navigation_t s_navigation;
-static bool s_navigation_supported,s_navigation_have,s_navigation_sending;
+static bool s_navigation_supported,s_navigation_have,s_navigation_sending,s_navigation_heading;
 static uint16_t s_navigation_revision;
-static unsigned s_navigation_offset;
+static unsigned s_navigation_offset,s_navigation_field;
 static int64_t s_next_navigation;
 
 void coloplay_ble_publish_navigation(const ui_navigation_t *state){
@@ -105,10 +105,11 @@ static void hello_packet(uint8_t *data){
     if(s_float_volume){data[16]=CP_CAP_VOLUME_FLOAT|(s_prediction?CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE:0);cp_put_float(data+12,1.0f/volume_grid_count(player_volume_steps()));}
     if(s_navigation_supported)data[16]|=CP_CAP_NAVIGATION;
     if(s_star_feedback)data[17]|=CP_FEATURE_STAR;
+    if(s_navigation_heading)data[17]|=CP_FEATURE_NAV_HEADING;
 }
 void coloplay_ble_reset(void){
     atomic_store(&s_navigation_active,false);
-    ++s_generation;s_start=s_end=s_caps=s_command=s_command_end=s_state=s_cccd=0;s_conn=0xffff;s_session=0;s_ready=s_writing=s_float_volume=s_prediction=s_star_feedback=false;s_read=s_count=0;s_track=UINT64_MAX;
+    ++s_generation;s_start=s_end=s_caps=s_command=s_command_end=s_state=s_cccd=0;s_conn=0xffff;s_session=0;s_ready=s_writing=s_float_volume=s_prediction=s_star_feedback=s_navigation_heading=false;s_read=s_count=0;s_track=UINT64_MAX;
     memset(s_recent,0,sizeof(s_recent));s_recent_next=0;s_native_steps=0;
     s_navigation_supported=s_navigation_have=s_navigation_sending=false;s_navigation_revision=0;s_next_navigation=0;
     if(s_results){xQueueReset(s_results);}mpd_client_coloplay_release();
@@ -148,6 +149,7 @@ static int caps_read(uint16_t conn,const struct ble_gatt_error *error,struct ble
     s_float_volume=(bytes[8]&CP_CAP_VOLUME_FLOAT)!=0;
     s_navigation_supported=(bytes[8]&CP_CAP_NAVIGATION)!=0;
     s_star_feedback=(bytes[17]&CP_FEATURE_STAR)!=0;
+    s_navigation_heading=s_navigation_supported&&(bytes[17]&CP_FEATURE_NAV_HEADING);
     s_prediction=s_float_volume&&(bytes[8]&CP_CAP_VOLUME_PREDICT)&&(bytes[8]&CP_CAP_VOLUME_SCALE);
     s_session=cp_u32(bytes+4);
     if(ble_gattc_disc_all_dscs(conn,s_command,s_command_end?s_command_end:s_end,descriptor,generation())){fail("ColoPlay descriptor discovery failed");}return 0;
@@ -224,24 +226,31 @@ void coloplay_ble_tick(int64_t now){
         if(xQueuePeek(mailbox,&latest,0)==pdTRUE){
             uint8_t data[CP_BLE_BYTES];
             if(!s_navigation_have||memcmp(&latest,&s_navigation,sizeof(latest))){
-                s_navigation=latest;s_navigation_have=true;s_navigation_sending=true;s_navigation_offset=0;
+                s_navigation=latest;s_navigation_have=true;s_navigation_sending=true;s_navigation_offset=s_navigation_field=0;
                 if(!++s_navigation_revision)++s_navigation_revision;
                 s_next_navigation=0;
             }
             if(!s_next_navigation||now>=s_next_navigation){
-                cp_header(data,CP_NAVIGATION,s_navigation_revision,s_session);
-                data[8]=s_navigation.view;data[9]=s_navigation.flags;
-                cp_put32(data+10,s_navigation.index);cp_put32(data+14,s_navigation.count);
-                cp_put16(data+18,strlen(s_navigation.focus));
+                cp_navigation_t wire={.view=s_navigation.view,.flags=s_navigation.flags,.index=s_navigation.index,.count=s_navigation.count};
+                memcpy(wire.focus,s_navigation.focus,sizeof(wire.focus));memcpy(wire.heading,s_navigation.heading,sizeof(wire.heading));
+                cp_navigation_header(data,s_navigation_revision,s_session,&wire,s_navigation_heading);
                 if(queue(data))s_next_navigation=now+1000000;
             }
             for(int n=0;n<3&&s_navigation_sending&&s_count<4;n++){
-                unsigned length=strlen(s_navigation.focus),bytes=length-s_navigation_offset;
-                if(!bytes){s_navigation_sending=false;break;}if(bytes>10)bytes=10;
-                cp_header(data,CP_NAV_TEXT,s_navigation_revision,s_session);
-                data[8]=s_navigation_offset;data[9]=bytes;memcpy(data+10,s_navigation.focus+s_navigation_offset,bytes);
-                if(!queue(data))break;
-                s_navigation_offset+=bytes;if(s_navigation_offset==length)s_navigation_sending=false;
+                const char *text=s_navigation_field?s_navigation.heading:s_navigation.focus;
+                const unsigned length=strlen(text);unsigned bytes=length-s_navigation_offset;
+                if(bytes){
+                    if(bytes>10)bytes=10;
+                    cp_header(data,s_navigation_field?CP_NAV_HEADING_TEXT:CP_NAV_TEXT,s_navigation_revision,s_session);
+                    data[8]=s_navigation_offset;data[9]=bytes;memcpy(data+10,text+s_navigation_offset,bytes);
+                    if(!queue(data))break;
+                    s_navigation_offset+=bytes;
+                }
+                if(s_navigation_offset==length){
+                    s_navigation_offset=0;
+                    if(s_navigation_heading&&!s_navigation_field)s_navigation_field=1;
+                    else s_navigation_sending=false;
+                }
             }
         }
     }

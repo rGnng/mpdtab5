@@ -28,4 +28,15 @@ peer receives the `CP_STATE` flag bits `CP_STATE_STAR_KNOWN` (bit 2) and
 `CP_STATE_STARRED` (bit 3). These describe Tab5's confirmed current track;
 missing track/backend or older peers leave them clear. Packet lengths, wire
 version, volume/timing fields and USB framing are unchanged. ColoPlay clears the
-visible star on stale/disconnected feedback and hides it when state is unknown.
+visible marker on stale/disconnected feedback and hides it when state is unknown.
+
+Navigation headings use `CP_FEATURE_NAV_HEADING` (bit 1 of feature byte 17),
+negotiated with the existing navigation capability. Updated peers use kind 23
+`CP_NAVIGATION_HEADING`: view/flags and 32-bit index/count stay at 8–17; byte 18
+is focus UTF-8 byte length, byte 19 is heading UTF-8 byte length (each 0–95).
+Kind 22 carries focus fragments; kind 24 `CP_NAV_HEADING_TEXT` carries heading
+fragments with the same revision, byte offset at 8, length 1–10 at 9 and text
+at 10–19. Both fields must complete before publishing a revision. Legacy peers
+retain kind 21 with the original uint16 focus length and no heading fragments.
+Empty headings restore the generic view title. Stale/partial revisions do not
+mix an old heading with a new focus label.

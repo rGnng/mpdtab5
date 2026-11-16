@@ -86,7 +86,7 @@ static void artwork_reset(void);
 static void artwork_step(uint32_t generation);
 
 typedef enum { CMD_TEXT, CMD_PLAY, CMD_ALL, CMD_JUMP, CMD_STAR, CMD_CLEAR_STARS, CMD_COLOPLAY,
-    CMD_QUEUE_ADD, CMD_QUEUE_NEXT, CMD_QUEUE_MOVE, CMD_QUEUE_REMOVE } command_kind_t;
+    CMD_QUEUE_ADD, CMD_QUEUE_NEXT, CMD_QUEUE_MOVE, CMD_QUEUE_REMOVE, CMD_PLAYLIST_ADD } command_kind_t;
 typedef struct {
     command_kind_t kind;
     uint32_t generation;
@@ -96,6 +96,8 @@ typedef struct {
     uint64_t entry;
     uint64_t *keys;
     char text[80];
+    char *playlist;
+    uint32_t playlist_generation;
     uint8_t coloplay[CP_BLE_BYTES];
     uint8_t remote_result;
     uint32_t coloplay_epoch;
@@ -208,8 +210,8 @@ bool mpd_client_is_identified(void) { return mpd_client_is_connected(); }
 bool mpd_client_is_playing(void) { mpd_state_t s={0}; return mpd_client_get_state(&s) && s.play_status==1; }
 static esp_err_t enqueue(command_t *c) {
     take(); c->generation=config_revision; bool online=state.connected; give();
-    if(!online) { free(c->keys); return ESP_ERR_INVALID_STATE; }
-    if(xQueueSend(commands,c,0)!=pdPASS) { free(c->keys); message("MPD command queue full"); return ESP_ERR_NO_MEM; }
+    if(!online) { free(c->keys);free(c->playlist); return ESP_ERR_INVALID_STATE; }
+    if(xQueueSend(commands,c,0)!=pdPASS) { free(c->keys);free(c->playlist); message("MPD command queue full"); return ESP_ERR_NO_MEM; }
     return ESP_OK;
 }
 esp_err_t mpd_client_coloplay_command(const uint8_t *packet){
@@ -632,6 +634,29 @@ static bool change_star(uint64_t key,bool clear) {
 }
 
 typedef struct { char names[32][256]; int count; } playlists_t;
+static playlists_t *playlist_destinations;
+static uint32_t playlist_destination_generation,playlist_connection_generation;
+static bool playlists_refresh_pending;
+int mpd_client_playlist_destination_count(void){
+    if(!mutex)return 0;
+    take();const int count=state.connected&&playlist_destinations&&playlist_destination_generation==config_revision?playlist_destinations->count:0;give();return count;
+}
+bool mpd_client_playlist_destination(int index,char *name,size_t size,uint32_t *generation){
+    if(!mutex||!name||!size||!generation)return false;
+    take();bool ok=state.connected&&playlist_destinations&&playlist_destination_generation==config_revision&&index>=0&&index<playlist_destinations->count;
+    if(ok){const char *value=playlist_destinations->names[index];ok=strlen(value)<size;
+        if(ok){strcpy(name,value);*generation=playlist_destination_generation;}}
+    give();return ok;
+}
+esp_err_t mpd_client_playlist_add(const char *name,uint32_t generation,uint64_t key){
+    char quoted[520];
+    if(!name||!*name||strlen(name)>255||!strcasecmp(name,"Stared")||!generation||!key||!mpd_quote(quoted,sizeof(quoted),name))return ESP_ERR_INVALID_ARG;
+    command_t c={.kind=CMD_PLAYLIST_ADD,.count=1,.playlist_generation=generation};
+    c.playlist=strdup(name);c.keys=malloc(sizeof(*c.keys));
+    if(!c.playlist||!c.keys){free(c.playlist);free(c.keys);return ESP_ERR_NO_MEM;}
+    c.keys[0]=key;return enqueue(&c);
+}
+
 static bool playlist_field(const char *key,const char *value,void *ctx) {
     playlists_t *p=ctx;
     if(!strcmp(key,"playlist") && strcasecmp(value,"Stared") && p->count<32) {
@@ -655,6 +680,11 @@ static bool sync_playlists(void) {
         ok=mpd_wire_command(&wire,cmd,song_field,NULL,p) && song_finish(p);
         catalog_changed|=p->catalog_changed;
         free(p);
+    }
+    if(ok){
+        take();playlists_t *old=playlist_destinations;playlist_destinations=lists;
+        playlist_destination_generation=playlist_connection_generation;give();free(old);lists=NULL;
+        playlists_refresh_pending=false;
     }
     free(lists);
     if(ok && catalog_changed) player_library_complete();
@@ -888,7 +918,34 @@ static bool queue_edit_entry(uint64_t entry,bool remove) {
     }
     return ok;
 }
+typedef struct {const char *name;bool found;} playlist_search_t;
+static bool playlist_search_field(const char *key,const char *value,void *context){
+    playlist_search_t *search=context;
+    if(!strcmp(key,"playlist")&&!strcmp(value,search->name))search->found=true;
+    return true;
+}
+static bool playlist_add_track(const char *name,uint64_t key){
+    if(!name||!*name||!strcasecmp(name,"Stared")){message("Use Star for the Stared playlist");return true;}
+    char command[4650];strcpy(command,"playlistadd ");size_t used=strlen(command);
+    if(!mpd_quote(command+used,sizeof(command)-used,name))return false;
+    used=strlen(command);command[used++]=' ';command[used]=0;
+    const char *uri=uri_lookup(key);
+    if(!uri||!mpd_quote(command+used,sizeof(command)-used,uri)){
+        message("Selection changed; reopen the menu");return true;
+    }
+    /* playlistadd can create a missing list. Verify the captured destination first. */
+    playlist_search_t search={.name=name};
+    if(!mpd_wire_command(&wire,"listplaylists",playlist_search_field,NULL,&search))return false;
+    if(!search.found){message("Playlist changed; reopen the menu");playlists_refresh_pending=true;return true;}
+    if(!simple(command))return false;
+    playlists_refresh_pending=true;return true;
+}
+
 static bool run_command(command_t *c) {
+    if(c->kind==CMD_PLAYLIST_ADD){
+        if(c->playlist_generation!=c->generation){message("Playlist connection changed; reopen the menu");return true;}
+        return c->keys&&playlist_add_track(c->playlist,c->keys[0]);
+    }
     if(c->kind==CMD_COLOPLAY){
         const uint8_t *p=c->coloplay;take();bool current=coloplay_session&&coloplay_session==cp_u32(p+4)&&c->coloplay_epoch==coloplay_epoch;give();
         if(!current){c->remote_result=CP_FAILED;return true;}
@@ -970,7 +1027,7 @@ static void disconnected(void) {
     queue_size=0; queue_revision++; if(++queue_epoch==0) queue_epoch=1; art_valid=false; art_revision++;
     uint64_t *old_stars=star_keys; star_keys=NULL; star_count=0; star_revision++; state.starred=false;
     give(); free(old_stars);
-    command_t c; while(xQueueReceive(commands,&c,0)==pdPASS) free(c.keys);
+    command_t c; while(xQueueReceive(commands,&c,0)==pdPASS){free(c.keys);free(c.playlist);}
 }
 /* Tracks implements idle notifications even though its stats db_update is
  * wall-clock time. Keep one dedicated subscription socket; never block input
@@ -1024,6 +1081,7 @@ static void worker_task(void *arg) {
         subscribe_events(&cfg);
         identity(&cfg,library_id,sizeof(library_id));
         player_library_select(library_id);
+        playlist_connection_generation=generation;
         /* UI processes the namespace switch before queued database records. */
         bool ok=poll_state() && sync_library() && sync_playlists();
 
@@ -1046,7 +1104,7 @@ static void worker_task(void *arg) {
                     if(ok) ok=poll_state();
                     if(c.kind==CMD_COLOPLAY){const uint8_t result=applied&&ok?c.remote_result:CP_FAILED;if(!coloplay_usb_result(c.coloplay,result))coloplay_ble_result(c.coloplay,result);}
                 }
-                free(c.keys);
+                free(c.keys);free(c.playlist);
                 if(!ok) break;
             }
             if(!ok || !poll_state()) { ok=false; break; }
@@ -1067,7 +1125,7 @@ static void worker_task(void *arg) {
             if(remote_seek){simple(remote_seek==1?"seekcur +5":"seekcur -5");poll_state();}
             if(requested || (event_flags&1)) {
                 ok=sync_library() && sync_playlists(); last_playlist=-1;
-            } else if(event_flags&2) ok=sync_playlists();
+            } else if((event_flags&2)||playlists_refresh_pending) ok=sync_playlists();
             else if(stars_refresh_pending) ok=sync_stars();
             /* Tracks UI edits do not always emit stored_playlist idle events. */
             if(ok && esp_timer_get_time()>=next_stars_poll) {
