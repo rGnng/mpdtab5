@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay source: **0.8.0-global-bindings** (local development); the last verified OTA
+Current ColoPlay source: **0.8.0-global-bindings**; the verified OTA
 is in the [release record](development.md#current-verified-release).
 Both applications now live in the [MPD Tab5 repository](../../README.md), using
 the common definitions in [shared/](../../shared/README.md).
@@ -37,8 +37,11 @@ mapping is installed and failed commands do not predict a star change.
 The same indicator appears in Tab5 Navigation's Now Playing view. Its visibility
 follows the existing playback Status icon switch; stale/disconnected state,
 missing track and older Tab5 firmware hide it. Both application images need
-this feature for the indicator to appear. The current source has been compiled
-and host-tested; this addition has not been OTA-tested.
+this feature for the indicator to appear. The matching applications were OTA-tested on 2026-11-16. The saved Button 4
+hold binding starred/unstarred the current track over USB; both USB and
+Bluetooth feedback confirmed each state, and the original star state was restored.
+USB retained command ownership. Wireless-only command routing was host-tested;
+the cable was left connected for this release check.
 
 Optional feature byte 17, bit `CP_FEATURE_STAR`, is advertised in ColoPlay's
 GATT capabilities / USB OFFER and echoed by Tab5 HELLO. Supporting peers use

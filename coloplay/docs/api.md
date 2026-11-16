@@ -8,7 +8,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.8.0-global-bindings** (local development; not OTA-tested), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.8.0-global-bindings** (OTA-tested on 2026-11-16), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire

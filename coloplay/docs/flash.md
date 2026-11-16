@@ -97,10 +97,11 @@ new application's runtime later crashes.
 
 ## Global profile compatibility
 
-The local **0.8.0-global-bindings** source writes scene schema 9 (3364 raw bytes)
-and a version-2 order record. Before deploying it, prepare a recovery application
-that understands schema 9 and CSR1. The verified 0.7.2 image below remains the
-last live-tested baseline; its schema-8 loader cannot use a new Global profile.
+The verified **0.8.0-global-bindings** release writes scene schema 9 (3364 raw
+bytes) and a version-2 order record. The local default recovery bundle now
+contains this matching, boot-verified application and understands schema 9 and
+CSR1. The previous 0.7.2 image is archived separately; its schema-8 loader cannot
+use a new Global profile.
 Reverting only the application does not roll back NVS settings. Do not erase NVS
 as part of an application update.
 
@@ -112,14 +113,14 @@ OTA writes a complete application to the inactive slot, so either slot must fit
 the full firmware. The inactive slot retains its previous application until the
 next update writes it; it is not a dedicated minimal recovery image.
 
-The verified **0.7.2-usb-lease** production image has this budget:
+The verified **0.8.0-global-bindings** production image has this budget:
 
 | Item | Bytes | MiB |
 |---|---:|---:|
 | Application slot capacity | 4,718,592 | 4.50 |
-| Complete production application | 3,259,696 | 3.11 |
+| Complete production application | 3,264,896 | 3.11 |
 | Embedded playback font, included in the application above | 1,477,697 | 1.41 |
-| Remaining capacity for an application of this size | 1,458,896 | 1.39 |
+| Remaining capacity for an application of this size | 1,453,696 | 1.39 |
 
 These are flash/image sizes, not free heap or PSRAM. The font stays in mapped
 flash and is not copied wholesale to RAM. Its current subset saves **875,913
@@ -256,7 +257,7 @@ python3 scripts/recover_usb.py --image /path/to/known-good.bin --port /dev/cu.us
 The image needs its matching `manifest.json` alongside it. The [two-slot recovery
 procedure](usb-concurrency-test.md#recovery-preparation) remains applicable after
 retirement of that experiment. Use an image compatible with the saved settings
-schema and the `CSR1` envelope (0.6.33 or newer); the local default bundle is `backups/recovery/known-good.bin`.
+schema 9 and the `CSR1` envelope (0.8.0-global-bindings or newer); the local default bundle is `backups/recovery/known-good.bin`.
 
 ## Factory restore and boot warning
 

@@ -165,9 +165,9 @@ and mobile layouts, manual dropdowns, independent drafts/saves, failed saves,
 reload, fixed title notifications and scene saves preserving the legacy style.
 The device-served release record below remains the last verified OTA.
 
-## Global bindings development
+## Global bindings upgrade
 
-Local source **0.8.0-global-bindings** separates protected Global bindings from
+Verified source **0.8.0-global-bindings** separates protected Global bindings from
 selectable scenes. Global has no appearance/activation/reorder controls; bindings
 saved there are shared automatically. Normal scenes retain local overrides and
 last-scene protection. Schema 9 adds one scope slot (3364 raw bytes), allowing
@@ -179,10 +179,56 @@ Source checks cover full-capacity migration, active/target preservation, automat
 scope, override dispatch, explicit Global runs, cycling, last-scene deletion,
 write failures and corrupt records. Optional Chromium tests consume JSON from
 the actual scene service and check the bindings-only view, mobile widths,
-Global-free switch targets and local override warnings. This change has not
-been OTA-tested. The verified release below is unchanged.
+Global-free switch targets and local override warnings. Live OTA migration
+preserved all 14 saved bindings, the active Navigation scene, scene order,
+brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
+
+**0.8.0-global-bindings**, source commit **`5aeb1c3`**, was application-only
+OTA-tested on **2026-11-16** in `ota_app0`. Its image is **3,264,896 bytes**,
+leaving **1,453,696 bytes (1.39 MiB)** per 4.5 MiB slot. MD5 is
+`22da6669ed0dae01fa42708f329b0840`; SHA-256 is
+`996b92a380b31ed877c526a8394fcb5d773f85cca314ce32fa98a89248131493`.
+Embedded ELF SHA-256 is
+`7a69101ceb2724f8533516e7c970a9b4b7cd7cf5e21fd1142b371907ba566a3e`.
+
+The matching Tab5 application is **2,924,048 bytes**, with verified ELF SHA-256
+`102fbf7bb669c06dca09d461f56eeb56d3cd51cad252a4cb984bdaf4380ffa3d`.
+Tab5 accepted the update and returned through the HTTP relay after startup;
+the user confirmed its screen was working. Both image identities were verified
+before testing. Bootloaders, partition tables and USB modes were preserved.
+
+The live schema-8 profile migrated to schema 9 / CSR1: 3364 logical bytes,
+327 stored bytes, and a saved version-2 order. Its protected Default held only
+two shared bindings, which became Global; the existing Tab5 Navigation scene
+kept ID 1, its 12 local bindings and active selection. General, Playback,
+clock/NTP and USB settings matched the pre-OTA snapshots. Global activation
+was rejected, and shared Next/Previous bindings stayed in actual scenes.
+
+The saved Button 4 hold binding starred and unstarred the current track.
+Tab5-confirmed states arrived over both USB and the connected Bluetooth
+standby link; USB retained command ownership and BLE transmitted no duplicate
+commands. The initial unstarred state was restored. Saved view-switch bindings
+navigated to Albums and back to Now Playing. These checks use the saved-binding
+Run path; physical gesture timing was not retested. Wireless-only command
+routing remains covered by host tests and the previous physical qualification.
+
+Live browsers checked ColoPlay's bindings-only Global view, scene settings,
+last-scene deletion protection and widths 375/768/1280. Tab5 dashboard/debug
+showed USB CDC-ACM at mobile/desktop widths. No JavaScript errors, external
+resources or unexpected writes were observed. Eighteen post-update samples over 43 seconds confirmed
+stable USB sessions, no invalid/stale frames, drops or lease timeouts, and
+healthy MPD, SD and USB-C network state.
+
+The local schema-9 recovery bundle contains the exact boot-verified application,
+manifest and portable recovery helper; the previous release is archived
+separately. Source checks passed the ColoPlay host suite, production USB/BLE
+transport and ownership fixtures, shared-header checks, four Global Chromium
+checks and three relevant Tab5 Chromium checks. Both firmware builds passed.
+
+## Previous USB release
+
 
 **0.7.2-usb-lease** was application-only OTA'd on **2026-11-16** to
 `ota_app1`. The image is **3,259,696 bytes**, leaving **1,458,896 bytes

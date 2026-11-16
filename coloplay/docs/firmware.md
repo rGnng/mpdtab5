@@ -1,7 +1,7 @@
 # Desktop gadget guide
 
-Current source: **0.8.0-global-bindings** (local development; not OTA-tested).
-The last verified device release remains **0.7.2-usb-lease**. The gadget is configured
+Current verified release: **0.8.0-global-bindings**, OTA-tested on 2026-11-16.
+The gadget is configured
 through the **Connection**, **Controls**, **Playback**, **Lighting** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and

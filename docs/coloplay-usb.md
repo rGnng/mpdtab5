@@ -90,13 +90,24 @@ well as new attachments. The host never selects 1200 baud or asserts RTS.
 
 Both firmware images are application-only OTA updates. The local recovery
 bundle is prepared before deployment; ColoPlay recovery must understand its
-`CSR1` scene records. The normal factory bootloader and saved settings remain
+`CSR1` scene records and schema 9 for the Global profile. The normal factory bootloader and saved settings remain
 in place. See [ColoPlay flashing and recovery](../coloplay/docs/flash.md).
 
 Tests exercise the production host driver and device router with fake I/O,
 MPD ownership transitions, malformed/fragmented framing, duplicate requests,
 stale sessions, metadata, navigation, volume prediction and fallback. Physical
 qualification is recorded separately from those host tests.
+
+## Global and star-feedback release
+
+ColoPlay **0.8.0-global-bindings** and matching Tab5 source **`5aeb1c3`** were
+OTA-tested on 2026-11-16. USB priority appears in both web interfaces. The saved
+Star binding updated Tab5 and received matching USB/Bluetooth star feedback;
+its original state was restored. Global migration and all saved settings were
+verified, alongside navigation and live web layouts. The cable stayed connected;
+Bluetooth feedback was observed in standby. Exact image hashes, recovery
+compatibility and test scope are in the
+[release record](../coloplay/docs/development.md#current-verified-release).
 
 ## Live qualification on 2026-11-16
 

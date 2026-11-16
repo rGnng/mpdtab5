@@ -22,9 +22,9 @@ or a direct [USB CDC-ACM link](../docs/coloplay-usb.md). See the
 
 ## Current baseline
 
-Current source: **`0.8.0-global-bindings`** (local development; not OTA-tested).
+Current verified release: **`0.8.0-global-bindings`**, OTA-tested on 2026-11-16.
 Global is a protected bindings-only scope, separate from the selectable scenes.
-The last verified device release remains **`0.7.2-usb-lease`**. Tab5 owns the selected volume scale:
+Tab5 owns the selected volume scale:
 **1/16 Squared Curve**, **1/64 Squared Curve** (default), **2% Integer**, or
 **5% Integer**. ColoPlay synchronizes it over USB or BLE and predicts immediate
 screen/ring response. Small curved hardware readback differences map back to
@@ -47,7 +47,7 @@ lighting and searchable HID keys remain available.
 Both devices use application-only OTA. Source/build identity, validation results
 and image fingerprints are in the
 [release record](docs/development.md#current-verified-release).
-The deployed 0.7.2 production image occupies **3.11 MiB**, leaving **1.39 MiB** of
+The deployed 0.8.0 production image occupies **3.11 MiB**, leaving **1.39 MiB** of
 headroom in either 4.5 MiB OTA slot. The embedded playback font uses **1.41 MiB**
 of that image; see the [application storage budget](docs/flash.md#application-slots-and-storage-budget).
 The working firmware provides:
