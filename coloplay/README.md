@@ -22,7 +22,9 @@ or a direct [USB CDC-ACM link](../docs/coloplay-usb.md). See the
 
 ## Current baseline
 
-Current source: **`0.7.2-usb-lease`**. Tab5 owns the selected volume scale:
+Current source: **`0.8.0-global-bindings`** (local development; not OTA-tested).
+Global is a protected bindings-only scope, separate from the selectable scenes.
+The last verified device release remains **`0.7.2-usb-lease`**. Tab5 owns the selected volume scale:
 **1/16 Squared Curve**, **1/64 Squared Curve** (default), **2% Integer**, or
 **5% Integer**. ColoPlay synchronizes it over USB or BLE and predicts immediate
 screen/ring response. Small curved hardware readback differences map back to
@@ -38,6 +40,8 @@ and Buttons independently follow the scene or use custom colors, fills and
 brightness. Screen elements, text scrolling and screen state fallbacks are
 configured separately. Its settings
 save independently to NVS; action feedback and sleep retain priority.
+Playback shows a small star beside the play/pause icon: gold fill for starred,
+muted outline for unstarred, using Tab5-confirmed state over USB or Bluetooth.
 Saved scene order, manual brightness, symmetric ring fills, source-key
 lighting and searchable HID keys remain available.
 Both devices use application-only OTA. Source/build identity, validation results
@@ -63,16 +67,18 @@ The working firmware provides:
   All dropdowns use local custom controls, with search for long timezone/action lists.
 - Application-only HTTP OTA and ArduinoOTA through the preserved factory bootloader.
 - Persistent scenes with customizable button/knob gestures, simultaneous button
-  combinations, Global Default bindings and ordered actions. Unused multi-click/hold
+  combinations, shared Global bindings and ordered actions. Unused multi-click/hold
   gestures add no delay; a held common key can anchor repeated combinations.
 - Per-scene brightness overrides and a local 32-icon picker; scene switches
   briefly show the icon and name on the display, with optional direction-specific sound cues.
   Every binding action has a saved Sound switch using the General sound-effects volume.
   Action lighting targets its own key, all keys in a combination, or the knob ring,
   with on/off, color, brightness and independent feedback durations.
-  Bluetooth keyboard modifiers use a dropdown with multiple selections and removable tags.
+  Keyboard modifiers use a dropdown with multiple selections and removable tags.
   Scene tabs can be moved left/right; new scenes append and Next/Previous follow
-  the saved order. Default remains protected; idle screens can show Clock or Blank.
+  the saved order. Global stays pinned first in the editor and cannot be activated;
+  its view contains only shared bindings. At least one actual scene must remain.
+  Idle screens can show Clock or Blank.
 - Inactivity sleep turns off the display and LEDs after one hour by default,
   with a saved timer and wake on any button press or knob turn. Set the timer
   to `0` to disable it; existing custom timeouts are preserved during OTA.
@@ -85,12 +91,15 @@ These are bring-up results, not a long-duration reliability qualification.
 Ambient-light sensing and automatic dimming have been removed: a usable sensor
 exposed to light outside the case has not been established.
 
-## Bluetooth and Tab5
+## MPD Tab5 controls
+
+Playback, volume and navigation use the active USB or Bluetooth connection.
+USB CDC-ACM takes priority after its handshake; Bluetooth provides wireless control.
 
 Enable **Connection → Bluetooth**, start pairing, then scan/select **ColoPlay**
 on Tab5. A bonded BLE connection carries controls and authoritative MPD volume,
 Playing/Paused/Stopped, track metadata, seek direction and position feedback.
-The action editor groups Device and Bluetooth commands; volume offers
+The action editor groups Device and MPD Tab5 commands; volume offers
 Up/Down commands using Tab5's configured grid, with separate volume/playback screens and
 proportional ring feedback. See [pairing, actions and limits](docs/tab5-integration.md).
 
@@ -98,7 +107,7 @@ For direct navigation, choose **Controls → + Tab5 navigation**, then **Activat
 The new scene uses knob turn/press for item selection, Button 1 for Back,
 Buttons 2/3 for previous/next view (hold to page repeatedly), and Button 4 for
 the context menu. Its idle screen shows Tab5's current view and focused item
-over BLE, returning to playback on Now Playing. Existing scenes remain intact.
+over USB or Bluetooth, returning to playback on Now Playing. Existing scenes remain intact.
 Both updated applications are required for navigation feedback; the last
 verified OTA is still recorded separately above.
 
@@ -124,7 +133,7 @@ Each current topic has one primary guide:
 | Use the clock, lighting, controls, WiFi and USB | [Firmware guide](docs/firmware.md) |
 | Set up tools, back up, build, update or recover | [Flashing and recovery](docs/flash.md) |
 | Integrate controls or read telemetry | [HTTP API](docs/api.md) |
-| Use Bluetooth controls, Tab5 pairing and media feedback | [Tab5 integration guide](docs/tab5-integration.md) |
+| Use USB/Bluetooth controls, Tab5 pairing and media feedback | [Tab5 integration guide](docs/tab5-integration.md) |
 | Understand source, settings, tests and constraints | [Development guide](docs/development.md) |
 | Inspect playback language coverage, font sources or regeneration | [Playback font guide](assets/fonts/noto-sans-jp/README.md) |
 | Inspect recovered hardware assignments | [Factory-derived GPIO map](docs/gpio-map.md) |

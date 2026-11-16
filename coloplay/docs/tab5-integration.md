@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay source: **0.7.2-usb-lease**; the last verified OTA
+Current ColoPlay source: **0.8.0-global-bindings** (local development); the last verified OTA
 is in the [release record](development.md#current-verified-release).
 Both applications now live in the [MPD Tab5 repository](../../README.md), using
 the common definitions in [shared/](../../shared/README.md).
@@ -25,6 +25,26 @@ forget it on Tab5 before pairing again. Tab5 supports one connected controller:
 selecting ColoPlay replaces the active connection, retaining other saved peers.
 Screen/LED inactivity sleep leaves Bluetooth connected and receiving state.
 Bluetooth is initially disabled on a new installation.
+
+## Star feedback
+
+ColoPlay's playback status row has a small star beside the play/pause icon:
+filled gold means starred; a muted outline means unstarred. This is Tab5's
+confirmed current-track state, including changes made directly on Tab5. The
+existing keypad `*` HID shortcut still toggles the current track. No new key
+mapping is installed and failed commands do not predict a star change.
+
+The same indicator appears in Tab5 Navigation's Now Playing view. Its visibility
+follows the existing playback Status icon switch; stale/disconnected state,
+missing track and older Tab5 firmware hide it. Both application images need
+this feature for the indicator to appear. The current source has been compiled
+and host-tested; this addition has not been OTA-tested.
+
+Optional feature byte 17, bit `CP_FEATURE_STAR`, is advertised in ColoPlay's
+GATT capabilities / USB OFFER and echoed by Tab5 HELLO. Supporting peers use
+`CP_STATE` flags bits 2/3 for known/starred; bit 7 retains backend connectivity
+and bits 0/1 retain seeking. Older peers receive the original flag layout.
+No extra packets, polling, assets or settings records are needed.
 
 ColoPlay is the peripheral/GATT server; Tab5 is the central/GATT client.
 Standard HID and a custom command/state service share the connection. Tab5

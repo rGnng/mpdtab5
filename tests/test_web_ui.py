@@ -303,6 +303,34 @@ class WebUITests(unittest.TestCase):
         self.page.evaluate('bt=>btPanel.render(bt)', dict(bt, revision=1, uptime_s=10, status='Restarted'))
         self.assertEqual(self.page.locator('#bt_status').inner_text(), 'Restarted')
 
+    def test_coloplay_active_connection_on_dashboard_and_debug(self):
+        # Both radio and serial may be connected; the backend owner is authoritative.
+        self.status['coloplay_usb']={'connected':True}
+        for path in ['/', '/debug']:
+            self.status['coloplay']={'transport':'usb_cdc_acm','priority':'usb_cdc_acm'}
+            self.open(path)
+            self.page.wait_for_function("document.querySelector('#chips').textContent.includes('USB CDC-ACM')")
+            if path=='/':
+                self.assertIn('ColoPlay connection', self.page.locator('#device_rows').text_content())
+            for transport,label in [('ble','Bluetooth'),('none','Disconnected'),('usb_cdc_acm','USB CDC-ACM')]:
+                self.status['coloplay']['transport']=transport
+                self.page.evaluate('refresh()')
+                self.page.wait_for_function("label=>document.querySelector('#chips').textContent.includes(label)",arg=label)
+            for width in [375,768,1280]:
+                self.page.set_viewport_size({'width':width,'height':1000})
+                heights=[]
+                for transport,label in [('usb_cdc_acm','USB CDC-ACM'),('ble','Bluetooth'),('none','Disconnected')]:
+                    self.status['coloplay']['transport']=transport
+                    self.page.evaluate('refresh()')
+                    self.page.wait_for_function("label=>document.querySelector('#chips').textContent.includes(label)",arg=label)
+                    self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),width+1)
+                    layout=self.page.evaluate('({header:document.querySelector("header").getBoundingClientRect().bottom,chips:document.querySelector("#chips").getBoundingClientRect().bottom,nav:document.querySelector("nav").getBoundingClientRect().bottom})')
+                    self.assertLessEqual(max(layout['chips'],layout['nav']),layout['header']+1)
+                    heights.append(layout['header'])
+                self.assertEqual(len(set(heights)),1,(path,width,heights))
+            self.assertFalse(self.errors)
+            self.assertFalse(self.writes)
+
     def test_debug_library_buttons_follow_availability(self):
         self.status['iap2_identified'] = False
         self.status['library_available'] = False

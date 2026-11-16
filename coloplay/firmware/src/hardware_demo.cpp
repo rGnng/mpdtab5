@@ -281,6 +281,17 @@ void bluetoothConnecting(){
   uint16_t palette[16];for(int a=0;a<16;++a)palette[a]=gCanvas.alphaBlend(a*17,kMuted,kBackground);
   for(int i=0;i<32*32;++i){const uint8_t packed=PlaybackAssets::kBluetoothConnecting32[i/2],alpha=i&1?packed&15:packed>>4;if(alpha)gCanvas.drawPixel(104+i%32,104+i/32,palette[alpha]);}
 }
+void playbackStar(bool starred){
+  // Fixed slot beside the transport icon; no font glyph or extra image asset.
+  static constexpr int8_t points[10][2]={{0,-10},{3,-3},{10,-3},{5,2},{6,9},{0,5},{-6,9},{-5,2},{-10,-3},{-3,-3}};
+  const uint16_t color=starred?gCanvas.color565(255,202,72):kMuted;
+  constexpr int x=158,y=54;
+  for(int i=0;i<10;++i){
+    const auto &a=points[i],&b=points[(i+1)%10];
+    if(starred)gCanvas.fillTriangle(x,y,x+a[0],y+a[1],x+b[0],y+b[1],color);
+    gCanvas.drawLine(x+a[0],y+a[1],x+b[0],y+b[1],color);
+  }
+}
 
 void render(uint32_t now) {
   setBacklight();
@@ -342,6 +353,7 @@ void render(uint32_t now) {
         else if(s.playback==1)gCanvas.fillTriangle(left+2,cy-8,left+2,cy+8,left+16,cy,TFT_WHITE);
         else if(s.playback==2){gCanvas.fillRect(left+2,cy-7,5,14,TFT_WHITE);gCanvas.fillRect(left+11,cy-7,5,14,TFT_WHITE);}
         else gCanvas.fillRect(left+3,cy-6,12,12,TFT_WHITE);
+        if(s.starKnown)playbackStar(s.starred);
       }
       const bool title=prefs[ShowTitle]&&s.title[0],artist=prefs[ShowArtist]&&s.artist[0];
       if(title)playbackText(s.title,artist?115:127,TFT_WHITE,208,now-textSince);

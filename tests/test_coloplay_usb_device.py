@@ -32,7 +32,7 @@ namespace UsbConsole {
 }
 namespace BluetoothService {
  using Snapshot=RemoteFeedback::Snapshot;
- Snapshot snapshot(){Snapshot s;s.connected=true;return s;}
+ Snapshot snapshot(){Snapshot s;s.connected=s.secured=true;return s;}
  void tick(bool){}
  void resetInputs(){++ble_resets;}
  bool send(uint8_t,uint16_t,int,uint16_t=0,uint16_t=0){++ble_sent;return true;}
@@ -52,10 +52,10 @@ int main(){
  assert(frames.size()==1&&!snapshot().wired);
  cp_usb_parser_t parser={};uint8_t kind,offer[20];bool found=false;
  for(auto b:frames.back())found|=cp_usb_feed(&parser,b,&kind,offer);
- assert(found&&kind==CP_USB_OFFER&&cp_u32(offer+9)==7);
+ assert(found&&kind==CP_USB_OFFER&&cp_u32(offer+9)==7&&(offer[17]&CP_FEATURE_STAR));
  const uint32_t session=cp_u32(offer+4);
  cp_header(data,CP_HELLO,0,session);data[8]=64;data[16]=CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;
- deliver(CP_USB_HELLO,data);tick(true);assert(snapshot().wired&&ble_resets==1);
+ data[17]=CP_FEATURE_STAR;deliver(CP_USB_HELLO,data);tick(true);assert(snapshot().wired&&ble_resets==1);
  cp_header(data,CP_STATE,0,session);data[9]=1;data[10]=128;cp_put32(data+12,1000);cp_put32(data+16,10000);deliver(CP_USB_DATA,data);
  cp_header(data,CP_VOLUME_STATE,0,session);cp_put_float(data+8,.25f);data[13]=64;cp_put_float(data+16,.25f);deliver(CP_USB_DATA,data);
  assert(snapshot().fresh&&snapshot().predictionReady&&snapshot().displayVolume==.5f);
@@ -65,6 +65,11 @@ int main(){
  const uint16_t request=snapshot().request;
  data[12]=CP_APPLIED;cp_put16(data+2,request);cp_put16(data+14,request);cp_put_float(data+8,(33.0f/64)*(33.0f/64));cp_put_float(data+16,(33.0f/64)*(33.0f/64));deliver(CP_USB_DATA,data);
  assert(snapshot().volumePending==0&&snapshot().result==CP_APPLIED);
+ cp_header(data,CP_TRACK,0,session);cp_put32(data+8,123);deliver(CP_USB_DATA,data);
+ cp_header(data,CP_STATE,0,session);data[9]=1;data[10]=cp_state_flags(true,123,true,0,true);deliver(CP_USB_DATA,data);
+ assert(snapshot().starSupported&&snapshot().starKnown&&snapshot().starred);
+ data[10]=cp_state_flags(true,123,false,0,true);deliver(CP_USB_DATA,data);
+ assert(snapshot().starKnown&&!snapshot().starred);
  // A new host challenge discards prediction and creates a new nonce, even if DTR stays asserted.
  cp_header(data,CP_HELLO,0,8);now+=300;deliver(CP_USB_PROBE,data);assert(!snapshot().wired);
  auto &wire=frames.back();parser={};for(auto b:wire)cp_usb_feed(&parser,b,&kind,offer);

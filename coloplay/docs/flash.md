@@ -95,6 +95,15 @@ NVS, PHY and vendor data. An aborted HTTP upload leaves the running slot
 selected. Successful upload verification is not automatic rollback if the
 new application's runtime later crashes.
 
+## Global profile compatibility
+
+The local **0.8.0-global-bindings** source writes scene schema 9 (3364 raw bytes)
+and a version-2 order record. Before deploying it, prepare a recovery application
+that understands schema 9 and CSR1. The verified 0.7.2 image below remains the
+last live-tested baseline; its schema-8 loader cannot use a new Global profile.
+Reverting only the application does not roll back NVS settings. Do not erase NVS
+as part of an application update.
+
 ## Application slots and storage budget
 
 The factory layout provides two equal application slots: `ota_app0` at

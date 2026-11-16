@@ -46,17 +46,17 @@ The current panels include:
   editors. Beneath it, Lighting/Sound/Sleep and Bluetooth/Time use independent
   desktop columns and stack on narrow screens. Manual brightness, scene-change
   sound, inactivity timeout, sound gain and Bluetooth enable/pair/forget remain.
-- Scenes: Clock/Blank/Bluetooth volume/playback idle screen, icon-only selector with named tooltips,
+- Controls: Clock/Blank/MPD volume/playback idle screen, icon-only selector with named tooltips,
   saved tab order with left/right move controls, scene colors/brightness overrides,
   clockwise/symmetric playback-progress and volume ring styles, ordered modifier
   combinations, Global bindings and ordered
-  grouped Device/Bluetooth commands with screen/light effects and per-action sound.
-  Bluetooth keyboard modifiers use a local multi-select dropdown with removable
+  grouped Device/MPD Tab5 commands with screen/light effects and per-action sound.
+  Keyboard modifiers use a local multi-select dropdown with removable
   tags for all eight modifier bits; the existing numeric API/NVS value is retained.
 - Device: diagnostics, runtime sleep/wake control, incremental logs, telemetry
   and the authenticated firmware updater link.
 
-Bluetooth feedback uses the device's BLE service, independently of the two-second
+Playback feedback uses the active USB or Bluetooth connection, independently of the two-second
 web status poll. Serial companion controls remain deferred. See the
 [Tab5 integration guide](../../docs/tab5-integration.md).
 
@@ -80,8 +80,12 @@ Scene icons are rebuilt only when their source selection changes:
 The normal build needs none of those rasterization tools. `scene_icons.h` and
 `scene-icons.svg` are checked-in outputs from the 32 MIT-licensed source SVGs.
 The native SSID editor uses the unchanged WiFi API. Scene controls include
-brightness overrides, icon selection, combination membership and Default-only
-Global scope. Conflict warnings intentionally allow a local Global override.
+brightness overrides, icon selection and combination membership. The protected
+Global view contains only shared bindings, has no Global checkbox and hides all
+scene-only settings and operations. Global is excluded from the selectable
+`scenes` API array and target dropdowns; the editor reads it from `global`.
+Conflict warnings intentionally allow a local override. Global saved bindings can
+be run while any actual scene is active; the last actual scene cannot be deleted.
 
 Scene tabs overlap the content border by one pixel so the selected tab joins
 its panel. The row still scrolls horizontally on narrow displays.
@@ -124,7 +128,7 @@ The binding-table heading has no live status text.
 Playback has independent Lights and Screen panels shared by USB and BLE. `playback.js`
 loads `/api/playback`, keeps separate panel drafts, and submits partial updates
 only on Save. Notifications occupy fixed title-side space. All its selects use
-`Dropdowns.enhance`; checkbox labels are clickable. Ring progress and Bluetooth
+`Dropdowns.enhance`; checkbox labels are clickable. Ring progress and MPD
 volume have separate fill choices here; the scene-level fill menu is removed.
 Scene saves omit `ring_style`, preserving that legacy field. First profile
 initialization copies the active scene's existing style into both new settings.
@@ -138,7 +142,8 @@ Use General/Override, action lighting, sleep and ring fill styles remain.
 
 Scene order uses the arrow controls beside + Scene. Moves save immediately and
 retain the selected scene ID, active scene and any unsaved settings draft. New
-scenes append. Tab navigation and target-scene choices consume API array order.
+scenes append. Global stays pinned first as an editing scope and is excluded
+from scene cycling/reorder. Target-scene choices consume the actual `scenes` array.
 The header aligns page title, a two-line active-scene block and a two-line
 standby/input block on desktop; the latter moves below on narrow screens.
 Both status blocks retain fixed height. The Sound and Bluetooth explanatory

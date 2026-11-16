@@ -8,7 +8,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.7.2-usb-lease**, including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.8.0-global-bindings** (local development; not OTA-tested), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
@@ -70,7 +70,7 @@ curl http://coloplay.local/api/status
 | `buttons` | Debounced names, pins, pressed state and counters after hardware startup; early raw inputs during startup/recovery |
 | `clock` | Primary/fallback servers, valid local/Unix time, sync history and SNTP state |
 | `general` | Persistent `sound_volume`, `scene_change_sound`, `sleep_timeout_minutes` and `stored` |
-| `controller` | Active `transport` (`usb_cdc_acm`, `ble`, `none`), USB session, fresh playback/navigation, volume scale/prediction results and frame counters |
+| `controller` | Active `transport` (`usb_cdc_acm`, `ble`, `none`), fixed USB `priority`, USB session, fresh playback/navigation, confirmed `star_supported` / `star_known` / `starred`, volume scale/prediction results and frame counters |
 | `scene` | Active scene, standby/current screen, NVS state, last event/action/result and temporary feedback |
 | `usb` | Configured/active mode, stages, link, counters, DHCP and lease state |
 | `hardware` | Startup stage, page/tour, awake/paused state, `idle_ms` since the last inactivity reset and peripheral objects |
@@ -124,15 +124,28 @@ on scene/configuration changes, explicit wake and timeout changes. It is runtime
 state, not a saved countdown. Sleep leaves HTTP/USB available and reports
 `hardware.awake=false`; Blank affects only display visibility while awake.
 
+Playback star feedback is reported in `controller.star_supported`,
+`controller.star_known` and `controller.starred` (and the Bluetooth diagnostics
+for that transport). Check `star_known` before interpreting `starred`; stale,
+disconnected or missing-track feedback clears known/value. The playback Status
+icon switch includes the star beside the transport icon. No playback NVS change
+is needed. Wire negotiation is documented in the
+[shared protocol](../../shared/README.md).
+
 ## Scenes and gesture bindings
 
 `GET /api/scenes` returns `state`, `limits`, recognizer `timing`, the input/
-gesture/action/effect `catalog`, and `scenes`. Each scene has a stable numeric
-`id`, `name`, `protected`, `standby_screen`, `ring_mode`, `ring_color`,
-`keys_mode`, `keys_color`, and sparse `bindings` list. Each
-binding contains `input`, `gesture`, `global`, `hold_ms`, `repeat_hold` and an
-ordered `actions` array. The logical version-8 record is 3304 bytes: 8 scenes, 64 configured gestures and up to 3
-actions per gesture. The active scene is persistent.
+gesture/action/effect `catalog`, a separate `global` scope, and the selectable
+`scenes` array. `global` has `id: 0`, `name: "Global"`, `protected: true`,
+`selectable: false`, `scope: "global"` and `bindings`; it has no scene appearance
+fields. Each actual scene has a stable numeric `id` (1–8), `name`, `protected:
+false`, `selectable: true`, `scope: "scene"`, `standby_screen`, `ring_mode`,
+`ring_color`, `keys_mode`, `keys_color`, and sparse `bindings` list. Each binding
+contains `input`, `gesture`, `global`, `hold_ms`, `repeat_hold` and an ordered
+`actions` array. The logical schema-9 record is **3364 bytes**: Global plus up to
+8 actual scenes, 64 configured gestures across all scopes and up to 3 actions
+per gesture. `limits.global_scopes` is 1; `limits.scenes` remains 8. The active
+scene is persistent and always an actual scene.
 
 Ring and key LED modes independently accept `general`, `rainbow` or `static`;
 colors use `#RRGGBB`. `catalog.lighting_modes` lists these choices. Omitted
@@ -156,11 +169,11 @@ feedback overlays scene lighting, then expires back to it. Legacy v1 scenes migr
 | `create` | `name` | Create an empty scene in a free slot |
 | `tab5_navigation` | None | Append an editable Tab5 Navigation scene and 11 bindings; retain active selection and all existing scenes |
 | `update` | `scene_id`, `name`, optional screen/color, `icon` and brightness fields below | Save scene settings atomically |
-| `delete` | `scene_id` | Delete; active/scene-switch targets fall back to Default |
+| `delete` | `scene_id` | Delete; active/scene-switch targets fall back to the next actual scene; the last scene is protected |
 | `reorder` | `scene_id`, `position` (zero-based) | Move an existing scene in the saved display/navigation order |
 | `activate` | `scene_id` | Persist active selection and clear pending input/effects |
-| `binding` | `scene_id`, `input`, `gesture`, `count`, optional `global=0/1`, `hold_ms`, `repeat_hold`, action fields below | Atomically replace the complete ordered binding; count 0 clears |
-| `run` | `scene_id`, `input`, `gesture` | Execute the saved binding in the active scene; requires hardware ready |
+| `binding` | `scene_id`, `input`, `gesture`, `count`, optional legacy `global=0/1`, `hold_ms`, `repeat_hold`, action fields below | Atomically replace the complete ordered binding; count 0 clears |
+| `run` | `scene_id`, `input`, `gesture` | Execute the chosen saved Global binding, or a saved binding in the active scene; requires hardware ready |
 
 `hold_ms` accepts 150–3000 (default 600); `repeat_hold` accepts 0/1 (default 0)
 and is allowed only for the `hold` gesture. Repeat fires every 200 ms while held,
@@ -168,14 +181,17 @@ stopping on release/cancellation with no catch-up burst. The `timing` object
 includes `hold_repeat_ms=200`. When Hold and Hold then release are both bound,
 the effective Hold binding owns the threshold. Schema 8 reuses three reserved
 binding bytes, retaining the 3304-byte layout; v7 records migrate to the previous
-600 ms / no-repeat behavior. Recovery firmware must understand schema 8.
+600 ms / no-repeat behavior before migration to schema 9. Recovery firmware must
+understand schema 9 and CSR1.
 
 From 0.6.33, scene saves use a lossless `CSR1` envelope under the same NVS
 `scenes/settings` key. Its bounded LZ payload preserves the complete logical
 record byte-for-byte and includes decoded size, encoding version and CRC32.
 The write uses the NVS blob operation without deleting the previous key first.
-Uncompressed v1–v8 records remain readable and migrate as before; older firmware
-cannot decode `CSR1`, so recovery images must support this envelope.
+Uncompressed v1–v8 records remain readable and migrate to schema 9; recovery
+images must support both this envelope and schema 9. Invalid, unknown or
+unreadable saved records are preserved. Migration write failure retains the old
+record and reports an error while using the converted configuration in RAM.
 The `/api/scenes` response adds `storage.format`, `storage.bytes` and
 `storage.raw_bytes` for diagnostics.
 Compression runs only on save and decoding on boot; rendering uses normal RAM
@@ -192,20 +208,30 @@ screen consumes this state; the playback/volume screens keep their behavior.
 
 The `scenes` array is returned in saved order. Reorder accepts positions
 0 through scene-count minus one, preserves scene IDs/settings/bindings/active
-selection and saves before applying. Default can be reordered. New scenes append
+selection and saves before applying. Global cannot be reordered. New scenes append
 regardless of their numeric ID; deletion removes only the deleted scene from the
 visible sequence. Next/Previous actions use this sequence with wraparound,
 while explicit scene targets remain IDs. Invalid/missing positions return 400.
-`state.order_stored` reports whether the separate 12-byte `scenes/order` NVS
-record is saved. A missing/invalid record uses ascending scene IDs, preserving
-the legacy order without changing the 3304-byte scene settings layout.
+`state.order_stored` reports whether the separate 16-byte version-2
+`scenes/order` NVS record is saved. Legacy 12-byte orders migrate after settings;
+the saved Default replacement ID makes interrupted upgrades repeatable. A
+missing/invalid order uses ascending actual scene IDs.
 
-Scene 0 is protected: it must exist, remains named **Default**, and cannot be
-deleted. Names are distinct, nonempty, at most 24 UTF-8 bytes, with no control
-characters. New scenes have no local bindings; marked Global Default bindings
-remain available.
-Deleting a scene clears its bindings and retargets references to scene 0 before
-saving. Invalid requests or NVS write failures do not apply a partial update.
+Scope 0 is protected and always named **Global**. It accepts only `binding` and
+`run`; activation, appearance updates, rename, deletion and reorder return 400.
+It is absent from `scenes`, Next/Previous cycling and explicit switch targets.
+Names are distinct, nonempty, at most 24 UTF-8 bytes, with no control characters;
+Global is reserved. New scenes have no local bindings, so shared bindings apply.
+Deleting a scene clears its bindings and retargets references to the next actual
+scene in saved order. The last actual scene cannot be deleted. Invalid requests
+and failed settings writes do not apply partial settings updates.
+
+During migration, existing marked Global Default bindings remain in scope 0.
+If Default had local bindings, was active or was a switch target, its appearance
+and local bindings move into a normal Default scene in a free scope slot; active
+selection and old Default targets follow it. Other IDs are preserved. Nine scope
+slots accommodate Global plus all eight old scenes without losing bindings.
+Existing actual scenes named Global receive a unique replacement name.
 
 Additional scene fields are `icon` (one of `catalog.icons[].id`) and, for each
 `screen`, `ring`, `keys` channel: `<channel>_brightness_mode=general|override`,
@@ -223,12 +249,14 @@ combinations are rejected. `catalog.combo_inputs` lists supported members and
 `timing.combo_window_ms` is 80. There is no GPIO-injection endpoint; `op=run`
 dispatches a saved logical gesture without testing physical recognition.
 
-`global=1` is allowed only for scene 0. Lookup first checks the active scene,
-then Global Default. `last_event.source_scene` and `last_event.global` identify
-the resolved binding. Global and local bindings count toward the same 64-row
-limit; each scene may override a Global pair. The web editor warns rather than
-rejecting that deliberate shadowing. Legacy v1/v2 records migrate with preserved
-settings, Use General brightness, House icons and Global off.
+The server sets `global=true` automatically for bindings in scope 0 and false
+for actual scenes. Clients can omit the legacy `global` form field; `global=1`
+with an actual scene is rejected. Lookup first checks the active scene, then
+Global. `last_event.source_scene` and `last_event.global` identify the resolved
+binding. Shared and local bindings count toward the same 64-row limit. Each scene
+may override a Global pair; the web editor warns and allows that shadowing.
+`run` on Global explicitly runs that saved Global binding even when a local
+binding shadows it, using the current actual scene for effects.
 
 For table editing, `binding` also accepts optional `source_input` and
 `source_gesture`. These identify an existing row to move/replace atomically;

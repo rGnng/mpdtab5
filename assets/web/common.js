@@ -38,7 +38,7 @@ window.Tab5 = (function () {
     if (valid) {
       if (p.current_ma < -10) { state = 'Charging'; cls = 'ok'; flow = Math.abs(p.current_ma) + ' mA into battery'; }
       else if (p.current_ma > 10) { state = 'Discharging'; cls = 'warn'; flow = p.current_ma + ' mA from battery'; }
-      else { state = p.chg_en ? 'Idle' : 'Disabled'; cls = ''; flow = '0 mA · no net battery current'; }
+      else { state = p.chg_en ? 'Idle' : 'Disabled'; cls = ''; flow = '0 mA, no net battery current'; }
     }
     return {valid:valid, state:state, cls:cls, flow:flow,
       voltage:valid ? (p.bus_mv / 1000).toFixed(2) + ' V' : '—',
@@ -60,6 +60,10 @@ window.Tab5 = (function () {
   function key(name) { return api('/api/key?k=' + encodeURIComponent(name), {method:'POST'}); }
   function state(name, down) {
     return api('/api/keystate?k=' + encodeURIComponent(name) + '&down=' + (down ? 1 : 0), {method:'POST'});
+  }
+  function controllerConnection(s) {
+    var transport=s.coloplay && s.coloplay.transport;
+    return transport==='usb_cdc_acm' ? 'USB CDC-ACM' : transport==='ble' ? 'Bluetooth' : 'Disconnected';
   }
   function bluetoothPanel(root, notify) {
     var latest=null, busy=false, signature='';
@@ -100,8 +104,8 @@ window.Tab5 = (function () {
         }
         card.appendChild(head);
         var meta=document.createElement('div'); meta.className='bt-meta';
-        meta.textContent=dev.addr+(paired ? (dev.connected ? ' · Sleep: '+(dev.sleep_disabled ? 'disabled' : 'checking…') : '') :
-          Number.isFinite(dev.rssi) ? ' · '+dev.rssi+' dBm' : '');
+        meta.textContent=dev.addr+(paired ? (dev.connected ? ', Sleep: '+(dev.sleep_disabled ? 'disabled' : 'checking…') : '') :
+          Number.isFinite(dev.rssi) ? ', '+dev.rssi+' dBm' : '');
         card.appendChild(meta);
         var actions=document.createElement('div'); actions.className='actions';
         button(actions,paired ? 'Connect' : 'Pair',paired ? 'connect' : 'pair',dev,!bt.enabled || !!dev.connected);
@@ -177,5 +181,5 @@ window.Tab5 = (function () {
     return refresh;
   }
   return {escape:escape,row:row,chip:chip,bytes:bytes,time:time,hex:hex,reset:reset,
-    usb:usb,power:power,api:api,json:json,key:key,state:state,poll:poll,bluetoothPanel:bluetoothPanel};
+    usb:usb,power:power,api:api,json:json,key:key,state:state,poll:poll,bluetoothPanel:bluetoothPanel,controllerConnection:controllerConnection};
 }());

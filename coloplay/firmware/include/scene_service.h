@@ -11,7 +11,7 @@ void begin(Handler handler);
 String statusJson();
 String configJson();
 bool configure(WebServer &server, String &error);
-void event(int input, int gesture, int repetitions=1);
+void event(int input, int gesture, int repetitions=1, bool globalOnly=false);
 uint32_t epoch();
 uint16_t combinations();
 GestureBindings gestureBindings();

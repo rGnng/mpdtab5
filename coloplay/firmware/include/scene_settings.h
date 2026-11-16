@@ -97,7 +97,8 @@ inline bool validInput(int input) { return (input>=0&&input<kInputCount)||comboM
 inline bool validGesture(int input,int gesture) {
   return validInput(input)&&gesture>=0&&gesture<kGestureCount&&(input==kKnob||gesture<kLeft);
 }
-inline bool exists(const Stored &s, int id) { return id >= 0 && id < kSceneCount && s.scenes[id].used == 1; }
+template<class Settings> inline int sceneCapacity(const Settings &s){return sizeof(s.scenes)/sizeof(s.scenes[0]);}
+template<class Settings> inline bool exists(const Settings &s, int id) { return id >= 0 && id < sceneCapacity(s) && s.scenes[id].used == 1; }
 inline bool percentType(int type) { return (type >= kScreenChange && type <= kVolumeSet)||type==kBluetoothVolume; }
 inline bool changeType(int type) { return type == kScreenChange || type == kRingChange || type == kKeysChange || type == kVolumeChange; }
 inline bool validName(const char *name) {
@@ -110,7 +111,7 @@ inline bool validName(const char *name) {
   }
   return visible;
 }
-inline bool validAction(const Stored &s, const Action &a) {
+template<class Settings> inline bool validAction(const Settings &s, const Action &a) {
   if (a.type >= kTypeCount || a.ledEffect() >= kLedCount || a.screen >= kScreenCount ||
       (a.color>>24) > Action::kSceneBrightness || a.feedbackMs < 250 || a.feedbackMs > 10000) return false;
   if (a.type == kSwitchScene && !exists(s, a.target)) return false;
@@ -234,11 +235,11 @@ inline bool migrateV2(const StoredV2 &old,Stored &out,bool sceneSound=true) {
   if(!migrateV5(candidate,sceneSound))return false;
   out=candidate;return true;
 }
-inline Binding *binding(Stored &s, int scene, int input, int gesture) {
+template<class Settings> inline Binding *binding(Settings &s, int scene, int input, int gesture) {
   for (auto &b : s.bindings) if (b.count && b.scene == scene && b.input == input && b.gesture == gesture) return &b;
   return nullptr;
 }
-inline const Binding *effectiveBinding(const Stored &s,int scene,int input,int gesture) {
+template<class Settings> inline const Binding *effectiveBinding(const Settings &s,int scene,int input,int gesture) {
   const Binding *global=nullptr;
   for(const auto &b:s.bindings)if(b.count&&b.input==input&&b.gesture==gesture) {
     if(b.scene==scene)return &b;
@@ -246,7 +247,7 @@ inline const Binding *effectiveBinding(const Stored &s,int scene,int input,int g
   }
   return global;
 }
-inline bool assign(Stored &s, const Binding &value) {
+template<class Settings> inline bool assign(Settings &s, const Binding &value) {
   Binding *b = binding(s, value.scene, value.input, value.gesture);
   if (!b && !value.count) return true;
   if (!b) for (auto &slot : s.bindings) if (!slot.count) { b = &slot; break; }
@@ -257,7 +258,7 @@ inline bool assign(Stored &s, const Binding &value) {
 enum BindingEdit { kBindingSaved, kBindingMissing, kBindingConflict, kBindingFull };
 // Move/replace one row in the candidate before its single NVS commit. New or
 // duplicated rows use createOnly to avoid overwriting an existing gesture.
-inline BindingEdit editBinding(Stored &s, const Binding &value,
+template<class Settings> inline BindingEdit editBinding(Settings &s, const Binding &value,
                                int sourceInput=-1, int sourceGesture=-1, bool createOnly=false) {
   Binding *source=nullptr;
   if (sourceInput>=0 || sourceGesture>=0) {

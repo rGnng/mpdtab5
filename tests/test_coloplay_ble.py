@@ -41,11 +41,12 @@ static int ble_gap_update_params(int conn,struct ble_gap_upd_params *p){(void)co
 static bool mpd_client_coloplay_accepts(uint32_t session){return session!=0;}
 static int native_steps=64;
 static int player_volume_steps(void){return native_steps;}
-typedef struct {bool connected;float volume,volume_grid_target;uint8_t volume_grid_steps;uint16_t volume_request;int play_status;uint32_t elapsed_ms,duration_ms,revision;uint64_t track_key;char title[128],artist[128];} mpd_state_t;
-static float remote_volume=.67f;static bool float_peer,predict_peer,scale_peer,navigation_peer;
+typedef struct {bool connected,starred;float volume,volume_grid_target;uint8_t volume_grid_steps;uint16_t volume_request;int play_status;uint32_t elapsed_ms,duration_ms,revision;uint64_t track_key;char title[128],artist[128];} mpd_state_t;
+static float remote_volume=.67f;static bool float_peer,predict_peer,scale_peer,navigation_peer,star_peer,remote_star;
+static bool remote_connected=true;static uint64_t remote_track=123;
 static float remote_target=.25f;static uint16_t remote_completed=7;
 static uint32_t backend_session;static unsigned commands,releases,key_events;static int backend_error;
-static bool mpd_client_get_remote_state(mpd_state_t *s){memset(s,0,sizeof(*s));s->connected=true;s->volume=remote_volume;s->volume_grid_target=remote_target;s->volume_grid_steps=native_steps;s->volume_request=remote_completed;s->play_status=1;s->track_key=123;s->elapsed_ms=1000;s->duration_ms=100000;strcpy(s->title,"A real title");strcpy(s->artist,"Artist");return true;}
+static bool mpd_client_get_remote_state(mpd_state_t *s){memset(s,0,sizeof(*s));s->connected=remote_connected;s->starred=remote_star;s->volume=remote_volume;s->volume_grid_target=remote_target;s->volume_grid_steps=native_steps;s->volume_request=remote_completed;s->play_status=1;s->track_key=remote_track;s->elapsed_ms=1000;s->duration_ms=100000;strcpy(s->title,"A real title");strcpy(s->artist,"Artist");return true;}
 static void mpd_client_coloplay_begin(uint32_t session){backend_session=session;}
 static void mpd_client_coloplay_release(void){backend_session=0;releases++;}
 static uint8_t mpd_client_coloplay_seek_state(void){return 0;}
@@ -89,7 +90,7 @@ static void connect_peer(uint32_t session,bool reordered){
  chr.uuid.u128=s_service;chr.uuid.u128.value[12]=reordered?4:2;chr.val_handle=11;chr.def_handle=10;characteristic(7,&ok,&chr,generation());
  chr.uuid.u128.value[12]=reordered?2:3;chr.val_handle=14;chr.def_handle=13;characteristic(7,&ok,&chr,generation());
  chr.uuid.u128.value[12]=reordered?3:4;chr.val_handle=18;chr.def_handle=17;characteristic(7,&ok,&chr,generation());characteristic(7,&done,NULL,generation());
- struct fake_mbuf mb={.len=20};cp_header(mb.bytes,CP_HELLO,0,session);mb.bytes[8]=(float_peer?CP_CAP_VOLUME_FLOAT:0)|(predict_peer?CP_CAP_VOLUME_PREDICT:0)|(scale_peer?CP_CAP_VOLUME_SCALE:0)|(navigation_peer?CP_CAP_NAVIGATION:0);struct ble_gatt_attr attr={&mb};caps_read(7,&ok,&attr,generation());
+ struct fake_mbuf mb={.len=20};cp_header(mb.bytes,CP_HELLO,0,session);mb.bytes[8]=(float_peer?CP_CAP_VOLUME_FLOAT:0)|(predict_peer?CP_CAP_VOLUME_PREDICT:0)|(scale_peer?CP_CAP_VOLUME_SCALE:0)|(navigation_peer?CP_CAP_NAVIGATION:0);mb.bytes[17]=star_peer?CP_FEATURE_STAR:0;struct ble_gatt_attr attr={&mb};caps_read(7,&ok,&attr,generation());
  struct ble_gatt_dsc d={.uuid.u16={{BLE_UUID_TYPE_16},0x2902},.handle=(uint16_t)(s_command+1)};descriptor(7,&ok,12,&d,generation());descriptor(7,&done,12,NULL,generation());ack();
  assert(last_write[1]==CP_HELLO&&last_write[8]==native_steps&&cp_u32(last_write+4)==session);assert((last_write[16]&CP_CAP_VOLUME_FLOAT)==(float_peer?CP_CAP_VOLUME_FLOAT:0));ack();assert(coloplay_ble_connected()&&backend_session==session);
  coloplay_ble_tick(clock_us);drain();
@@ -169,6 +170,16 @@ int main(void){
  last_event->callback(last_event);drain();assert(navigation_used==95&&!strcmp(navigation_text,nav.focus));
  unsigned frames=navigation_frames;clock_us+=1100000;coloplay_ble_tick(clock_us);drain();assert(navigation_frames==frames+1&&!strcmp(navigation_text,nav.focus));
  nav.flags=CP_NAV_LOADING;nav.index=nav.count=0;nav.focus[0]=0;coloplay_ble_publish_navigation(&nav);clock_us+=20000;coloplay_ble_tick(clock_us);drain();assert(navigation_header[9]==CP_NAV_LOADING&&!navigation_used);
+ coloplay_ble_reset();
+ // Star flags are negotiated and reflect confirmed current-track state only.
+ uint8_t status[20];remote_star=true;connect_peer(2220,false);
+ state_packet(status,0,0);assert(!(status[10]&(CP_STATE_STAR_KNOWN|CP_STATE_STARRED)));
+ star_peer=true;connect_peer(2221,false);assert(last_hello[17]&CP_FEATURE_STAR);
+ state_packet(status,0,0);assert(cp_state_valid(status,20)&&(status[10]&CP_STATE_STAR_KNOWN)&&(status[10]&CP_STATE_STARRED));
+ remote_star=false;state_packet(status,0,0);assert((status[10]&CP_STATE_STAR_KNOWN)&&!(status[10]&CP_STATE_STARRED));
+ remote_track=0;state_packet(status,0,0);assert(!(status[10]&CP_STATE_STAR_KNOWN));
+ remote_track=123;remote_connected=false;state_packet(status,0,0);assert(!(status[10]&(CP_STATE_CONNECTED|CP_STATE_STAR_KNOWN)));
+ remote_connected=true;star_peer=false;connect_peer(2222,false);assert(!s_star_feedback&&!(last_hello[17]&CP_FEATURE_STAR));
  coloplay_ble_reset();
  puts("ColoPlay GATT discovery/handshake, raw state, duplicates, key mapping, queue errors and stale-session isolation passed");return 0;
 }

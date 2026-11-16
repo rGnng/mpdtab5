@@ -54,6 +54,8 @@ void mpd_client_coloplay_begin(uint32_t session);
 void mpd_client_coloplay_usb_begin(uint32_t session);
 void mpd_client_coloplay_usb_release(void);
 bool mpd_client_coloplay_accepts(uint32_t session);
+// Active input owner; USB wins while its validated session is present.
+const char *mpd_client_coloplay_transport(void);
 uint8_t mpd_client_coloplay_seek_state(void);
 bool mpd_client_is_enabled(void);
 bool mpd_client_is_connected(void);

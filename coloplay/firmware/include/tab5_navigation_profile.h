@@ -1,9 +1,9 @@
 #pragma once
 #include "scene_settings.h"
 namespace Tab5NavigationProfile {
-inline bool install(SceneSettings::Stored &s,int id){
+template<class Settings> inline bool install(Settings &s,int id){
   using namespace SceneSettings;
-  if(!valid(s)||id<=0||id>=kSceneCount||exists(s,id))return false;
+  if(!valid(s)||id<=0||id>=sceneCapacity(s)||exists(s,id))return false;
   int free=0;for(const auto &b:s.bindings)if(!b.count)++free;
   if(free<11)return false;
   for(const auto &scene:s.scenes)if(scene.used&&!std::strcmp(scene.name,"Tab5 Navigation"))return false;

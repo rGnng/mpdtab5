@@ -10,6 +10,16 @@ int main(){
  cp_put16(p+10,0);assert(!cp_command_valid(p,sizeof(p)));cp_put16(p+10,1);cp_put32(p+4,0);assert(!cp_command_valid(p,sizeof(p)));
  cp_header(p,CP_MEDIA,1,1);cp_put16(p+10,1);for(int usage:{0xb0,0xb1,0xb3,0xb4,0xb5,0xb6,0xb7,0xcd,0xe2}){cp_put16(p+8,usage);assert(cp_command_valid(p,sizeof(p)));}cp_put16(p+8,0xffff);assert(!cp_command_valid(p,sizeof(p)));
  cp_header(p,CP_STATE,7,1);p[8]=uint8_t(-1);p[9]=255;assert(cp_state_valid(p,sizeof(p)));p[8]=101;assert(!cp_state_valid(p,sizeof(p)));p[8]=67;p[9]=1;p[10]=0x81;p[11]=CP_APPLIED;assert(cp_state_valid(p,sizeof(p)));p[10]=0x83;assert(!cp_state_valid(p,sizeof(p)));
+ for(bool supported:{false,true})for(bool connected:{false,true})for(bool track:{false,true})for(bool starred:{false,true}){
+   p[10]=cp_state_flags(connected,track?123:0,starred,2,supported);
+   assert(cp_state_valid(p,sizeof(p))&&(p[10]&3)==2);
+   assert(bool(p[10]&CP_STATE_STAR_KNOWN)==(supported&&connected&&track));
+   assert(bool(p[10]&CP_STATE_STARRED)==(supported&&connected&&track&&starred));
+ }
+ const int invalidStarFlags[]={CP_STATE_STARRED,CP_STATE_STAR_KNOWN,CP_STATE_CONNECTED|CP_STATE_STARRED,0x90};
+ for(int flags:invalidStarFlags){
+   p[10]=flags;assert(!cp_state_valid(p,sizeof(p)));
+ }
  cp_header(p,CP_VOLUME_STATE,9,1);cp_put_float(p+8,1.0f/64);p[12]=CP_APPLIED;assert(cp_state_valid(p,sizeof(p))&&cp_float(p+8)==1.0f/64);
  p[13]=64;cp_put16(p+14,9);cp_put_float(p+16,.25f);assert(cp_state_valid(p,sizeof(p)));
  cp_put32(p+16,0x7fc00000);assert(!cp_state_valid(p,sizeof(p)));cp_put_float(p+16,-1);p[13]=32;assert(!cp_state_valid(p,sizeof(p)));p[13]=64;

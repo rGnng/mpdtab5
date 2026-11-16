@@ -1,6 +1,7 @@
 # Desktop gadget guide
 
-Current source baseline: **0.7.2-usb-lease**. The gadget is configured
+Current source: **0.8.0-global-bindings** (local development; not OTA-tested).
+The last verified device release remains **0.7.2-usb-lease**. The gadget is configured
 through the **Connection**, **Controls**, **Playback**, **Lighting** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
 buttons are 14 px, with larger headings and log text. [API](api.md), [development](development.md), and
@@ -175,7 +176,13 @@ ring becomes its background lighting (or Off), and Volume becomes ordinary
 Lighting. Legacy button color inheritance with a brightness override resolves
 the current scene color/mode when creating Custom. Screen preferences persist.
 
-**Screen** has switches for the status icon, title, artist and progress bar.
+**Screen** has switches for the status icons, title, artist and progress bar.
+Beside the play/pause icon, a small star shows the current track's confirmed
+Tab5 state: gold fill when starred, muted outline when unstarred. The fixed slot
+keeps titles and progress stationary. It works in Playback and in Tab5
+Navigation's Now Playing view over USB or Bluetooth. The Status icon switch
+controls both icons. Older Tab5 firmware, stale feedback or no current track
+hide the star instead of implying the track is unstarred.
 Time can show Elapsed / Total, Remaining, or Off. Long titles/artists use
 Ellipsis or Scrolling (24 pixels/second, with a one-second pause at each end).
 Japanese, common Chinese and Korean text use the embedded 16 px font and stay
@@ -200,7 +207,8 @@ intact. Scene-change overlays keep priority over playback screens.
 
 Scene records use a compact, checksummed NVS encoding from 0.6.33. Names,
 bindings, colors, levels and scene order retain their values. Uncompressed older
-records remain readable; use a 0.6.33-or-newer recovery image after saving.
+records remain readable. After saving the new Global profile, recovery firmware
+must support scene schema 9 and the CSR1 envelope.
 
 ### Tab5 navigation scene
 
@@ -223,7 +231,7 @@ switches views immediately on release; releasing after paging never switches
 views. These bindings have no double/triple press delay. Their thresholds and
 repeat switches remain editable in the binding dialog.
 
-The **Bluetooth navigation** idle/action screen shows the current view, focused
+The **Tab5 navigation** idle/action screen shows the current view, focused
 item and position. In a context menu it shows the selected command. On Now
 Playing it uses the configured playback screen; Queue and editing retain the
 navigation display. Long text follows the playback Ellipsis/Scrolling setting.
@@ -234,13 +242,17 @@ ColoPlay or change scene brightness, playback lighting or settings.
 
 ## Controls
 
-**Default** always exists, cannot be deleted or renamed, and its bindings are
-editable. Each scene is a tab above its settings panel. Selecting a tab edits
-that scene; **Activate scene** changes the gadget's running scene. Use **+ Scene**
-to create a scene, or **Rename** / **Delete scene** for an existing custom scene.
-The active scene is
-saved and restored at boot. Deleting the active scene returns to Default;
-saved scene-switch actions targeting a deleted scene are retargeted to Default.
+**Global** is a protected bindings-only view, pinned first in the editor. It has
+no activation, screen, icon, lighting, brightness, rename, delete or reorder
+controls. Bindings saved here are shared automatically; there is no Global
+checkbox. Global cannot be a scene-switch target or appear in Next/Previous cycling.
+
+Each actual scene has a settings tab. Selecting a tab edits that scene;
+**Activate scene** changes the gadget's running scene. Use **+ Scene** to create
+a scene, or **Rename** / **Delete scene** for an existing scene. At least one
+actual scene must remain. The active scene is saved and restored at boot.
+Deleting a scene redirects any scene-switch references to the next scene in
+saved order; deleting the active scene also activates that fallback.
 A scene switch clears pending gestures and temporary effects and wakes the screen.
 It shows the scene icon and name for about 1.6 seconds, then returns to the saved
 selected idle screen.
@@ -262,33 +274,36 @@ leaves the button group's scene color in place.
 
 Use the **← / →** buttons beside **+ Scene** to move the selected tab left or
 right. Order saves immediately without activating the selected scene or changing
-its settings. Default can move but cannot be renamed or deleted. Newly created
+its settings. Global stays pinned outside this order. Newly created
 scenes always append, including when an earlier deleted ID is reused. Next Scene
 and Previous Scene follow this order and wrap at either end. Direct scene
 bindings continue to target their saved scene IDs.
 
-Existing v1/v2 scenes migrate without changing their names, colors, bindings or
-selection. New brightness overrides start at Use General, icons start at House,
-and existing bindings are not made Global automatically. The version-8 scene
-record is 3304 bytes; older firmware cannot read it, so an application downgrade
-is not a scene-settings rollback.
+Older scene records migrate to schema 9. Existing Global-marked Default
+bindings stay in Global. Local Default bindings and its appearance move into a
+normal Default scene when needed; explicit targets and an active Default follow
+that replacement. Other scene IDs, settings and active selection are preserved.
+The extra scope slot allows migration even with all eight old scene slots used.
+Existing scenes named Global receive a distinct name because Global is reserved.
 
-Scene order is saved separately in a 12-byte NVS record. Existing installations
-without this record keep their previous ID order until a scene is moved or
-created. Reordering preserves IDs, bindings, scene settings and active selection.
+The logical scene record is now **3364 bytes**, with a separate **16-byte**
+version-2 order record. Legacy 12-byte orders migrate with settings saved first;
+a persistent replacement ID makes interrupted migration repeatable. Invalid or
+unreadable saved settings are retained rather than overwritten. Recovery firmware
+must support schema 9 and CSR1; downgrading the application does not roll back NVS.
 
-Current bounded NVS storage supports **8 scenes**, **64 configured gestures**
-across all scenes, and **3 ordered actions per gesture**. Empty bindings consume
-no configured-gesture slot. New scenes start with no assigned actions; bindings
-are independent. Default bindings marked Global are available in every scene.
+Current bounded NVS storage supports **8 selectable scenes plus Global**,
+**64 configured gestures** shared by all scopes, and **3 ordered actions per
+gesture**. New scenes start with no assigned actions. Reordering preserves IDs,
+bindings, scene settings and active selection.
 
 ### Global bindings
 
-Only Default bindings have a **Global** checkbox. A scene's own binding wins for
-the same key/combination and gesture; otherwise a Global Default binding runs.
-The editor warns **exists in Global (Default)** for matching pairs in other
-scenes and allows saving a deliberate local override. The table marks Global
-rows. Unmarked Default bindings only run while Default is active.
+Add shared bindings in the **Global** view. A scene's own binding wins for the
+same key/combination and gesture; otherwise the Global binding runs. The editor
+warns **This key/event exists in Global. This scene binding overrides it.** and
+allows saving the local override. Run saved binding works from Global while any
+actual scene is active, and explicitly runs the chosen Global binding.
 
 ### Gestures
 
@@ -314,7 +329,7 @@ Available events are:
 
 Inputs are sampled by a dedicated task targeting 1 ms, independently of LCD/web
 work, and debounce for 25 ms. Recognition uses the active scene's bindings and
-Global Default bindings. A single-only input fires on debounced press. If Hold
+shared Global bindings. A single-only input fires on debounced press. If Hold
 or Hold then release is configured, a short single fires on release; a hold is
 tracked only when one of those bindings exists and reaches its threshold at
 600 ms by default. Hold and Hold then release bindings offer a **Hold threshold**
@@ -352,7 +367,7 @@ button handling continues. One combination is recognized at a time; unrelated
 buttons and knob rotation keep normal handling.
 
 For a scene-switching example, configure **Button 1 + Button 2 / Single press →
-Next scene** in Default and enable **Global**. Press together, or keep one held
+Next scene** in the **Global** view. Press together, or keep one held
 and tap the other to repeat. This is an editable binding; actual saved mappings
 can differ from the example.
 
@@ -365,7 +380,7 @@ Add up to three commands in the row editor, reorder them, then **Save binding**.
 Use the table's **Delete** control to clear a binding. The currently implemented
 actions belong to these Device groups:
 
-The command selector groups Device actions by purpose and adds Bluetooth controls.
+The command selector groups Device actions by purpose and adds MPD Tab5 controls.
 
 | Group | Actions |
 |---|---|
@@ -378,15 +393,15 @@ The command selector groups Device actions by purpose and adds Bluetooth control
 
 Adjustments take a signed per-step value; setters use an absolute percentage.
 Speaker actions control this gadget's ES8311 output, not the computer's volume.
-Bluetooth adds remote Volume Up/Down, playback controls and HID
-keys. Connection contains Bluetooth enable/pair/forget controls. Bluetooth volume/playback
+MPD Tab5 actions provide remote Volume Up/Down, playback controls and keyboard
+keys. Connection contains Bluetooth enable/pair/forget controls. MPD volume/playback
 screens and proportional volume ring feedback use returned fractional MPD state.
 The volume screen shows a speaker icon and horizontal bar, with
 immediate prediction using the step and grid reference synchronized from Tab5.
 Pending turns are reconciled by request ID; after turning stops, feedback
 settles smoothly to the actual mixer level. Tab5 sends absolute MPD
 `setvol` targets. Its Volume Scale offers 1/16 Squared Curve, 1/64 Squared Curve
-(default), 2% Integer and 5% Integer. ColoPlay receives the selection over BLE;
+(default), 2% Integer and 5% Integer. ColoPlay receives the selection over USB or Bluetooth;
 the screen contains no numeric percentage. Squared readback maps to the same
 logical lookup position, preventing small quantization changes from bouncing
 the displayed value. Existing fine/coarse bindings retain their direction. Pending/result
@@ -399,7 +414,7 @@ explain the measurements, grid mapping and device-specific limits.
 Serial companion actions remain deferred.
 
 Each action can keep the current screen or select **Clock**, **Blank**,
-**Bluetooth volume** or **Bluetooth playback**. Its light feedback applies to
+**MPD volume** or **Playback**. Its light feedback applies to
 that binding: an individual button controls its own LED, a combination controls
 all its button LEDs, and a knob action controls the ring. OPEN/REC have no LED.
 
@@ -428,8 +443,8 @@ Last-input telemetry shows the recognized gesture and last action/result.
 
 ### Standby and screen behavior
 
-Each scene's **Idle screen** can be **Clock**, **Blank**, **Bluetooth volume** or
-**Bluetooth playback** or **Bluetooth navigation**. The navigation screen shows
+Each scene's **Idle screen** can be **Clock**, **Blank**, **MPD volume** or
+**Playback** or **Tab5 navigation**. The navigation screen shows
 the remote view/focused item and uses playback appearance on Now Playing.
 Blank turns off the
 display backlight and stops frame updates while leaving the scene's lighting
@@ -451,7 +466,8 @@ There is no date, timezone label, seconds, sync text or decorative ring.
 | Knob left / right | Gadget speaker volume -2% / +2%, with proportional ring feedback |
 | Knob press + left / right | Screen brightness -3% / +3% |
 
-Other gestures start unassigned. The startup tone, fixed diagnostic pages and
+On a fresh installation, Global starts empty and these bindings belong to the
+normal Default scene. Other gestures start unassigned. The startup tone, fixed diagnostic pages and
 automatic page tour have been retired from the normal gadget interface.
 
 ## Persistence, device details and updates
@@ -503,7 +519,7 @@ uses checkboxes and removable tags. Saved values are unchanged.
 
 ### Keyboard HID keys
 
-Bluetooth HID key actions have a searchable **Keyboard HID key** dropdown with
+Tab5 key actions have a searchable **Keyboard HID key** dropdown with
 141 named keys: letters, digits, navigation/editing, punctuation, F1–F24,
 numpad, system and international keys. Search by name, decimal/hex usage or
 aliases such as PgUp and star. Names show their HID usage in parentheses.
@@ -513,7 +529,7 @@ when choosing another key. Selection does not change which keys the host accepts
 
 ### Keyboard modifiers
 
-Bluetooth HID key actions use a multi-select dropdown for **Keyboard modifiers**.
+Tab5 key actions use a multi-select dropdown for **Keyboard modifiers**.
 Choose any combination of Control, Shift, Alt/Option and Windows/Command, with
 left and right variants. Selections appear as removable tags; click × to remove
 one. No selections displays **None**. The underlying 0–255 HID mask is saved as
@@ -529,12 +545,12 @@ match only an Any order binding. Hold the modifier and tap another member to
 repeat without releasing it. Reversed pairs can be configured independently.
 
 **Ring display** remains a scene setting beside the screen/color choices.
-Select Bluetooth playback progress to opt into the playback ring. Fill styles,
+Select Playback progress to opt into the playback ring. Fill styles,
 state behavior and shared appearance are configured in
-[Bluetooth playback](#playback). Bottom to top fills both sides from
+[Playback](#playback). Bottom to top fills both sides from
 the bottom to the top, with partial LED brightness between steps. Action light
 effects take priority temporarily and return to playback lighting on expiry.
-The Bluetooth playback screen has a compact playback-state icon at the top and centered
+The playback screen has a compact playback-state icon at the top and centered
 16 px title/artist lines, with no emoji/boxes. Japanese, common Chinese and Korean metadata use
 an embedded Noto Sans JP/CJK bitmap font. Shared Han characters use the Japanese
 glyph form; distinct simplified/traditional characters stay separate. A slim progress bar and time are below;

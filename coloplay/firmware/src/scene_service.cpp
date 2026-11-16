@@ -6,7 +6,7 @@
 #include "scene_icons.h"
 #include "scene_cue.h"
 #include "action_sound.h"
-#include "scene_order.h"
+#include "scene_scope_order.h"
 #include "general_service.h"
 #include "audio_demo.h"
 #include "controller_service.h"
@@ -19,8 +19,9 @@
 namespace SceneService {
 namespace {
 using namespace SceneSettings;
-Stored gSettings, gCandidate;
-SceneOrder::Stored gOrder;
+using Settings=SceneConfig::Stored;
+Settings gSettings, gCandidate;
+SceneScopeOrder::Stored gOrder;
 bool gOrderStored=false;
 Preferences gPrefs;
 bool gOpen=false, gStored=false,gLevelDirty=false;
@@ -40,7 +41,7 @@ String quote(const char *value) {
   }
   return out+'"';
 }
-String color(uint32_t rgb) { char value[8]; snprintf(value,sizeof(value),"#%06lx",static_cast<unsigned long>(rgb)); return quote(value); }
+String color(uint32_t rgb) { char value[8]; snprintf(value,sizeof(value),"#%06lx",static_cast<unsigned long>(rgb&0xffffffu)); return quote(value); }
 String lightFeedback(const ActionFeedback::Light &light){
   return "{\"active\":"+String(light.led!=kInherit?"true":"false")+",\"led\":"+quote(kLeds[light.led])+
     ",\"brightness\":"+String(light.brightness)+",\"color\":"+color(light.color)+",\"percent\":"+String(light.percent)+
@@ -104,7 +105,7 @@ bool readColor(const String &value,uint32_t &out) {
   }
   out=rgb; return true;
 }
-size_t writeSettings(const Stored &settings){
+size_t writeSettings(const Settings &settings){
   if(!gOpen)return 0;
   const size_t room=SceneRecordCodec::capacity(sizeof(settings));
   auto *scratch=static_cast<uint8_t*>(heap_caps_malloc(room,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
@@ -121,8 +122,8 @@ size_t writeSettings(const Stored &settings){
   if(error!=ESP_OK)return 0;
   gRecordBytes=bytes;gCompactRecord=compact;return sizeof(settings);
 }
-bool saveOrder(const SceneOrder::Stored &order,String &error){
-  if(!SceneOrder::valid(order)){error="invalid scene order";return false;}
+bool saveOrder(const SceneScopeOrder::Stored &order,String &error){
+  if(!SceneScopeOrder::valid(order)){error="invalid scene order";return false;}
   if((!gOrderStored||std::memcmp(&gOrder,&order,sizeof(order)))&&
      (!gOpen||gPrefs.putBytes("order",&order,sizeof(order))!=sizeof(order))){error="could not save scene order to NVS";return false;}
   gOrderStored=true;return true;
@@ -134,16 +135,16 @@ bool commit(String &error,int direction=0,bool sceneSound=true) {
     error="could not save scenes to NVS"; return false;
   }
   const int previous=gSettings.active;
-  const int previousPosition=SceneOrder::position(gOrder,gSettings,previous);
+  const int previousPosition=SceneScopeOrder::position(gOrder,gSettings,previous);
   ControllerService::cancel();
   gSettings=gCandidate; gStored=true;gLevelDirty=false;++gRevision; ++gEpoch; gFeedback.clear();
   const unsigned cue=SceneCue::frequency(previous!=gSettings.active&&sceneSound&&GeneralService::sceneChangeSound(),
-    previousPosition,SceneOrder::position(gOrder,gSettings,gSettings.active),direction);
+    previousPosition,SceneScopeOrder::position(gOrder,gSettings,gSettings.active),direction);
   if(cue)AudioDemo::beep(cue,SceneCue::kDurationMs);
   return true;
 }
 bool activate(int id,int direction=0,bool sceneSound=true) {
-  if (!exists(gSettings,id)) return false;
+  if (!SceneConfig::selectable(gSettings,id)) return false;
   gCandidate=gSettings; gCandidate.active=id;
   return commit(gError,direction,sceneSound);
 }
@@ -152,54 +153,74 @@ String list(const char *const *names,int count) {
 }
 }  // namespace
 
+// Decode into the existing candidate scratch area; every stored length/version
+// is checked before interpreting its fields. Invalid/unknown records are retained.
+static bool readSettings(bool &upgrade){
+  const size_t stored=gPrefs.getBytesLength("settings");gRecordBytes=stored;
+  if(!stored||stored>SceneRecordCodec::capacity(sizeof(Settings)))return false;
+  auto *bytes=static_cast<uint8_t*>(heap_caps_malloc(stored,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+  if(!bytes)bytes=static_cast<uint8_t*>(std::malloc(stored));
+  if(!bytes)return false;
+  bool read=gPrefs.getBytes("settings",bytes,stored)==stored;
+  const bool compact=read&&SceneRecordCodec::encoded(bytes,stored);
+  const size_t size=compact?SceneRecordCodec::u16(bytes+4):stored;
+  read=read&&(size==sizeof(Settings)||size==sizeof(SceneSettings::Stored)||size==sizeof(StoredV1)||size==sizeof(StoredV2));
+  if(read){
+    if(compact)read=SceneRecordCodec::decode(bytes,stored,reinterpret_cast<uint8_t*>(&gCandidate),size);
+    else std::memcpy(&gCandidate,bytes,size);
+  }
+  heap_caps_free(bytes);if(!read)return false;
+  gCompactRecord=compact;
+  if(size==sizeof(Settings)){
+    if(!SceneConfig::valid(gCandidate))return false;
+    gSettings=gCandidate;return true;
+  }
+  // Legacy conversion is transient and prefers PSRAM, keeping permanent DRAM
+  // and the Arduino setup stack bounded even for the full eight-scene record.
+  void *memory=heap_caps_malloc(sizeof(SceneSettings::Stored),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+  if(!memory)memory=std::malloc(sizeof(SceneSettings::Stored));
+  if(!memory)return false;
+  auto *legacy=new(memory) SceneSettings::Stored;
+  bool ok=false;const bool sound=GeneralService::sceneChangeSound();
+  if(size==sizeof(SceneSettings::Stored)){
+    std::memcpy(static_cast<void*>(legacy),&gCandidate,size);
+    ok=SceneSettings::valid(*legacy)||migrateV7(*legacy)||migrateV6(*legacy)||migrateV5(*legacy,sound)||migrateV4(*legacy,sound)||migrateV3(*legacy,sound);
+  }else{
+    union Early {StoredV1 v1;StoredV2 v2;Early():v2(){}};
+    static Early early;
+    if(size==sizeof(StoredV1)){new(&early.v1)StoredV1;std::memcpy(static_cast<void*>(&early.v1),&gCandidate,size);ok=migrate(early.v1,*legacy,sound);}
+    else {new(&early.v2)StoredV2;std::memcpy(static_cast<void*>(&early.v2),&gCandidate,size);ok=migrateV2(early.v2,*legacy,sound);}
+  }
+  if(ok){normalizeBluetoothVolumes(*legacy);ok=SceneConfig::migrate(*legacy,gCandidate);}
+  legacy->~Stored();heap_caps_free(memory);
+  if(!ok)return false;
+  gSettings=gCandidate;upgrade=true;return true;
+}
 void begin(Handler handler) {
-  gHandler=handler; gOpen=gPrefs.begin("scenes",false);
-  SceneOrder::Stored order;
-  if(gOpen&&gPrefs.getBytesLength("order")==sizeof(order)&&gPrefs.getBytes("order",&order,sizeof(order))==sizeof(order)&&SceneOrder::valid(order)){
-    gOrder=order;gOrderStored=true;
-  }
+  gOrder=SceneScopeOrder::Stored{};gOrderStored=false;gStored=false;gLevelDirty=false;
+  gRecordBytes=0;gCompactRecord=false;gError="";
+  gHandler=handler;gOpen=gPrefs.begin("scenes",false);
   const size_t bytes=gOpen?gPrefs.getBytesLength("settings"):0;
-  gRecordBytes=bytes;
-  if(bytes&&bytes<=SceneRecordCodec::capacity(sizeof(Stored))&&bytes!=sizeof(Stored)){
-    auto *scratch=static_cast<uint8_t*>(heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
-    if(!scratch)scratch=static_cast<uint8_t*>(std::malloc(bytes));
-    if(!scratch){gSettings=defaults();gError="could not allocate scene read buffer; saved record preserved";return;}
-    {
-      const bool read=gPrefs.getBytes("settings",scratch,bytes)==bytes;
-      const bool compact=read&&SceneRecordCodec::encoded(scratch,bytes);
-      const bool loaded=compact&&SceneRecordCodec::decode(scratch,bytes,reinterpret_cast<uint8_t*>(&gCandidate),sizeof(gCandidate))&&valid(gCandidate);
-      heap_caps_free(scratch);
-      if(loaded){gSettings=gCandidate;gStored=gCompactRecord=true;DeviceLog::printf("[scenes] loaded compact record: %u bytes\n",unsigned(bytes));return;}
-      if(compact||!read||(bytes!=sizeof(StoredV1)&&bytes!=sizeof(StoredV2))){gSettings=defaults();gError="could not read compact scene record; saved record preserved";return;}
+  bool upgrade=false;
+  if(bytes&&readSettings(upgrade)){
+    gStored=!upgrade||writeSettings(gSettings)==sizeof(gSettings);
+    if(!gStored)gError="could not persist Global binding migration; original record preserved";
+  }else{
+    gSettings=SceneConfig::defaults();
+    if(bytes){gStored=false;gError="could not read scene record; saved record preserved";}
+    else gStored=gOpen&&writeSettings(gSettings)==sizeof(gSettings);
+  }
+  SceneScopeOrder::Stored order;const size_t orderBytes=gOpen?gPrefs.getBytesLength("order"):0;
+  if(orderBytes==sizeof(order)&&gPrefs.getBytes("order",&order,sizeof(order))==sizeof(order)&&SceneScopeOrder::valid(order)){
+    gOrder=order;gOrderStored=true;
+  }else if(orderBytes==sizeof(SceneOrder::Stored)){
+    SceneOrder::Stored old;
+    if(gPrefs.getBytes("order",&old,sizeof(old))==sizeof(old)&&SceneScopeOrder::migrate(old,gSettings,order)){
+      gOrder=order;
+      // Settings first: reserved[0] makes this repeatable after a power loss.
+      if(gStored){String error;if(saveOrder(order,error))gOrderStored=true;else gError=error;}
     }
   }
-  if(bytes==sizeof(gSettings)&&gPrefs.getBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings)){
-    if(valid(gSettings)){
-      gStored=true;
-      if(normalizeBluetoothVolumes(gSettings)){
-        gStored=writeSettings(gSettings)==sizeof(gSettings);
-        if(!gStored)gError="could not persist volume direction bindings";
-      }
-      return;
-    }
-    const bool sound=GeneralService::sceneChangeSound();
-    if(migrateV7(gSettings)||migrateV6(gSettings)||migrateV5(gSettings,sound)||migrateV4(gSettings,sound)||migrateV3(gSettings,sound)){normalizeBluetoothVolumes(gSettings);gStored=writeSettings(gSettings)==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
-  }
-  // The two legacy layouts share one scratch area, avoiding permanent duplication.
-  union Legacy { StoredV1 v1;StoredV2 v2;Legacy():v2(){} };
-  static Legacy legacy;
-  bool migrated=false;
-  if(bytes==sizeof(StoredV2)) {
-    new (&legacy.v2) StoredV2;
-    migrated=gPrefs.getBytes("settings",&legacy.v2,sizeof(legacy.v2))==sizeof(legacy.v2)&&migrateV2(legacy.v2,gSettings,GeneralService::sceneChangeSound());
-  } else if(bytes==sizeof(StoredV1)) {
-    new (&legacy.v1) StoredV1;
-    migrated=gPrefs.getBytes("settings",&legacy.v1,sizeof(legacy.v1))==sizeof(legacy.v1)&&migrate(legacy.v1,gSettings,GeneralService::sceneChangeSound());
-  }
-  if(migrated){normalizeBluetoothVolumes(gSettings);gStored=writeSettings(gSettings)==sizeof(gSettings);if(!gStored)gError="could not persist migrated scenes";return;}
-
-  gSettings=defaults();
-  gStored=gOpen&&writeSettings(gSettings)==sizeof(gSettings);
 }
 uint32_t epoch() { return gEpoch; }
 uint8_t standbyScreen(){return gSettings.scenes[gSettings.active].screen;}
@@ -266,23 +287,15 @@ String statusJson() {
   out+="]},\"error\":"+quote(gError.c_str())+"}";
   return out;
 }
-String configJson() {
-  String out; out.reserve(8000);
-  out="{\"state\":"+statusJson()+",\"storage\":{\"format\":"+quote(gCompactRecord?"CSR1":"legacy")+",\"bytes\":"+String(gRecordBytes)+",\"raw_bytes\":"+String(sizeof(Stored))+"},\"limits\":{\"scenes\":8,\"bindings\":64,\"actions_per_gesture\":3}";
-  out+=",\"timing\":{\"debounce_ms\":25,\"click_window_ms\":300,\"hold_ms\":600,\"combo_window_ms\":80,\"hold_repeat_ms\":200}";
-  out+=",\"catalog\":{\"inputs\":"+list(kInputs,kInputCount)+",\"combo_inputs\":"+list(kInputs,4)+",\"gestures\":"+list(kGestures,kGestureCount);
-  out+=",\"actions\":"+list(kTypes,kTypeCount)+",\"led_effects\":"+list(kLeds,kLedCount)+",\"screen_effects\":"+list(kScreens,kScreenCount)+",\"lighting_modes\":"+list(kLightingModes,kLightingModeCount)+",\"icons\":[";
-  for(int i=0;i<SceneIcons::kCount;++i){if(i)out+=',';out+="{\"id\":"+quote(SceneIcons::kNames[i])+",\"label\":"+quote(SceneIcons::kLabels[i])+"}";}
-  out+="]},\"scenes\":[";
-  bool first=true;
-  uint8_t ordered[kSceneCount];const int sceneCount=SceneOrder::list(gOrder,gSettings,ordered);
-  for (int n=0;n<sceneCount;++n) {
-    const int i=ordered[n];
-    if (!first) out+=','; first=false;
-    out+="{\"id\":"+String(i)+",\"name\":"+quote(gSettings.scenes[i].name)+",\"protected\":"+String(i==0?"true":"false")+",\"standby_screen\":"+quote(kScreens[gSettings.scenes[i].screen])+sceneLighting(gSettings.scenes[i])+",\"bindings\":[";
+static String scopeJson(int id){
+  const bool global=id==SceneConfig::kGlobal;
+  String out="{\"id\":"+String(id)+",\"name\":"+quote(gSettings.scenes[id].name)+",\"protected\":"+String(global?"true":"false");
+  out+=",\"selectable\":"+String(global?"false":"true")+",\"scope\":"+quote(global?"global":"scene");
+  if(!global)out+=",\"standby_screen\":"+quote(kScreens[gSettings.scenes[id].screen])+sceneLighting(gSettings.scenes[id]);
+  out+=",\"bindings\":[";
     bool firstBinding=true;
     for (const auto &b:gSettings.bindings) {
-      if (!b.count||b.scene!=i) continue;
+      if (!b.count||b.scene!=id) continue;
       if (!firstBinding) out+=','; firstBinding=false;
       out+="{\"input\":"+quote(inputName(b.input).c_str())+",\"gesture\":"+quote(kGestures[b.gesture])+",\"hold_ms\":"+String(b.holdMs())+",\"repeat_hold\":"+String(b.repeatHold()?"true":"false")+",\"global\":"+String(b.global?"true":"false")+",\"actions\":[";
       for (int n=0;n<b.count;++n) {
@@ -292,32 +305,43 @@ String configJson() {
       }
       out+="]}";
     }
-    out+="]}";
-  }
+  return out+"]}";
+}
+String configJson() {
+  String out; out.reserve(8000);
+  out="{\"state\":"+statusJson()+",\"storage\":{\"format\":"+quote(gCompactRecord?"CSR1":"legacy")+",\"bytes\":"+String(gRecordBytes)+",\"raw_bytes\":"+String(sizeof(Settings))+"},\"limits\":{\"scenes\":8,\"global_scopes\":1,\"bindings\":64,\"actions_per_gesture\":3}";
+  out+=",\"timing\":{\"debounce_ms\":25,\"click_window_ms\":300,\"hold_ms\":600,\"combo_window_ms\":80,\"hold_repeat_ms\":200}";
+  out+=",\"catalog\":{\"inputs\":"+list(kInputs,kInputCount)+",\"combo_inputs\":"+list(kInputs,4)+",\"gestures\":"+list(kGestures,kGestureCount);
+  out+=",\"actions\":"+list(kTypes,kTypeCount)+",\"led_effects\":"+list(kLeds,kLedCount)+",\"screen_effects\":"+list(kScreens,kScreenCount)+",\"lighting_modes\":"+list(kLightingModes,kLightingModeCount)+",\"icons\":[";
+  for(int i=0;i<SceneIcons::kCount;++i){if(i)out+=',';out+="{\"id\":"+quote(SceneIcons::kNames[i])+",\"label\":"+quote(SceneIcons::kLabels[i])+"}";}
+  out+="]},\"global\":"+scopeJson(SceneConfig::kGlobal)+",\"scenes\":[";
+  uint8_t ordered[SceneConfig::kScopeCount];const int count=SceneScopeOrder::list(gOrder,gSettings,ordered);
+  for(int n=0;n<count;++n){if(n)out+=',';out+=scopeJson(ordered[n]);}
   return out+"]}";
 }
 bool configure(WebServer &server,String &error) {
   gCandidate=gSettings;
   const String op=server.arg("op");
   if(op=="tab5_navigation"){
-    int slot=-1;for(int i=1;i<kSceneCount;++i)if(!exists(gCandidate,i)){slot=i;break;}
+    int slot=-1;for(int i=1;i<SceneConfig::kScopeCount;++i)if(!exists(gCandidate,i)){slot=i;break;}
     if(!Tab5NavigationProfile::install(gCandidate,slot)){error="Tab5 Navigation already exists, or scene/binding capacity is full";return false;}
     for(int i=0;i<SceneIcons::kCount;++i)if(!std::strcmp(SceneIcons::kNames[i],"bluetooth"))gCandidate.scenes[slot].icon=i;
-    SceneOrder::Stored order=gOrder;SceneOrder::append(order,slot);
+    SceneScopeOrder::Stored order=gOrder;SceneScopeOrder::append(order,slot);
     if(!saveOrder(order,error)||!commit(error))return false;
     gOrder=order;return true;
   }
   int id=0;
   if (op=="create") {
-    id=-1; for (int i=1;i<kSceneCount;++i) if (!exists(gCandidate,i)) { id=i; break; }
+    id=-1; for (int i=1;i<SceneConfig::kScopeCount;++i) if (!exists(gCandidate,i)) { id=i; break; }
     if (id<0) { error="scene capacity reached (8 scenes)"; return false; }
     gCandidate.scenes[id]=Scene{};gCandidate.scenes[id].used=1;
-  } else if (!number(server,"scene_id",0,kSceneCount-1,id,error,true)||!exists(gCandidate,id)) {
+  } else if (!number(server,"scene_id",0,SceneConfig::kScopeCount-1,id,error,true)||!exists(gCandidate,id)) {
     if (error.isEmpty()) error="scene not found"; return false;
   }
+  if(id==SceneConfig::kGlobal&&op!="binding"&&op!="run"){error="Global contains shared bindings only";return false;}
   if(op=="reorder"){
-    int position=0;SceneOrder::Stored order=gOrder;
-    if(!number(server,"position",0,kSceneCount-1,position,error,true)||!SceneOrder::move(order,gSettings,id,position)){
+    int position=0;SceneScopeOrder::Stored order=gOrder;
+    if(!number(server,"position",0,SceneConfig::kScopeCount-1,position,error,true)||!SceneScopeOrder::move(order,gSettings,id,position)){
       if(error.isEmpty())error="invalid scene position";return false;
     }
     if(!saveOrder(order,error))return false;
@@ -329,8 +353,8 @@ bool configure(WebServer &server,String &error) {
   if (op=="create"||op=="update") {
     String name=server.arg("name"); name.trim();
     if (!name.length()||name.length()>24) { error="scene name must be 1-24 UTF-8 bytes"; return false; }
-    if (id==0&&name!="Default") { error="Default scene name is protected"; return false; }
-    for (int i=0;i<kSceneCount;++i) if (i!=id && exists(gCandidate,i) && name==gCandidate.scenes[i].name) {
+
+    for (int i=0;i<SceneConfig::kScopeCount;++i) if (i!=id && exists(gCandidate,i) && name==gCandidate.scenes[i].name) {
       error="scene names must be distinct"; return false;
     }
     name.toCharArray(gCandidate.scenes[id].name,25);
@@ -371,13 +395,13 @@ bool configure(WebServer &server,String &error) {
       }
     }
   } else if (op=="delete") {
-    if (!remove(gCandidate,id)) { error="Default scene cannot be deleted"; return false; }
+    if (!SceneConfig::remove(gCandidate,id,SceneScopeOrder::neighbor(gOrder,gSettings,id,1))) { error="at least one scene must remain"; return false; }
   } else if (op=="activate") {
     gCandidate.active=id;
   } else if (op=="run") {
     const int input=readInput(server.arg("input")), gesture=index(server.arg("gesture"),kGestures,kGestureCount);
-    if (id!=gSettings.active||!validGesture(input,gesture)) { error="run a valid gesture in the active scene"; return false; }
-    event(input,gesture); return true;
+    if ((id!=SceneConfig::kGlobal&&id!=gSettings.active)||!validGesture(input,gesture)||!binding(gSettings,id,input,gesture)) { error="run a saved binding from Global or the active scene"; return false; }
+    event(input,gesture,1,id==SceneConfig::kGlobal); return true;
   } else if (op=="binding") {
     Binding b; b.scene=id;
     const int input=readInput(server.arg("input")), gesture=index(server.arg("gesture"),kGestures,kGestureCount);
@@ -390,7 +414,7 @@ bool configure(WebServer &server,String &error) {
     if(repeatHold&&gesture!=kHold){error="repeat is available for Hold only";return false;}
     b.setHold(holdMs,repeatHold);
     int global=0;if(!number(server,"global",0,1,global,error))return false;
-    if(global&&id!=0){error="only Default bindings can be Global";return false;}b.global=global;
+    if(global&&id!=SceneConfig::kGlobal){error="put shared bindings in Global";return false;}b.global=id==SceneConfig::kGlobal;
     for (int i=0;i<count;++i) {
       const String prefix="a"+String(i)+"_";
       auto &a=b.actions[i];
@@ -401,7 +425,7 @@ bool configure(WebServer &server,String &error) {
       a.type=type; a.led=led; a.screen=screen;
       int value=0,target=0,duration=1500,sound=0,brightness=-1;
       if (!number(server,(prefix+"value").c_str(),-100,4000,value,error)||
-          !number(server,(prefix+"target").c_str(),0,type==kBluetoothKey?255:kSceneCount-1,target,error)||
+          !number(server,(prefix+"target").c_str(),0,type==kBluetoothKey?255:SceneConfig::kScopeCount-1,target,error)||
           !number(server,(prefix+"feedback_ms").c_str(),250,10000,duration,error)||
           !number(server,(prefix+"sound").c_str(),0,1,sound,error)||
           !number(server,(prefix+"led_brightness").c_str(),-1,100,brightness,error)) return false;
@@ -431,30 +455,30 @@ bool configure(WebServer &server,String &error) {
   } else { error="unknown scene operation"; return false; }
   if(op=="create"){
     if(!valid(gCandidate)){error="invalid scene, action or effect configuration";return false;}
-    SceneOrder::Stored order=gOrder;SceneOrder::append(order,id);
+    SceneScopeOrder::Stored order=gOrder;SceneScopeOrder::append(order,id);
     if(!saveOrder(order,error))return false;
     gOrder=order;
   }
   return commit(error);
 }
-void event(int input,int gesture,int repetitions) {
+void event(int input,int gesture,int repetitions,bool globalOnly) {
   if (!validGesture(input,gesture)) return;
   gInput=input; gGesture=gesture; gAt=millis(); ++gSequence; gLastType=kNone; gPercent=-1; gError="";gSource=-1;gWasGlobal=false;
-  const auto *found=effectiveBinding(gSettings,gSettings.active,input,gesture);
+  const auto *found=globalOnly?binding(gSettings,SceneConfig::kGlobal,input,gesture):effectiveBinding(gSettings,gSettings.active,input,gesture);
   if (!found) return;
   const Binding b=*found;gSource=b.scene;gWasGlobal=b.global;
   const auto previousEpoch=gEpoch;
   for (int i=0;i<b.count;++i) {
     const Action a=b.actions[i]; gLastType=a.type;
     const int previousScene=gSettings.active;
-    const int previousPosition=SceneOrder::position(gOrder,gSettings,previousScene);
+    const int previousPosition=SceneScopeOrder::position(gOrder,gSettings,previousScene);
     if (a.type==kSwitchScene) activate(a.target,0,false);
     else if (a.type==kNextScene||a.type==kPreviousScene) {
       const int direction=a.type==kNextScene?1:-1;
-      const int id=SceneOrder::neighbor(gOrder,gSettings,gSettings.active,direction);
+      const int id=SceneScopeOrder::neighbor(gOrder,gSettings,gSettings.active,direction);
       if(id>=0)activate(id,direction,false);
     } else if (gHandler) gPercent=gHandler(a,repetitions);
-    const unsigned cue=gError.isEmpty()?ActionSound::frequency(a,previousPosition,SceneOrder::position(gOrder,gSettings,gSettings.active)):0;
+    const unsigned cue=gError.isEmpty()?ActionSound::frequency(a,previousPosition,SceneScopeOrder::position(gOrder,gSettings,gSettings.active)):0;
     if(cue)AudioDemo::beep(cue,ActionSound::duration(a));
     gFeedback.apply(a,gPercent,millis(),input);
     if (a.type==kSwitchScene||a.type==kNextScene||a.type==kPreviousScene||gEpoch!=previousEpoch||!gError.isEmpty()) break;

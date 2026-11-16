@@ -49,15 +49,15 @@ function renderArtwork(s,catalog) {
   $('artwork_state').textContent=labels[art.state] || 'Waiting for library';
   $('artwork_progress').max=total || 1;
   $('artwork_progress').value=checked;
-  var summary=cached.toLocaleString()+' / '+total.toLocaleString()+' albums cached · '+percent+'% checked';
-  if(art.missing) summary+=' · '+Number(art.missing).toLocaleString()+' without supported artwork';
-  if(art.failed) summary+=' · '+Number(art.failed).toLocaleString()+' failed';
+  var summary=cached.toLocaleString()+' / '+total.toLocaleString()+' albums cached, '+percent+'% checked';
+  if(art.missing) summary+=', '+Number(art.missing).toLocaleString()+' without supported artwork';
+  if(art.failed) summary+=', '+Number(art.failed).toLocaleString()+' failed';
   $('artwork_counts').textContent=summary;
 }
 function render(s,c,p) {
   S=s; C=c;
   btPanel.render(s.bluetooth);
-  $('chips').innerHTML=T.chip('MPD',s.mpd_connected ? 'Connected' : s.mpd_host ? 'Connecting' : 'Setup',s.mpd_connected ? 'ok' : '') +
+  $('chips').innerHTML=T.chip('ColoPlay',T.controllerConnection(s),'controller-chip '+(s.coloplay && s.coloplay.transport!=='none' ? 'ok' : ''))+T.chip('MPD',s.mpd_connected ? 'Connected' : s.mpd_host ? 'Connecting' : 'Setup',s.mpd_connected ? 'ok' : '') +
     T.chip('SD',s.sd_ready ? 'Ready' : 'Missing',s.sd_ready ? 'ok' : 'bad') + T.chip('WiFi',s.ip || '—','ok');
   $('np_title').textContent=s.title || 'No track'; $('np_artist').textContent=s.artist || '—'; $('np_album').textContent=s.album || '';
   $('play_state').textContent=['STOPPED','PLAYING','PAUSED'][s.play_status] || '—';
@@ -70,12 +70,12 @@ function render(s,c,p) {
   var cur=(s.elapsed_ms || 0)/1000, dur=(s.duration_ms || 0)/1000;
   $('np_cur').textContent=T.time(cur); $('np_dur').textContent=T.time(dur);
   $('np_bar').style.width=(dur ? Math.min(100,cur/dur*100) : 0)+'%';
-  $('device_rows').innerHTML=T.row('MPD',s.mpd_status)+T.row('Server',s.mpd_host ? s.mpd_host+':'+s.mpd_port : 'Not configured')+
+  $('device_rows').innerHTML=T.row('ColoPlay connection',T.controllerConnection(s))+T.row('MPD',s.mpd_status)+T.row('Server',s.mpd_host ? s.mpd_host+':'+s.mpd_port : 'Not configured')+
     T.row('Playback volume',s.mpd_volume>=0 ? s.mpd_volume+'%' : 'Mixer unavailable')+
     T.row('WiFi',s.wifi)+T.row('IP',s.ip)+T.row('SD card',s.sd_ready ? T.bytes(s.sd_used)+' / '+T.bytes(s.sd_total) : 'Missing')+
     T.row('Uptime',T.time(s.uptime_s))+T.row('Free heap',T.bytes(s.free_heap))+T.row('Free PSRAM',T.bytes(s.free_psram))+T.row('Last reset',T.reset(s.reset_reason));
   var usb=s.usb_network || {};
-  $('device_rows').innerHTML+=T.row('USB-C network',usb.ready ? (usb.connected ? 'Connected · ' : 'Ready · ')+usb.ip : 'Inactive');
+  $('device_rows').innerHTML+=T.row('USB-C network',usb.ready ? (usb.connected ? 'Connected, ' : 'Ready, ')+usb.ip : 'Inactive');
   var power=T.power(p,c);
   $('charge_state').textContent=power.state; $('charge_state').className='micro '+power.cls;
   $('power_rows').innerHTML=T.row('Battery voltage',power.voltage)+T.row('Current flow',power.flow,power.cls)+
@@ -89,7 +89,7 @@ function render(s,c,p) {
   $('library_rows').innerHTML=T.row('Albums',catalog.albums || 0)+T.row('Tracks',catalog.tracks || 0)+T.row('Storage',s.storage_root);
   $('sync_hint').textContent=s.mpd_syncing ? 'Importing the MPD library…' : s.mpd_connected ? 'Library ready. Resync after changing stored playlists; database changes refresh automatically.' : 'Enter your MPD server address. Music plays on the server’s audio output.';
   $('fw_rows').innerHTML=T.row('Firmware',s.firmware)+T.row('Build',s.build)+T.row('OTA slot',s.ota_partition)+T.row('USB mode',T.usb(s.usb_mode));
-  $('clock_hint').textContent=(s.local_time || '—')+(s.rtc ? ' · RTC' : '');
+  $('clock_hint').textContent=(s.local_time || '—')+(s.rtc ? ', RTC' : '');
   $('screen_state').textContent=s.screen_on===undefined ? '—' : s.screen_on ? 'Screen on' : 'Screen off';
   configFields.forEach(function (id) { setVal(id,c[id] === undefined ? (id==='volume_steps' ? 64 : ['screen_off_minutes','pagination_size'].includes(id) ? 0 : '') : c[id]); });
   $('vol_v').textContent=value('volume'); $('bri_v').textContent=value('brightness');

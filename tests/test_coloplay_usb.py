@@ -46,6 +46,7 @@ int main(void){
  frame_t offer={.kind=CP_USB_OFFER};cp_header(offer.bytes,CP_HELLO,0,123);offer.bytes[8]=255;cp_put32(offer.bytes+9,98);
  consume(&offer,100);assert(!s_nonce&&!atomic_load(&s_ready));
  cp_put32(offer.bytes+9,99);consume(&offer,100);assert(s_nonce==123&&!atomic_load(&s_ready)&&!backend_session&&tx_kind[0]==CP_USB_HELLO);
+ assert(!s_star_feedback&&!(tx_data[0][17]&CP_FEATURE_STAR));
  frame_t ready={.kind=CP_USB_READY};memcpy(ready.bytes,tx_data[0],20);consume(&ready,110);
  assert(atomic_load(&s_ready)&&backend_session==123);consume(&ready,111);assert(backend_session==123);
  frame_t input={.kind=CP_USB_DATA};cp_header(input.bytes,CP_VOLUME,1,123);cp_put16(input.bytes+8,233);cp_put16(input.bytes+10,1);cp_put16(input.bytes+12,1);
@@ -63,6 +64,16 @@ int main(void){
  frame_t got;assert(xQueueReceive(s_rx,&got,0)&&got.kind==CP_USB_PING);
  disconnect();assert(!atomic_load(&s_ready)&&!backend_session&&closed==1&&!s_nonce);
  assert(!coloplay_usb_result(input.bytes,CP_APPLIED));
+ // Reconnect with star feedback; legacy offers above retain the old flags.
+ s_device=(void*)1;atomic_store(&s_open,true);s_challenge=100;
+ cp_header(offer.bytes,CP_HELLO,0,456);offer.bytes[8]=255;offer.bytes[17]=CP_FEATURE_STAR;cp_put32(offer.bytes+9,100);
+ consume(&offer,200);assert(s_star_feedback&&tx_data[tx_count-1][17]&CP_FEATURE_STAR);
+ memcpy(ready.bytes,tx_data[tx_count-1],20);consume(&ready,210);
+ remote_star=true;before=tx_count;assert(state(0,0));
+ assert(cp_state_valid(tx_data[before],20)&&(tx_data[before][10]&CP_STATE_STAR_KNOWN)&&(tx_data[before][10]&CP_STATE_STARRED));
+ remote_star=false;before=tx_count;assert(state(0,0));assert((tx_data[before][10]&CP_STATE_STAR_KNOWN)&&!(tx_data[before][10]&CP_STATE_STARRED));
+ remote_track=0;before=tx_count;assert(state(0,0));assert(!(tx_data[before][10]&CP_STATE_STAR_KNOWN));
+ disconnect();assert(!s_star_feedback);
  puts("PASS USB host handshake/challenge, ownership, deduplication, stale session, volume/media replies, navigation fragmentation and disconnect");
  return 0;
 }

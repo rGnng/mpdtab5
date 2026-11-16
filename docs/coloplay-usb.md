@@ -23,8 +23,16 @@ scale, raw volume, completion watermark and current focused item. ColoPlay
 uses the same prediction, playback clock and rendering code for either link.
 Tab5 remains authoritative for MPD state and volume scale.
 
-General's USB & Network panel shows **Controller link**. ColoPlay's status JSON
-adds `controller`, and Tab5's status JSON adds `coloplay_usb`. The latter
+ColoPlay's page header and Connection → USB & Network panel show the active
+connection: **USB CDC-ACM**, **Bluetooth** or **Disconnected**. Its Bluetooth
+panel says **Connected (standby)** while USB is active. Tab5's dashboard and
+debug headers show the same active connection, with a detail row under Device.
+USB priority is fixed and takes effect after its protocol handshake.
+ColoPlay's status JSON
+adds `controller`, and Tab5's status JSON includes `coloplay` plus `coloplay_usb`.
+Both active-connection objects report `transport` and fixed
+`priority: "usb_cdc_acm"`. Tab5 reports the MPD input owner, so a standby
+Bluetooth connection cannot override a working USB session. `coloplay_usb`
 reports serial-open/handshake state, session, frame counts, invalid/dropped
 frames and open attempts. Bluetooth diagnostics continue to describe BLE.
 

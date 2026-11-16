@@ -29,6 +29,7 @@ void offer(uint32_t now){
   uint8_t data[CP_BLE_BYTES];cp_header(data,CP_HELLO,0,gSession);
   cp_put32(data+9,gChallenge);
   data[8]=CP_CAP_MEDIA|CP_CAP_VOLUME|CP_CAP_KEY|CP_CAP_STATE|CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;
+  data[17]=CP_FEATURE_STAR;
   if(frame(CP_USB_OFFER,data))gLastOffer=now;
 }
 void received(uint8_t kind,const uint8_t *data,uint32_t now){
@@ -112,11 +113,12 @@ void cancel(){
 String statusJson(){
   const auto s=snapshot();
   portENTER_CRITICAL(&gMux);const uint32_t session=gSession,sent=gSent,dropped=gDropped,invalid=gInvalid+gParser.invalid,stale=gStale,timeouts=gLeaseTimeouts,connections=gConnections;const bool wired=gConnected;portEXIT_CRITICAL(&gMux);
-  String out="{\"transport\":\""+String(wired?"usb_cdc_acm":s.connected?"ble":"none")+"\",\"usb_connected\":"+String(wired?"true":"false");
+  String out="{\"transport\":\""+String(wired?"usb_cdc_acm":s.connected&&s.secured?"ble":"none")+"\",\"priority\":\"usb_cdc_acm\",\"usb_connected\":"+String(wired?"true":"false");
   out+=",\"session\":"+String(session)+",\"fresh\":"+String(s.fresh?"true":"false")+",\"available\":"+String(s.available?"true":"false");
   out+=",\"volume_scale\":\""+String(volume_scale_name(s.volumeSteps))+"\",\"volume_fraction\":"+String(s.volume,8)+",\"display_volume_fraction\":"+String(s.displayVolume,8);
   out+=",\"request\":"+String(s.request)+",\"result\":"+String(s.result)+",\"volume_pending\":"+String(s.volumePending)+",\"sent\":"+String(sent)+",\"dropped\":"+String(dropped)+",\"invalid\":"+String(invalid);
   out+=",\"stale_frames\":"+String(stale)+",\"lease_timeouts\":"+String(timeouts)+",\"usb_connections\":"+String(connections);
+  out+=",\"star_supported\":"+String(s.starSupported?"true":"false")+",\"star_known\":"+String(s.starKnown?"true":"false")+",\"starred\":"+String(s.starred?"true":"false");
   out+=",\"playback\":"+String(s.playback)+",\"seek\":"+String(s.seek)+",\"title\":"+quote(s.title)+",\"artist\":"+quote(s.artist);
   out+=",\"position_ms\":"+String(s.positionMs)+",\"duration_ms\":"+String(s.durationMs)+",\"position_valid\":"+String(s.positionValid?"true":"false");
   out+=",\"navigation\":{\"fresh\":"+String(s.navigation.fresh?"true":"false")+",\"view_id\":"+String(s.navigation.ui.view)+",\"flags\":"+String(s.navigation.ui.flags);

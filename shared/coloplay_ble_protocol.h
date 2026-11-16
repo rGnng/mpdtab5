@@ -15,6 +15,9 @@ enum {CP_BLE_VERSION=1,CP_MEDIA=1,CP_VOLUME=2,CP_KEY=3,CP_RELEASE=4,
       CP_HELLO=16,CP_STATE=17,CP_TEXT=18,CP_TRACK=19,CP_VOLUME_STATE=20,CP_NAVIGATION=21,CP_NAV_TEXT=22};
 enum {CP_PENDING=0,CP_ACCEPTED=1,CP_APPLIED=2,CP_FAILED=3,CP_NO_CHANGE=4,CP_UNSUPPORTED=5,CP_BUSY=6};
 enum {CP_CAP_MEDIA=1,CP_CAP_VOLUME=2,CP_CAP_KEY=4,CP_CAP_STATE=8,CP_CAP_VOLUME_FLOAT=16,CP_CAP_VOLUME_PREDICT=32,CP_CAP_VOLUME_SCALE=64,CP_CAP_NAVIGATION=128};
+/* Optional feature byte 17 in capabilities, USB OFFER and host HELLO. */
+enum {CP_FEATURE_STAR=1};
+enum {CP_STATE_STAR_KNOWN=4,CP_STATE_STARRED=8,CP_STATE_CONNECTED=128};
 enum {CP_NAV_CONTEXT=1,CP_NAV_EDITING=2,CP_NAV_LOADING=4,CP_NAV_FOCUS=8,CP_NAV_QUEUE=16,CP_NAV_SCREEN_ON=32};
 typedef struct {uint8_t view,flags;uint32_t index,count;char focus[96];} cp_navigation_t;
 static inline uint16_t cp_u16(const uint8_t *p){return (uint16_t)p[0]|((uint16_t)p[1]<<8);}
@@ -40,7 +43,8 @@ static inline bool cp_command_valid(const uint8_t *p,size_t n){
 }
 static inline void cp_header(uint8_t *p,uint8_t kind,uint16_t id,uint32_t session){memset(p,0,CP_BLE_BYTES);p[0]=CP_BLE_VERSION;p[1]=kind;cp_put16(p+2,id);cp_put32(p+4,session);}
 /* State: header; signed volume, playback (0/1/2 or 255 unknown),
- * seek direction in flags bits 0..1, backend connected in bit 7, result;
+ * seek direction in flags bits 0..1, negotiated star known/starred in bits 2/3,
+ * backend connected in bit 7, result;
  * elapsed/duration milliseconds. id 0 is an unsolicited state update. */
 static inline bool cp_state_valid(const uint8_t *p,size_t n){
   /* Negotiated companion frame keeps legacy state and its full 32-bit times
@@ -51,6 +55,13 @@ static inline bool cp_state_valid(const uint8_t *p,size_t n){
       (!p[13]||((p[13]==16||p[13]==64||p[13]==2||p[13]==5)&&(target==-1.0f||(target>=0&&target<=1))));
   }
   if(!cp_packet(p,n)||(p[1]!=CP_STATE&&p[1]!=CP_HELLO))return false;
-  const int volume=(int8_t)p[8];return volume>=-1&&volume<=100&&(p[9]<=2||p[9]==255)&&(p[10]&3)<=2&&!(p[10]&0x7c)&&p[11]<=CP_BUSY;
+  const int volume=(int8_t)p[8];return volume>=-1&&volume<=100&&(p[9]<=2||p[9]==255)&&(p[10]&3)<=2&&!(p[10]&0x70)&&p[11]<=CP_BUSY&&
+    (!(p[10]&CP_STATE_STARRED)||(p[10]&CP_STATE_STAR_KNOWN))&&
+    (!(p[10]&CP_STATE_STAR_KNOWN)||(p[10]&CP_STATE_CONNECTED));
+}
+static inline uint8_t cp_state_flags(bool connected,uint64_t track,bool starred,uint8_t seek,bool star_feedback){
+  uint8_t flags=(connected?CP_STATE_CONNECTED:0)|(seek&3);
+  if(star_feedback&&connected&&track)flags|=CP_STATE_STAR_KNOWN|(starred?CP_STATE_STARRED:0);
+  return flags;
 }
 #endif

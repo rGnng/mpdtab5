@@ -14,6 +14,7 @@ class ColoPlayOwnerTests(unittest.TestCase):
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 static void *mutex=(void*)1;
 static void take(void){}
 static void give(void){}
@@ -23,17 +24,18 @@ static uint16_t coloplay_volume_completed;
 static struct {uint16_t volume_request;} state;
 '''+production+r'''
 int main(void){
- assert(!mpd_client_coloplay_accepts(0));
- mpd_client_coloplay_begin(11);assert(mpd_client_coloplay_accepts(11));
+ assert(!mpd_client_coloplay_accepts(0));assert(!strcmp(mpd_client_coloplay_transport(),"none"));
+ mpd_client_coloplay_begin(11);assert(!strcmp(mpd_client_coloplay_transport(),"ble"));assert(mpd_client_coloplay_accepts(11));
  const uint32_t before=coloplay_epoch;
  coloplay_seek=1;state.volume_request=coloplay_volume_completed=42;
  mpd_client_coloplay_usb_begin(22);assert(mpd_client_coloplay_accepts(22)&&!mpd_client_coloplay_accepts(11));
  assert(!coloplay_seek&&!state.volume_request&&!coloplay_volume_completed&&coloplay_epoch!=before);
+ assert(!strcmp(mpd_client_coloplay_transport(),"usb_cdc_acm"));
  const uint32_t wired=coloplay_epoch;
  mpd_client_coloplay_release();assert(mpd_client_coloplay_accepts(22)&&coloplay_epoch==wired);
- mpd_client_coloplay_begin(33);assert(mpd_client_coloplay_accepts(22)&&coloplay_epoch==wired);
- mpd_client_coloplay_usb_release();assert(mpd_client_coloplay_accepts(33)&&!mpd_client_coloplay_accepts(22)&&coloplay_epoch!=wired);
- mpd_client_coloplay_release();assert(!mpd_client_coloplay_accepts(33));
+ mpd_client_coloplay_begin(33);assert(!strcmp(mpd_client_coloplay_transport(),"usb_cdc_acm"));assert(mpd_client_coloplay_accepts(22)&&coloplay_epoch==wired);
+ mpd_client_coloplay_usb_release();assert(!strcmp(mpd_client_coloplay_transport(),"ble"));assert(mpd_client_coloplay_accepts(33)&&!mpd_client_coloplay_accepts(22)&&coloplay_epoch!=wired);
+ mpd_client_coloplay_release();assert(!mpd_client_coloplay_accepts(33));assert(!strcmp(mpd_client_coloplay_transport(),"none"));
  return 0;
 }
 '''

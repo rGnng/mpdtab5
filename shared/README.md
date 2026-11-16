@@ -21,3 +21,11 @@ python3 -m unittest discover -s tests -p 'test_shared_controller.py' -v
 The BLE wire version and volume mappings remain unchanged. The
 [USB CDC-ACM link](../docs/coloplay-usb.md) wraps the same payloads in its own
 versioned stream envelope. Existing BLE control remains available.
+
+Star feedback uses optional feature byte 17, bit `CP_FEATURE_STAR`, in ColoPlay's
+GATT capabilities or USB OFFER and the returning Tab5 HELLO. Only a supporting
+peer receives the `CP_STATE` flag bits `CP_STATE_STAR_KNOWN` (bit 2) and
+`CP_STATE_STARRED` (bit 3). These describe Tab5's confirmed current track;
+missing track/backend or older peers leave them clear. Packet lengths, wire
+version, volume/timing fields and USB framing are unchanged. ColoPlay clears the
+visible star on stale/disconnected feedback and hides it when state is unknown.

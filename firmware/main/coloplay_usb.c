@@ -31,6 +31,7 @@ static uint16_t s_recent[32],s_nav_revision;
 static uint8_t s_recent_result[32];static unsigned s_recent_at;
 static ui_navigation_t s_navigation;
 static bool s_have_nav;
+static bool s_star_feedback;
 static uint64_t s_track;
 static char s_title[64],s_artist[64];
 
@@ -63,12 +64,14 @@ static void hello(uint8_t *data){
     cp_header(data,CP_HELLO,0,s_nonce);data[8]=player_volume_steps();
     cp_put_float(data+12,1.0f/volume_grid_count(data[8]));
     data[16]=CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;
+    if(s_star_feedback)data[17]|=CP_FEATURE_STAR;
 }
 static bool state(uint16_t request,uint8_t result){
     mpd_state_t state={0};mpd_client_get_remote_state(&state);
     uint8_t data[CP_BLE_BYTES];cp_header(data,CP_STATE,request,s_nonce);
     data[8]=(uint8_t)(int8_t)(state.connected?volume_percent(state.volume):-1);
-    data[9]=state.connected?state.play_status:255;data[10]=(state.connected?0x80:0)|mpd_client_coloplay_seek_state();data[11]=result;
+    data[9]=state.connected?state.play_status:255;
+    data[10]=cp_state_flags(state.connected,state.track_key,state.starred,mpd_client_coloplay_seek_state(),s_star_feedback);data[11]=result;
     cp_put32(data+12,state.elapsed_ms);cp_put32(data+16,state.duration_ms);
     if(!send_frame(CP_USB_DATA,data))return false;
     cp_header(data,CP_VOLUME_STATE,request,s_nonce);cp_put_float(data+8,state.connected?state.volume:-1.0f);
@@ -110,6 +113,7 @@ static void consume(const frame_t *frame,int64_t now){
        (data[8]&(CP_CAP_STATE|CP_CAP_VOLUME_FLOAT|CP_CAP_NAVIGATION))==(CP_CAP_STATE|CP_CAP_VOLUME_FLOAT|CP_CAP_NAVIGATION)){
         if(!s_nonce)s_nonce=cp_u32(data+4);
         if(s_nonce!=cp_u32(data+4))return;
+        s_star_feedback=(data[17]&CP_FEATURE_STAR)!=0;
         s_last_rx=now;uint8_t out[CP_BLE_BYTES];hello(out);send_frame(CP_USB_HELLO,out);return;
     }
     if(!s_nonce||!cp_packet(data,CP_BLE_BYTES)||cp_u32(data+4)!=s_nonce){atomic_fetch_add(&s_invalid,1);return;}
@@ -159,7 +163,7 @@ static void disconnect(void){
     const bool was_ready=atomic_exchange(&s_ready,false);atomic_store(&s_session,0);
     if(was_ready){mpd_client_coloplay_usb_release();ESP_LOGI(TAG,"USB controller released; BLE may resume");}
     if(s_device){cdc_acm_host_close(s_device);s_device=NULL;}
-    atomic_store(&s_open,false);s_nonce=0;s_last_rx=s_probe_at=0;
+    atomic_store(&s_open,false);s_nonce=0;s_last_rx=s_probe_at=0;s_star_feedback=false;
     xQueueReset(s_rx);xQueueReset(s_results);memset(s_recent,0,sizeof(s_recent));s_recent_at=0;
     // Driver callbacks have stopped after close; parser has one producer again.
     memset(&s_parser,0,sizeof(s_parser));atomic_store(&s_gone,false);

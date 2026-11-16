@@ -1410,6 +1410,9 @@ static esp_err_t status_get(httpd_req_t * req)
     cJSON_AddNumberToObject(root, "usb_mode", g_app_config.usb_mode);
     usb_boot_guard_json(root);
     coloplay_usb_json(root);
+    cJSON *coloplay=cJSON_AddObjectToObject(root,"coloplay");
+    cJSON_AddStringToObject(coloplay,"transport",mpd_client_coloplay_transport());
+    cJSON_AddStringToObject(coloplay,"priority","usb_cdc_acm");
     usb_network_status_t usb_network; usb_network_status(&usb_network);
     cJSON *usb_json=cJSON_AddObjectToObject(root,"usb_network");
     cJSON_AddBoolToObject(usb_json,"ready",usb_network.ready);

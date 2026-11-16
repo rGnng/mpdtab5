@@ -9,6 +9,7 @@ class RemoteFeedback {
   struct Snapshot {
     NavigationFeedback::State navigation;
     bool navigationSupported=false;
+    bool starSupported=false,starKnown=false,starred=false;
     bool wired=false,floatVolume=false,enabled=false,ready=false,connected=false,secured=false,extension=false,fresh=false,available=false,pending=false,positionValid=false;
     int playback=255,seek=0,result=0;
     float volume=-1.0f;
@@ -48,6 +49,8 @@ class RemoteFeedback {
     if(!cp_state_valid(p,size))return false;
     state.extension=true;
     if(p[1]==CP_HELLO){
+      state.starSupported=(p[17]&CP_FEATURE_STAR)!=0;
+      if(!state.starSupported)state.starKnown=state.starred=false;
       state.navigationSupported=(p[16]&CP_CAP_NAVIGATION)!=0;
       state.floatVolume=(p[16]&CP_CAP_VOLUME_FLOAT)!=0;
       state.volumePrediction=state.floatVolume&&(p[16]&CP_CAP_VOLUME_PREDICT)&&(p[16]&CP_CAP_VOLUME_SCALE);
@@ -57,6 +60,8 @@ class RemoteFeedback {
       state.receivedAt=now;state.available=(p[10]&0x80)!=0;
       if(!state.floatVolume)state.volume=(int8_t)p[8]<0?-1.0f:(int8_t)p[8]/100.0f;
       state.playback=p[9];state.seek=p[10]&3;state.elapsedMs=cp_u32(p+12);state.durationMs=cp_u32(p+16);
+      state.starKnown=state.starSupported&&(p[10]&CP_STATE_STAR_KNOWN);
+      state.starred=state.starKnown&&(p[10]&CP_STATE_STARRED);
       clock.update(state.available,state.playback,state.seek,state.elapsedMs,state.durationMs,now);
       if(!state.floatVolume)result(cp_u16(p+2),p[11]);
     }
@@ -77,6 +82,7 @@ class RemoteFeedback {
     out.predictionReady=prediction.ready();out.predicting=prediction.active(now);
     out.preview=out.predicting?prediction.predicted():-1.0f;out.displayVolume=prediction.display(now,out.volume);
     out.fresh=linked&&out.receivedAt&&uint32_t(now-out.receivedAt)<PlaybackClock::kFreshMs;
+    if(!out.fresh||!out.available||!out.track)out.starKnown=out.starred=false;
     if(!out.fresh){out.available=out.positionValid=false;out.volume=out.preview=out.displayVolume=-1;out.predicting=out.predictionReady=false;out.playback=255;}
     return out;
   }

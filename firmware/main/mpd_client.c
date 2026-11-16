@@ -196,6 +196,11 @@ void mpd_client_coloplay_release(void){if(!mutex)return;take();coloplay_ble_sess
 void mpd_client_coloplay_usb_begin(uint32_t session){if(!mutex)return;take();coloplay_usb_session=session;coloplay_owner(session);give();}
 void mpd_client_coloplay_usb_release(void){if(!mutex)return;take();coloplay_usb_session=0;coloplay_owner(coloplay_ble_session);give();}
 bool mpd_client_coloplay_accepts(uint32_t session){if(!mutex)return false;take();const bool yes=session&&session==coloplay_session;give();return yes;}
+const char *mpd_client_coloplay_transport(void){
+    if(!mutex)return "none";
+    take();const char *transport=coloplay_usb_session?"usb_cdc_acm":coloplay_ble_session?"ble":"none";give();
+    return transport;
+}
 uint8_t mpd_client_coloplay_seek_state(void){if(!mutex)return 0;take();uint8_t value=esp_timer_get_time()<coloplay_seek_deadline?coloplay_seek:0;give();return value;}
 bool mpd_client_is_enabled(void) { return true; }
 bool mpd_client_is_connected(void) { mpd_state_t s={0}; return mpd_client_get_state(&s) && s.connected; }

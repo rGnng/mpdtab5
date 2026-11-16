@@ -98,7 +98,7 @@ function render(s,c,p) {
     lastId=0; lines.push('— Device restarted —'); if(!paused) connectLog();
   }
   uptime=s.uptime_s;
-  $('chips').innerHTML=T.chip('Firmware',s.firmware,'')+T.chip('Device',s.mpd_connected ? 'Connected' : 'Setup',s.mpd_connected ? 'ok' : '');
+  $('chips').innerHTML=T.chip('ColoPlay',T.controllerConnection(s),'controller-chip '+(s.coloplay && s.coloplay.transport!=='none' ? 'ok' : ''))+T.chip('Firmware',s.firmware,'')+T.chip('Device',s.mpd_connected ? 'Connected' : 'Setup',s.mpd_connected ? 'ok' : '');
   $('screen_state').textContent=s.screen_on===undefined ? '—' : s.screen_on ? 'On' : 'Off';
   var library=s.library_available===undefined ? !!(s.sd_ready && s.mpd_connected) : s.library_available;
   ['albums','artists','songs','playlists'].forEach(function(k) {
@@ -106,15 +106,15 @@ function render(s,c,p) {
   });
   var d=s.display || {};
   $('display_rows').innerHTML=d.available ?
-    T.row('Backlight PWM',d.pwm_duty+' / '+(d.pwm_period || 1024)+' · '+d.pwm_hz+' Hz')+
-    T.row('Sampled PWM changes',d.pwm_duty_changes+' duty · '+d.pwm_freq_changes+' frequency')+
+    T.row('Backlight PWM',d.pwm_duty+' / '+(d.pwm_period || 1024)+', '+d.pwm_hz+' Hz')+
+    T.row('Sampled PWM changes',d.pwm_duty_changes+' duty, '+d.pwm_freq_changes+' frequency')+
     T.row('VSYNC callbacks',d.vsync_gap_us ? (1000000/d.vsync_gap_us).toFixed(1)+' Hz' : 'Waiting')+
     T.row('VSYNC max gap',(d.vsync_max_gap_us/1000).toFixed(2)+' ms')+
     T.row('Gaps over 25 ms',d.vsync_gaps_over_25ms)+
     T.row('Render last / max',(d.render_last_us/1000).toFixed(2)+' / '+(d.render_max_us/1000).toFixed(2)+' ms')+
     T.row('DMA wait timeouts',d.dma_wait_timeouts)+T.row('Draw / rotation errors',d.draw_errors+' / '+d.rotation_errors)+
     T.row('Internal free / largest',T.bytes(d.internal_free)+' / '+T.bytes(d.internal_largest))+
-    T.row('Last marker',d.marker ? '#'+d.marker+' · '+(d.marker_uptime_ms/1000).toFixed(1)+' s uptime' : 'None') : T.row('Recorder','Unavailable');
+    T.row('Last marker',d.marker ? '#'+d.marker+', '+(d.marker_uptime_ms/1000).toFixed(1)+' s uptime' : 'None') : T.row('Recorder','Unavailable');
   var pwr=T.power(p,c);
   $('battery_metrics').innerHTML='<div class="metric"><span>Battery</span><strong class="'+pwr.cls+'">'+T.escape(pwr.state)+'</strong></div>'+ 
     '<div class="metric"><span>Voltage</span><strong>'+T.escape(pwr.voltage)+'</strong></div>';

@@ -165,6 +165,23 @@ and mobile layouts, manual dropdowns, independent drafts/saves, failed saves,
 reload, fixed title notifications and scene saves preserving the legacy style.
 The device-served release record below remains the last verified OTA.
 
+## Global bindings development
+
+Local source **0.8.0-global-bindings** separates protected Global bindings from
+selectable scenes. Global has no appearance/activation/reorder controls; bindings
+saved there are shared automatically. Normal scenes retain local overrides and
+last-scene protection. Schema 9 adds one scope slot (3364 raw bytes), allowing
+lossless migration of a full old profile. Settings save before the version-2
+16-byte order migration; interrupted or failed saves preserve the old records.
+The legacy v1–v8 loaders remain covered by host fixtures.
+
+Source checks cover full-capacity migration, active/target preservation, automatic
+scope, override dispatch, explicit Global runs, cycling, last-scene deletion,
+write failures and corrupt records. Optional Chromium tests consume JSON from
+the actual scene service and check the bindings-only view, mobile widths,
+Global-free switch targets and local override warnings. This change has not
+been OTA-tested. The verified release below is unchanged.
+
 ## Current verified release
 
 **0.7.2-usb-lease** was application-only OTA'd on **2026-11-16** to
@@ -647,14 +664,16 @@ MD5 `e9a9c17bf4b88ed4e3adfe53a58f1d71`; its evidence remains under
 | `firmware/src/hardware_demo.cpp` | Clock/Bluetooth rendering and scene overlays, inactivity sleep, local action dispatch, manual lighting and supply telemetry |
 | `firmware/src/scene_service.cpp` | Versioned NVS scenes, atomic CRUD/bindings, activation, ordered dispatch and temporary effects |
 | `firmware/src/input_worker.cpp`, `input_trace.cpp` | Dedicated GPIO/PCNT gesture task, bounded event queue and Button 2 timing trace |
-| `firmware/include/scene_order.h` | Stable-ID scene permutation, append/move and ordered Next/Previous navigation |
+| `firmware/include/scene_order.h` | Legacy version-1 scene order loader |
+| `firmware/include/scene_scope_order.h` | Pinned Global scope, version-2 order, actual-scene append/move/cycling and order migration |
 | `firmware/include/action_feedback.h`, `action_lighting.h` | Independent per-key/ring overlays, brightness and timed screen feedback |
 | `firmware/include/ring_fill.h`, `playback_clock.h` | Clockwise/symmetric coverage and shared smoothed playback position |
 | `firmware/include/navigation_feedback.h`, `tab5_navigation_profile.h` | Coherent remote focus assembly and additive direct-navigation preset |
 | `firmware/include/bitmap_font.h`, `playback_assets.h` | Flash-backed CJK playback font and local connection icon |
 | `scripts/generate_playback_font.py`, `playback_font_subset.py` | Hash-pinned font rasterization, common-language repertoires, shared-glyph priority and Hangul composition policy |
 | `scripts/audit_playback_font.py`, `assets/fonts/noto-sans-jp/` | Private snapshot coverage audit, anonymous codepoint lists, source pins, license and generated manifest |
-| `firmware/include/scene_settings.h` | Bounded scene/action schema, validation, protected Default and reference retargeting |
+| `firmware/include/scene_settings.h` | Shared action/scene types and legacy v1–v8 validation/migration |
+| `firmware/include/scene_config.h` | Schema-9 Global scope, eight selectable scenes, lossless migration and last-scene protection |
 | `firmware/include/gesture_engine.h` | Independent nonblocking click/hold/turn recognizers with cancellation |
 | `firmware/include/gesture_policy.h`, `chord_engine.h` | Binding-aware recognition timing and reusable held combination members |
 | `firmware/src/general_service.cpp`, `firmware/include/scene_cue.h` | Persistent General preferences and direction-specific scene sounds |
@@ -736,7 +755,10 @@ The historical name `test_http_ota.sh` now runs the broader host regression suit
 | `rotary_detents_test.cpp` | Detents, partial turns, reversals, bounce and batched edges |
 | `clock_settings_test.cpp` | Hostname/fallback validation, legacy migration, timezone offsets and daylight saving |
 | `scene_settings_test.cpp` | Protected Default, ordered bindings, deletion/retargeting, corrupt storage and capacity |
-| `scene_order_test.cpp` | Moves, sparse append/reuse, wraparound, stable IDs, protected Default and invalid permutations/positions |
+| `scene_order_test.cpp` | Legacy moves, append/reuse, wraparound and invalid permutations/positions |
+| `scene_config_test.cpp` | Global protection, full-capacity lossless migration, shared/local lookup, actual-scene order and compact round trips |
+| `scene_service_test.cpp` | Actual service/API dispatch, legacy boot migration, corrupt records, failed settings/order writes and last-scene protection |
+| `test_scene_web.py` | Optional Chromium checks using actual service JSON, bindings-only Global, switch targets, warnings and responsive layouts |
 | `action_feedback_test.cpp` | Independent key/ring/screen targets, brightness, expiry, combinations, rollover and rendered colors |
 | `action_light_settings_test.cpp` | Brightness/RGB/sound packing, record sizes and atomic legacy migration validation |
 | `action_sound_test.cpp` | Per-action cue gating, directional scene tones, tone gating and old sound-flag migration |

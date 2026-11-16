@@ -35,7 +35,8 @@ The two devices still build separate application images. Tab5's existing build
 commands below are unchanged. For ColoPlay, follow its
 [build and recovery guide](coloplay/docs/flash.md); run its scripts from `coloplay/`.
 ColoPlay supports [USB CDC-ACM controls and feedback](docs/coloplay-usb.md)
-through Tab5's USB-A port, with BLE for wireless use.
+through Tab5's USB-A port, with BLE for wireless use. USB has priority after
+its handshake; both web interfaces show the active ColoPlay connection.
 See the [migration record](docs/coloplay-migration.md) for history and validation.
 
 ## First use

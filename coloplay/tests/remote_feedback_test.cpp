@@ -5,9 +5,11 @@
 int main(){
   RemoteFeedback peer;peer.state.connected=peer.state.wired=true;
   uint8_t data[CP_BLE_BYTES];cp_header(data,CP_HELLO,0,7);data[8]=64;data[16]=CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;
+  data[17]=CP_FEATURE_STAR;
   assert(!peer.accept(data,20,8,10));assert(peer.accept(data,20,7,10));
-  cp_header(data,CP_STATE,0,7);data[9]=1;data[10]=0x80;cp_put32(data+12,1000);cp_put32(data+16,10000);
+  cp_header(data,CP_STATE,0,7);data[9]=1;data[10]=cp_state_flags(true,123,true,0,true);cp_put32(data+12,1000);cp_put32(data+16,10000);
   assert(peer.accept(data,20,7,100));
+  assert(peer.snapshot(100).starSupported&&!peer.snapshot(100).starKnown); // No track metadata yet.
   cp_header(data,CP_VOLUME_STATE,0,7);cp_put_float(data+8,.25f);data[13]=64;cp_put_float(data+16,.25f);
   assert(peer.accept(data,20,7,100));assert(peer.snapshot(200).fresh&&peer.snapshot(200).positionMs==1100);
   assert(peer.snapshot(200).predictionReady&&peer.snapshot(200).displayVolume==.5f);
@@ -15,6 +17,11 @@ int main(){
   cp_put16(data+2,1);data[12]=CP_APPLIED;cp_put16(data+14,1);cp_put_float(data+8,(33.0f/64)*(33.0f/64));cp_put_float(data+16,(33.0f/64)*(33.0f/64));
   assert(peer.accept(data,20,7,220));assert(!peer.snapshot(220).volumePending);
   cp_header(data,CP_TRACK,0,7);cp_put32(data+8,123);assert(peer.accept(data,20,7,230));
+  assert(peer.snapshot(230).starKnown&&peer.snapshot(230).starred);
+  cp_header(data,CP_STATE,0,8);data[9]=1;data[10]=cp_state_flags(true,123,false,0,true);
+  assert(!peer.accept(data,20,7,235)&&peer.snapshot(235).starred); // Stale session cannot unstar.
+  cp_put32(data+4,7);assert(peer.accept(data,20,7,236));
+  assert(peer.snapshot(236).starKnown&&!peer.snapshot(236).starred);
   cp_header(data,CP_TEXT,0,7);data[2]=0x81;data[8]=5;memcpy(data+9,"Title",5);
   assert(peer.accept(data,20,7,240));assert(!strcmp(peer.snapshot(240).title,"Title"));
   data[3]=62;data[8]=2;assert(!peer.accept(data,20,7,240));
@@ -22,7 +29,15 @@ int main(){
   assert(peer.accept(data,20,7,250));cp_header(data,CP_NAV_TEXT,1,7);data[9]=5;memcpy(data+10,"Focus",5);
   assert(peer.accept(data,20,7,250));assert(!strcmp(peer.snapshot(260).navigation.ui.focus,"Focus"));
   assert(!peer.snapshot(6000).fresh&&!peer.snapshot(6000).navigation.fresh);
+  assert(!peer.snapshot(6000).starKnown&&!peer.snapshot(6000).starred);
   peer.clear();assert(!peer.snapshot(6000).connected&&!peer.snapshot(6000).predictionReady);
+  assert(!peer.state.starSupported&&!peer.state.starKnown&&!peer.state.starred);
+  // Legacy hosts have no star feedback. Unknown is different from unstarred.
+  peer.state.connected=peer.state.secured=true;cp_header(data,CP_HELLO,0,7);
+  assert(peer.accept(data,20,7,6100)&&!peer.state.starSupported);
+  cp_header(data,CP_TRACK,0,7);cp_put32(data+8,123);assert(peer.accept(data,20,7,6100));
+  cp_header(data,CP_STATE,0,7);data[9]=1;data[10]=cp_state_flags(true,123,true,0,true);
+  assert(peer.accept(data,20,7,6101)&&!peer.snapshot(6101).starKnown&&!peer.snapshot(6101).starred);
 
   uint8_t frame[CP_USB_FRAME_BYTES],kind,out[CP_BLE_BYTES];cp_usb_encode(frame,CP_USB_DATA,data);
   for(unsigned chunk=1;chunk<=32;++chunk){
