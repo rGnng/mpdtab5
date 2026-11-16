@@ -19,3 +19,14 @@ under the [MIT license](../fonts/LICENSE.bootstrap-icons).
 Run `tools/gen_notification_icons.py` with CairoSVG 2.8.2 and Pillow 12.0.0
 to regenerate the 32 px alpha images in `app/ui/notification_icons.h`.
 The UI recolors these images for the active theme and rotates the sync icon.
+
+Context menu icons `list-arrow-to-bottom-expressive.svg` (Add to Queue) and
+`list-arrow-to-top-expressive.svg` (Play Next) are **nrk:list-arrow-to-bottom-expressive**
+and **nrk:list-arrow-to-top-expressive** from [NRK Core Icons](https://github.com/nrkno/core-icons),
+by Norsk rikskringkasting, under [CC BY 4.0](LICENSE.nrk-core-icons).
+The original SVG paths are retained; the translucent list lines are made
+opaque, and the images are resized and recolored for this UI.
+
+Run `tools/gen_context_icons.py` with CairoSVG 2.8.2 and Pillow 12.0.0 to
+regenerate `app/ui/context_icons.h`. These 32 px A8 images retain transparency
+and follow the context menu's theme and focus colors.

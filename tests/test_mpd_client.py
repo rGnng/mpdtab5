@@ -74,6 +74,14 @@ static uint32_t parsed_queue_ids[QUEUE_LIMIT];
 static uint64_t queue_keys[QUEUE_LIMIT];
 static uint32_t queue_ids[QUEUE_LIMIT], queue_revision;
 static int queue_size;
+static uint32_t queue_epoch=1;
+static int queue_priority_support=-1;
+static uint32_t *queue_next_ids;
+static int queue_next_count;
+static uint32_t queue_next_head;
+static bool queue_next_head_valid;
+static bool queue_next_tick(uint32_t current,bool valid,bool random);
+static void queue_next_queue_changed(void);
 static bool queue_refresh_pending,stars_refresh_pending;
 static uint64_t *star_keys;
 static int star_count;
@@ -109,6 +117,7 @@ void test_init(int fd) {
     free(star_keys);star_keys=NULL;star_count=0;star_revision=0;stars_refresh_pending=false;
     coloplay_volume_completed=0;volume_steps=16;memset(&volume_cursor,0,sizeof(volume_cursor));server_volume=-1;volume_integer_only=false;muted_volume=0.5f;
     complete_count=0;
+    free(queue_next_ids);queue_next_ids=NULL;queue_next_count=0;queue_next_head_valid=false;queue_priority_support=-1;queue_epoch=1;
     diagnostic[0]=0; mpd_wire_init(&wire); mpd_wire_attach(&wire,fd,1000);
 }
 int test_sync_queue(unsigned size,unsigned budget) {
@@ -140,6 +149,10 @@ int test_sync(void) { return sync_library(); }
 int test_run(int kind,uint64_t *keys,int count,int start) {
     command_t c={.kind=kind,.keys=keys,.count=count,.start=start,.queue_id=(uint32_t)start}; return run_command(&c);
 }
+int test_queue_add(uint64_t *keys,int count,int next) { return queue_add_selection(keys,count,next); }
+int test_queue_edit(uint32_t id,int remove,int epoch) { return queue_edit_entry(((uint64_t)epoch<<32)|id,remove); }
+int test_priority_tick(uint32_t id,int valid) { return queue_next_tick(id,valid,true); }
+void test_queue_removed_head(void) { queue_size=0;queue_next_queue_changed(); }
 int test_run_shuffled(uint64_t *keys,int count) {
     command_t c={.kind=CMD_PLAY,.keys=keys,.count=count,.shuffle=true};return run_command(&c);
 }
@@ -187,6 +200,7 @@ unsigned test_queue_entry_id(int i) { return parsed_queue_ids[i]; }
 int test_item_count(void) { return item_count; }
 int test_playlist_count(void) { return playlist_count; }
 const char *test_message(void) { return diagnostic; }
+const char *test_wire_error(void) { return wire.error; }
 '''
 
 class ClientTest(unittest.TestCase):
@@ -206,11 +220,12 @@ static uint16_t uri_slots[URI_SLOTS];
 static char uri_pool[URI_BYTES];
 static unsigned uri_count,uri_used;
 '''
+        queue_types=re.search(r'typedef struct \{ int position; uint32_t id; bool have_id; \} queue_entry_info_t;',SOURCE).group()+'\n'+re.search(r'typedef struct \{ uint32_t \*ids;int count,capacity; \} queue_added_t;',SOURCE).group()+'\n'
         functions='\n'.join(function(SOURCE,name) for name in [
             'publish','uri_lookup','uri_insert','song_reset','song_finish','song_field',
             'status_field','stat_field','simple','sync_library','sync_queue','star_position',
-            'sync_stars','change_star','playlist_field','sync_playlists','play_selection','poll_state','set_volume','run_command','coloplay_volume_complete'])
-        (directory/'client.c').write_text(PREFIX+globals_+command_type+song_type+functions+SUFFIX)
+            'sync_stars','change_star','playlist_field','sync_playlists','play_selection','poll_state','set_volume','queue_next_queue_changed','queue_priority_field','queue_priority_capability','queue_next_tick','queue_next_install','queue_added_field','queue_entry_field','queue_add_selection','queue_edit_entry','run_command','coloplay_volume_complete'])
+        (directory/'client.c').write_text(PREFIX+globals_+command_type+song_type+queue_types+functions+SUFFIX)
         subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Wno-unused-function','-shared','-fPIC',
                         '-I'+str(directory),'-I'+str(ROOT/'app/mpd'),'-I'+str(ROOT/'app/backend'),
                         '-I'+str(ROOT/'firmware/main'),str(directory/'client.c'),
@@ -227,7 +242,7 @@ static unsigned uri_count,uri_used;
         cls.lib.test_coloplay.argtypes=[C.c_int,C.c_int,C.c_int,C.c_int,C.c_int,C.c_int,C.c_uint32]
         for name in ['test_track_key','test_album_key']:
             getattr(cls.lib,name).restype=C.c_uint64
-        for name in ['test_title','test_artist','test_message','test_playlist_name']:
+        for name in ['test_title','test_artist','test_message','test_playlist_name','test_wire_error']:
             getattr(cls.lib,name).restype=C.c_char_p
 
     @classmethod
@@ -532,6 +547,98 @@ static unsigned uri_count,uri_used;
             self.server([(f'command_list_begin\nrepeat {repeat}\nsingle {single}\ncommand_list_end\n'.encode(),b'OK\n')])
             self.assertEqual(self.lib.test_toggle(b'@repeat',mode,50,0),1)
             self.threads[-1].join()
+
+    @staticmethod
+    def queue_poll(position=1,count=4,random=0):
+        song=f'song: {position}\nsongid: 7\n' if position>=0 else ''
+        current=b'file: playing.flac\nId: 7\nTitle: Playing\nOK\n' if position>=0 else b'OK\n'
+        return [(b'status\n',f'state: pause\nrandom: {random}\nplaylistlength: {count}\n{song}OK\n'.encode()),
+                (b'currentsong\n',current)]
+
+    def test_append_preserves_queue_playback_and_selection_order(self):
+        paths=[b'album/one.flac',b'album/two.flac']
+        keys=(C.c_uint64*2)(*[self.lib.test_insert(p) for p in paths])
+        self.server(self.queue_poll(random=1)+[(b'command_list_begin\naddid "album/one.flac" 4\naddid "album/two.flac" 5\ncommand_list_end\n',b'Id: 11\nId: 12\nOK\n')])
+        self.assertEqual(self.lib.test_queue_add(keys,2,0),1)
+        self.assertTrue(self.lib.test_queue_pending())
+
+    def test_play_next_tracks_shuffle_uses_explicit_insertions(self):
+        keys=(C.c_uint64*2)(self.lib.test_insert(b'a.flac'),self.lib.test_insert(b'b.flac'))
+        self.server(self.queue_poll(random=1)+[(b'commands\n',b'command: addid\ncommand: moveid\nOK\n'),
+            (b'command_list_begin\naddid "a.flac" 2\naddid "b.flac" 3\ncommand_list_end\n',b'Id: 11\nId: 12\nOK\n')])
+        self.assertEqual(self.lib.test_queue_add(keys,2,1),1)
+
+    def test_play_next_empty_queue_inserts_at_front_without_play(self):
+        keys=(C.c_uint64*1)(self.lib.test_insert(b'a.flac'))
+        self.server(self.queue_poll(-1,0)+[(b'command_list_begin\naddid "a.flac" 0\ncommand_list_end\n',b'Id: 0\nOK\n')])
+        self.assertEqual(self.lib.test_queue_add(keys,1,1),1)
+
+    def test_play_next_random_prioritizes_each_track_in_order(self):
+        keys=(C.c_uint64*2)(self.lib.test_insert(b'a.flac'),self.lib.test_insert(b'b.flac'))
+        self.server(self.queue_poll(random=1)+[(b'commands\n',b'command: prioid\nOK\n'),
+            (b'command_list_begin\naddid "a.flac" 2\naddid "b.flac" 3\ncommand_list_end\n',b'Id: 0\nId: 12\nOK\n'),
+            (b'prioid 255 0\n',b'OK\n'),(b'prioid 255 12\n',b'OK\n')])
+        self.assertEqual(self.lib.test_queue_add(keys,2,1),1)
+        self.assertEqual(self.lib.test_priority_tick(0,1),1)
+        self.assertEqual(self.lib.test_priority_tick(12,1),1)
+
+    def test_new_play_next_precedes_unplayed_previous_request(self):
+        a=(C.c_uint64*1)(self.lib.test_insert(b'a.flac'))
+        b=(C.c_uint64*1)(self.lib.test_insert(b'b.flac'))
+        exchanges=self.queue_poll(random=1)+[(b'commands\n',b'command: prioid\nOK\n'),
+            (b'command_list_begin\naddid "a.flac" 2\ncommand_list_end\n',b'Id: 10\nOK\n'),(b'prioid 255 10\n',b'OK\n')]
+        exchanges+=self.queue_poll(count=5,random=1)+[(b'command_list_begin\naddid "b.flac" 2\ncommand_list_end\n',b'Id: 11\nOK\n'),
+            (b'prioid 0 10\n',b'OK\n'),(b'prioid 255 11\n',b'OK\n'),(b'prioid 255 10\n',b'OK\n')]
+        self.server(exchanges)
+        self.assertEqual(self.lib.test_queue_add(a,1,1),1)
+        self.assertEqual(self.lib.test_queue_add(b,1,1),1)
+        self.assertEqual(self.lib.test_priority_tick(11,1),1)
+
+    def test_removed_priority_head_advances_to_remaining_request(self):
+        keys=(C.c_uint64*2)(self.lib.test_insert(b'a.flac'),self.lib.test_insert(b'b.flac'))
+        self.server(self.queue_poll(random=1)+[(b'commands\n',b'command: prioid\nOK\n'),
+            (b'command_list_begin\naddid "a.flac" 2\naddid "b.flac" 3\ncommand_list_end\n',b'Id: 10\nId: 12\nOK\n'),
+            (b'prioid 255 10\n',b'OK\n'),(b'prioid 255 10\n',b'ACK [50@0] {prioid} No such song\n'),
+            (b'prioid 255 12\n',b'OK\n')])
+        self.assertEqual(self.lib.test_queue_add(keys,2,1),1)
+        self.lib.test_queue_removed_head()
+        self.assertEqual(self.lib.test_priority_tick(7,1),1,self.lib.test_wire_error())
+
+    def test_queue_remove_addresses_duplicate_by_entry_id_including_zero(self):
+        self.server([(b'deleteid 0\n',b'OK\n')])
+        self.assertEqual(self.lib.test_queue_edit(0,1,1),1)
+
+    def test_old_connection_queue_entry_is_rejected_without_io(self):
+        self.assertEqual(self.lib.test_queue_edit(99,1,2),1)
+        self.assertIn(b'connection changed',self.lib.test_message())
+
+    def test_move_queue_uses_latest_server_position_without_duplicating(self):
+        self.server(self.queue_poll()+[(b'playlistid 99\n',b'Id: 99\nPos: 3\nOK\n'),(b'moveid 99 2\n',b'OK\n')])
+        self.assertEqual(self.lib.test_queue_edit(99,0,1),1)
+
+    def test_move_entry_before_current_adjusts_destination(self):
+        self.server(self.queue_poll(2)+[(b'playlistid 99\n',b'Id: 99\nPos: 0\nOK\n'),(b'moveid 99 2\n',b'OK\n')])
+        self.assertEqual(self.lib.test_queue_edit(99,0,1),1)
+
+    def test_move_current_entry_is_noop_after_playback_advances(self):
+        self.server(self.queue_poll()+[(b'playlistid 7\n',b'Id: 7\nPos: 1\nOK\n')])
+        self.assertEqual(self.lib.test_queue_edit(7,0,1),1)
+        self.assertIn(b'already playing',self.lib.test_message())
+
+    def test_stale_library_selection_never_changes_existing_queue(self):
+        keys=(C.c_uint64*1)(999)
+        self.assertEqual(self.lib.test_queue_add(keys,1,0),1)
+        self.assertIn(b'Selection changed',self.lib.test_message())
+
+    def test_large_append_is_batched_without_clearing_or_starting_playback(self):
+        paths=[f'Music/{i}.flac'.encode() for i in range(205)]
+        keys=(C.c_uint64*len(paths))(*[self.lib.test_insert(p) for p in paths])
+        exchanges=self.queue_poll()
+        for start in range(0,len(paths),100):
+            commands=b'command_list_begin\n'+b''.join(b'addid "'+p+b'" '+str(4+i).encode()+b'\n' for i,p in enumerate(paths[start:start+100],start))+b'command_list_end\n'
+            exchanges.append((commands,b'OK\n'))
+        self.server(exchanges)
+        self.assertEqual(self.lib.test_queue_add(keys,len(paths),0),1)
 
     @staticmethod
     def volume_poll(level):

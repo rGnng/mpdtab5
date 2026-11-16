@@ -81,6 +81,23 @@ They do nothing on Now Playing with the queue closed. **[** and **]** retain
 tab navigation; **[** on Now Playing toggles Up Next. The web **Up Next** button
 uses a separate queue action.
 
+Press **C** (including ColoPlay's Context binding), or hold a touch row, to open
+its context menu. Albums and artists offer **Play**, **Shuffle Play**,
+**Add to Queue**, and **Play Next**. Song rows in Albums, Artists, and Songs
+offer **Play**, **Add to Queue**, **Play Next**, **Star/Unstar**, and navigation
+to that song's album/artist. These actions use the selected item, including
+when another song is playing. Releasing a touch hold does not activate the row.
+
+**Add to Queue** appends without interrupting playback. **Play Next** inserts
+after the current track, or at the front without starting playback when there
+is no current track. Album/artist additions preserve their displayed song order.
+In Up Next, the context menu offers **Play Next** and **Remove from Queue**:
+moving an entry does not duplicate it, and removal uses its server queue-entry
+ID so duplicate songs are distinguishable. Menus retain the page's selection
+and viewport; a page rebuild safely dismisses a menu that belongs to it.
+Tracks uses explicit queue positions. Standard MPD random mode uses `prioid`
+when advertised, promoting each requested next entry as playback advances.
+
 Tap or drag the Now Playing progress bar to seek, including with Up Next open.
 The position previews while dragging and sends one seek on release. Paused
 playback stays paused; changing track or leaving the view cancels an unfinished drag.

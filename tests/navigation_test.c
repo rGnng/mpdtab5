@@ -233,6 +233,165 @@ static void now_playing_keys(void)
           "Page keys immediately after switching to Now Playing must leave Up Next closed");
 }
 
+static int menu_item_named(const char *name)
+{
+    for(int i=0;i<g_ctx_menu_item_count;i++)
+        if(!strcmp(lv_label_get_text(g_ctx_menu_items[i].label),name)) return i;
+    return -1;
+}
+static void menu_choose(const char *name)
+{
+    int index=menu_item_named(name);
+    check(index>=0,"Requested context action must exist");
+    context_menu_focus_set(index);ui_handle_key(UI_KEY_ENTER);pump(300);
+}
+static void menu_open_key(context_kind_t kind,uint64_t id)
+{
+    ui_handle_key(UI_KEY_CONTEXT);pump(30);
+    check(g_ctx_menu_open && g_ctx_target.kind==kind && g_ctx_target.id==id,
+          "Context must capture the selected entity, not the playing song");
+    lv_area_t bounds;lv_obj_get_coords(lv_obj_get_parent(g_ctx_menu_items[0].row),&bounds);
+    check(bounds.y1>=0 && bounds.y2<SCREEN_H,"Context menu must fit the screen in every theme");
+}
+static void hold_row_for_menu(lv_obj_t *row,context_kind_t kind,uint64_t id)
+{
+    check(row && lv_obj_is_visible(row),"Long-press fixture needs a visible row");
+    lv_area_t bounds;lv_obj_get_coords(row,&bounds);
+    pointer((bounds.x1+bounds.x2)/2,(bounds.y1+bounds.y2)/2,true);
+    pump(650);
+    check(g_ctx_menu_open && g_ctx_target.kind==kind && g_ctx_target.id==id,
+          "Holding a row must open context for that exact row");
+    pointer(touch_point.x,touch_point.y,false);pump(100);
+    check(g_ctx_menu_open,"Releasing a context hold must not run its ordinary click");
+}
+static void library_context_menus(void)
+{
+    player_album_t album;player_track_t track,other;player_artist_t artist;
+    check(player_album_get(0,&album),"Context fixture needs an album");
+    player_play_album(album.id);player_queue_jump(0);player_seek_sec(10);
+    player_snapshot_t before,after;player_get_snapshot(&before);
+    ui_select_screen(SCR_ALBUMS);pump(600);albums_select(0);pump(100);
+    int scroll=lv_obj_get_scroll_y(albums_left_list),selected=albums_selected;
+    menu_open_key(CTX_ALBUM,album.id);
+    int add_icon=menu_item_named("Add to Queue"),next_icon=menu_item_named("Play Next");
+    check(add_icon>=0 && next_icon>=0 &&
+          lv_obj_check_type(g_ctx_menu_items[add_icon].icon,&lv_image_class) &&
+          lv_image_get_src(g_ctx_menu_items[add_icon].icon)==&context_add_to_queue &&
+          lv_image_get_src(g_ctx_menu_items[next_icon].icon)==&context_play_next,
+          "Queue actions must use the requested NRK icon assets");
+    context_menu_focus_set(add_icon);
+    check(lv_color_eq(lv_obj_get_style_image_recolor(g_ctx_menu_items[add_icon].icon,0),lv_color_hex(COL_TEXT)) &&
+          lv_color_eq(lv_obj_get_style_image_recolor(g_ctx_menu_items[next_icon].icon,0),lv_color_hex(COL_MUTED)),
+          "Image icons must use the same focused and unfocused colors as menu glyphs");
+    context_menu_focus_set(0);
+    check(menu_item_named("Play")>=0 && menu_item_named("Shuffle Play")>=0 &&
+          menu_item_named("Add to Queue")>=0 && menu_item_named("Play Next")>=0,
+          "Album menus must expose playback and queue actions");
+    ui_handle_key(UI_KEY_BACK);
+    check(albums_selected==selected && lv_obj_get_scroll_y(albums_left_list)==scroll,
+          "Dismissing context must preserve album selection and viewport");
+    int count=player_queue_count();
+    menu_open_key(CTX_ALBUM,album.id);menu_choose("Add to Queue");
+    check(player_queue_count()==count+player_album_track_count(album.id),"Add album must append its complete track list");
+    for(int i=0;i<player_album_track_count(album.id);i++) {
+        player_album_track_get(album.id,i,&track);player_queue_at(count+i,&other);
+        check(track.id==other.id,"Appended album must preserve its display order");
+    }
+    player_get_snapshot(&after);
+    check(after.track.id==before.track.id && after.elapsed_sec>=before.elapsed_sec,
+          "Appending an album must preserve playback position");
+    albums_open((void *)(intptr_t)0);pump(300);
+    int track_focus=-1;
+    for(int i=0;i<g_focus_count;i++) if(g_focus[i].activate==albums_track_action && (intptr_t)g_focus[i].user==1) {track_focus=i;break;}
+    check(track_focus>=0 && player_album_track_get(album.id,1,&track),"Album detail needs a second song");
+    focus_select(track_focus);menu_open_key(CTX_TRACK,track.id);
+    bool starred=player_track_starred(track.id),playing_star=player_track_starred(before.track.id);
+    menu_choose(starred ? "Unstar" : "Star");
+    check(player_track_starred(track.id)!=starred && player_track_starred(before.track.id)==playing_star,
+          "Starring a detail song must not change the currently playing song's star");
+    ui_handle_key(UI_KEY_BACK);
+    menu_open_key(CTX_TRACK,track.id);menu_choose("Play Next");
+    player_queue_at(player_queue_index()+1,&other);
+    check(other.id==track.id,"Song Play Next must insert after the current song");
+
+    ui_select_screen(SCR_ARTISTS);pump(600);artists_select(0);pump(150);
+    check(player_artist_get(0,&artist),"Context fixture needs an artist");
+    menu_open_key(CTX_ARTIST,artist.id);count=player_queue_count();menu_choose("Add to Queue");
+    check(player_queue_count()==count+player_artist_song_count(artist.id),"Add artist must append all its songs");
+    for(int i=0;i<player_artist_song_count(artist.id);i++) {
+        player_artist_song_get(artist.id,i,&track);player_queue_at(count+i,&other);
+        check(track.id==other.id,"Appended artist must preserve displayed song order");
+    }
+    artists_open((void *)(intptr_t)0);pump(300);
+    track_focus=-1;
+    for(int i=0;i<g_focus_count;i++) if(g_focus[i].activate==artists_track_action) {track_focus=i;break;}
+    check(track_focus>=0,"Artist detail needs a song focus target");
+    focus_select(track_focus);player_artist_song_get(artist.id,(int)(intptr_t)g_focus[track_focus].user,&track);
+    menu_open_key(CTX_TRACK,track.id);ui_handle_key(UI_KEY_BACK);
+
+    ui_select_screen(SCR_SONGS);pump(600);songs_select(2);pump(100);
+    player_song_get(2,&track);menu_open_key(CTX_TRACK,track.id);
+    uint64_t captured=track.id;
+    player_next();pump(100);
+    check(g_ctx_menu_open && g_ctx_target.id==captured,"A track change must not redirect an open song menu");
+    menu_choose("Add to Queue");player_queue_at(player_queue_count()-1,&other);
+    check(other.id==captured,"An action after a track change must still target the captured selection");
+    menu_open_key(CTX_TRACK,captured);menu_choose("Go to album");
+    player_album_get(albums_selected,&album);
+    check(g_current_screen==SCR_ALBUMS && albums_detail_open && album.id==track.album_id,
+          "Song Go to album must navigate using the selected song");
+
+    ui_select_screen(SCR_NOW_PLAYING);pump(500);
+    if(!np_queue_visible) {ui_handle_key(UI_KEY_QUEUE);pump(600);}
+    check(g_focus_count>np_queue_focus_start+2,"Queue context fixture needs several upcoming entries");
+    focus_select(np_queue_focus_start+2);
+    int index=(int)(intptr_t)g_focus[g_focus_index].user;
+    player_queue_at(index,&track);uint64_t entry=player_queue_entry(index);
+    menu_open_key(CTX_QUEUE,track.id);
+    check(g_ctx_target.entry==entry,"Queue menu must capture an occurrence ID");
+    count=player_queue_count();menu_choose("Play Next");pump(600);
+    check(player_queue_count()==count && player_queue_entry(player_queue_index()+1)==entry,
+          "Queue Play Next must move the occurrence without adding a duplicate");
+    focus_select(np_queue_focus_start);
+    player_queue_at((int)(intptr_t)g_focus[g_focus_index].user,&track);
+    menu_open_key(CTX_QUEUE,track.id);menu_choose("Remove from Queue");pump(600);
+    check(player_queue_count()==count-1,"Queue Remove must remove one occurrence");
+    for(int i=0;i<player_queue_count();i++) check(player_queue_entry(i)!=entry,"Remove must address the selected occurrence");
+
+    touch=lv_indev_create();lv_indev_set_type(touch,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(touch,lv_display_get_default());lv_indev_set_read_cb(touch,read_touch);ui_set_touch_enabled(true);ui_attach_touch(touch);
+    ui_select_screen(SCR_ALBUMS);pump(600);albums_select(0);pump(100);player_album_get(0,&album);
+    lv_obj_t *row=NULL;
+    for(int i=0;i<ALBUMS_POOL;i++) if(albums_row_indices[i]==0)row=albums_rows[i];
+    hold_row_for_menu(row,CTX_ALBUM,album.id);ui_handle_key(UI_KEY_BACK);
+    check(!albums_detail_open,"Album context hold must not open detail on release");
+    albums_open((void *)(intptr_t)0);pump(300);
+    for(int i=0;i<g_focus_count;i++) if(g_focus[i].activate==albums_track_action && (intptr_t)g_focus[i].user==1) {row=g_focus[i].obj;break;}
+    player_album_track_get(album.id,1,&track);
+    player_get_snapshot(&before);hold_row_for_menu(row,CTX_TRACK,track.id);ui_handle_key(UI_KEY_BACK);
+    player_get_snapshot(&after);check(before.track.id==after.track.id,"Song context hold must not start playback");
+    ui_select_screen(SCR_SONGS);pump(600);songs_select(0);pump(100);player_song_get(1,&track);
+    row=NULL;for(int i=0;i<SONGS_POOL;i++)if(songs_row_indices[i]==1)row=songs_rows[i];
+    hold_row_for_menu(row,CTX_TRACK,track.id);ui_handle_key(UI_KEY_BACK);
+    ui_select_screen(SCR_ARTISTS);pump(600);artists_select(0);pump(100);player_artist_get(0,&artist);
+    row=NULL;for(int i=0;i<ARTISTS_POOL;i++)if(artists_row_indices[i]==0)row=artists_rows[i];
+    hold_row_for_menu(row,CTX_ARTIST,artist.id);ui_handle_key(UI_KEY_BACK);
+    artists_open((void *)(intptr_t)0);pump(300);
+    for(int i=0;i<g_focus_count;i++) if(g_focus[i].activate==artists_track_action) {
+        row=g_focus[i].obj;player_artist_song_get(artist.id,(int)(intptr_t)g_focus[i].user,&track);break;
+    }
+    hold_row_for_menu(row,CTX_TRACK,track.id);ui_handle_key(UI_KEY_BACK);
+    ui_select_screen(SCR_NOW_PLAYING);pump(500);
+    if(!np_queue_visible) {ui_handle_key(UI_KEY_QUEUE);pump(600);}
+    check(g_focus_count>np_queue_focus_start,"Queue long press needs an upcoming entry");
+    row=g_focus[np_queue_focus_start].obj;
+    player_queue_at((int)(intptr_t)g_focus[np_queue_focus_start].user,&track);
+    hold_row_for_menu(row,CTX_QUEUE,track.id);ui_handle_key(UI_KEY_BACK);
+    ui_handle_key(UI_KEY_QUEUE);pump(300);
+    ui_attach_touch(NULL);lv_indev_delete(touch);touch=NULL;
+    player_play_album(album.id);
+}
+
 static void context_album_delayed_refresh(void)
 {
     ui_select_screen(SCR_NOW_PLAYING);pump(400);
@@ -956,7 +1115,7 @@ int main(int argc,char **argv)
     ui_apply_saved_settings(&config);ui_init();pump(600);
     check(g_system_config.fast_scroll_hold_ms==300,"Missing hold configuration must default to 300 ms");
     check(g_system_config.fast_scroll_trigger_window_ms==550,"Missing trigger configuration must default to 550 ms");
-    alpha_fade();now_playing_keys();context_album_delayed_refresh();mini_unchanged_poll();artist_viewport();scrollbar_views();pressed_controls();fast_navigation();
+    alpha_fade();now_playing_keys();library_context_menus();context_album_delayed_refresh();mini_unchanged_poll();artist_viewport();scrollbar_views();pressed_controls();fast_navigation();
     cursor_band_views();settings_widget_lifetime();rapid_tab_navigation();sort_order_settings();
     album_pane_retention();
     pagination_views();

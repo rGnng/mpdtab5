@@ -2066,6 +2066,118 @@ void player_play_all_shuffled(void)
     play_ids_start(n, true);
 }
 
+bool player_track_starred(uint64_t id)
+{
+#if defined(ESP_PLATFORM)
+    if(mpd_client_is_enabled()) return mpd_client_track_starred(id);
+#endif
+    int index=track_index_by_id(id);
+    return index>=0 && track_starred[index];
+}
+
+bool player_toggle_track_star(uint64_t id)
+{
+    if(!id) return false;
+#if defined(ESP_PLATFORM)
+    if(mpd_client_is_enabled()) return mpd_client_toggle_star(id)==ESP_OK;
+#endif
+    int index=track_index_by_id(id);
+    if(index<0) return false;
+    track_starred[index]=!track_starred[index];
+    live_playlist_revision++;
+#if defined(ESP_PLATFORM)
+    if(app_config_sd_ready()) star_store_update(app_config_library_stars_path(),
+        app_config_library_id(),device_name,&tracks[index],track_starred[index]);
+#endif
+    bump_revision();
+    return true;
+}
+
+#if !defined(ESP_PLATFORM)
+static uint64_t mock_queue_entries[MAX_QUEUE],mock_queue_sequence;
+static uint32_t mock_queue_revision=UINT32_MAX;
+static void mock_queue_sync_entries(void)
+{
+    if(mock_queue_revision==queue_rev) return;
+    for(int i=0;i<queue_count;i++) mock_queue_entries[i]=++mock_queue_sequence;
+    mock_queue_revision=queue_rev;
+}
+#endif
+
+uint64_t player_queue_entry(int index)
+{
+#if defined(ESP_PLATFORM)
+    return mpd_client_is_enabled() ? mpd_client_queue_entry(index) : 0;
+#else
+    if(index<0 || index>=queue_count) return 0;
+    mock_queue_sync_entries();
+    return mock_queue_entries[index];
+#endif
+}
+
+bool player_queue_add(player_selection_t type,uint64_t id,bool next)
+{
+    int count=0;
+    if(type==PLAYER_SELECTION_ALBUM) count=ids_album_from(id,0,play_ids,PLAY_IDS_MAX);
+    else if(type==PLAYER_SELECTION_ARTIST) count=ids_artist_display(id,play_ids,PLAY_IDS_MAX);
+    else if(type==PLAYER_SELECTION_TRACK && track_index_by_id(id)>=0) { play_ids[0]=id;count=1; }
+    if(count<=0) return false;
+#if defined(ESP_PLATFORM)
+    return mpd_client_is_enabled() && mpd_client_queue_add(play_ids,count,next)==ESP_OK;
+#else
+    if(count>MAX_QUEUE-queue_count) return false;
+    mock_queue_sync_entries();
+    int position=next ? (queue_count && queue_index>=0 ? queue_index+1 : 0) : queue_count;
+    memmove(queue+position+count,queue+position,(queue_count-position)*sizeof(*queue));
+    memmove(mock_queue_entries+position+count,mock_queue_entries+position,
+            (queue_count-position)*sizeof(*mock_queue_entries));
+    memcpy(queue+position,play_ids,count*sizeof(*queue));
+    for(int i=0;i<count;i++) mock_queue_entries[position+i]=++mock_queue_sequence;
+    if(!queue_count) queue_index=-1;
+    queue_count+=count;
+    queue_rev++;mock_queue_revision=queue_rev;
+    bump_revision();
+    return true;
+#endif
+}
+
+bool player_queue_edit(uint64_t entry,bool remove)
+{
+#if defined(ESP_PLATFORM)
+    return mpd_client_is_enabled() && mpd_client_queue_edit(entry,remove)==ESP_OK;
+#else
+    mock_queue_sync_entries();
+    int from=-1;
+    for(int i=0;i<queue_count;i++) if(mock_queue_entries[i]==entry) { from=i;break; }
+    if(from<0 || (!remove && from==queue_index)) return false;
+    uint64_t current=queue_index>=0 && queue_index<queue_count ? mock_queue_entries[queue_index] : 0;
+    uint64_t track=queue[from];
+    memmove(queue+from,queue+from+1,(queue_count-from-1)*sizeof(*queue));
+    memmove(mock_queue_entries+from,mock_queue_entries+from+1,
+            (queue_count-from-1)*sizeof(*mock_queue_entries));
+    queue_count--;
+    if(!remove) {
+        int position=queue_index>=0 ? queue_index+1 : 0;
+        if(queue_index>=0 && from<queue_index) position--;
+        if(position>queue_count) position=queue_count;
+        memmove(queue+position+1,queue+position,(queue_count-position)*sizeof(*queue));
+        memmove(mock_queue_entries+position+1,mock_queue_entries+position,
+                (queue_count-position)*sizeof(*mock_queue_entries));
+        queue[position]=track;mock_queue_entries[position]=entry;queue_count++;
+    }
+    queue_index=-1;
+    for(int i=0;i<queue_count;i++) if(mock_queue_entries[i]==current) queue_index=i;
+    if(remove && current==entry) {
+        if(queue_count) queue_index=from<queue_count ? from : queue_count-1;
+        else status=PLAYER_STOPPED;
+        elapsed_sec=0;
+    }
+    queue_rev++;mock_queue_revision=queue_rev;
+    bump_revision();
+    return true;
+#endif
+}
+
 void player_queue_jump(int index)
 {
 #if defined(ESP_PLATFORM)

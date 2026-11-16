@@ -6,6 +6,7 @@
 
 #include "icons.h"
 #include "notification_icons.h"
+#include "context_icons.h"
 #include "fonts/inter_fonts.h"
 #include "plug_art.h"
 #include "player.h"
@@ -2453,6 +2454,11 @@ static bool ui_screen_enabled(screen_id_t id);
 static void ui_rebuild_page(void);
 static bool ui_list_page(int direction);
 static void np_toggle_queue(void);
+enum { CTX_TOUCH_ALBUM, CTX_TOUCH_ARTIST, CTX_TOUCH_ALBUM_TRACK,
+       CTX_TOUCH_ARTIST_TRACK, CTX_TOUCH_SONG, CTX_TOUCH_QUEUE };
+static void context_touch_bind(lv_obj_t *row,int type,int index);
+static bool songs_context_track(player_track_t *track);
+static void context_menu_refresh(void);
 static void context_menu_open(void);
 static void context_menu_close(void);
 static bool context_menu_key(ui_key_t key);
@@ -3314,6 +3320,7 @@ static void ui_tick_cb(lv_timer_t * timer)
     uint32_t perf_t5 = 0, perf_t6 = 0;
 
     update_clock();
+    context_menu_refresh();
     if(g_ui_trace) perf_t1 = perf_now();
     status_area_update();
     if(g_dev_state_dirty) {
@@ -4319,6 +4326,7 @@ static void np_queue_row(lv_obj_t * parent, int queue_index)
     ui_text_clip(artist);
 
     focus_add_clickable(row, np_queue_action, NULL, (void *)(intptr_t)queue_index, true);
+    context_touch_bind(row,CTX_TOUCH_QUEUE,queue_index);
     if(g_ui_trace) np_queue_widget_us += perf_now() - widget_start;
 }
 
@@ -5026,7 +5034,7 @@ static void np_create(lv_obj_t * parent)
         lv_obj_set_style_pad_row(np_queue_list, 0, 0);
         int total = player_queue_count();
         np_queue_fill_current = player_queue_index();
-        int start = np_queue_fill_current >= 0 ? np_queue_fill_current + 1 : total;
+        int start = np_queue_fill_current >= 0 ? np_queue_fill_current + 1 : 0;
         np_queue_fill_next = start;
         np_queue_fill_end = total < start + NP_QUEUE_MAX_ROWS ? total : start + NP_QUEUE_MAX_ROWS;
         np_queue_fill_rev = player_queue_revision();
@@ -5945,6 +5953,7 @@ static void albums_render_detail(lv_obj_t * parent, bool interactive)
         else {
             touch_add_clickable(row, albums_track_touch_cb, (void *)(intptr_t)i);
         }
+        context_touch_bind(row,CTX_TOUCH_ALBUM_TRACK,i);
     }
     if(max_tracks < track_count) {
         lv_obj_t * more = make_label(track_list, "More tracks not shown",
@@ -6082,6 +6091,7 @@ static void albums_create(lv_obj_t * parent)
         ui_text_fade(albums_row_artists[i]);
         ui_touch_pressed_bind(row);
         lv_obj_set_hidden(row, true);
+        context_touch_bind(row,CTX_TOUCH_ALBUM,-1);
         albums_rows[i] = row;
     }
 
@@ -6706,6 +6716,7 @@ static void artists_render_detail(lv_obj_t * parent, bool interactive)
             touch_add_clickable(header, artists_album_touch_cb,
                                 (void *)(intptr_t)album_index);
         }
+        context_touch_bind(header,CTX_TOUCH_ALBUM,album_index);
 
         for(int j = 0; j < track_rows; j++) {
             if(track_albums[j] != a) continue;
@@ -6747,6 +6758,7 @@ static void artists_render_detail(lv_obj_t * parent, bool interactive)
                 touch_add_clickable(row, artists_track_touch_cb,
                                     (void *)(intptr_t)track_index);
             }
+            context_touch_bind(row,CTX_TOUCH_ARTIST_TRACK,track_index);
         }
     }
 
@@ -6845,6 +6857,7 @@ static void artists_create(lv_obj_t * parent)
         artists_metas[i] = make_label(text, "", FONT_CAPTION, COL_MUTED);
         ui_touch_pressed_bind(row);
         lv_obj_set_hidden(row, true);
+        context_touch_bind(row,CTX_TOUCH_ARTIST,-1);
         artists_rows[i] = row;
     }
     lv_obj_add_event_cb(list, artists_scroll_cb, LV_EVENT_SCROLL, NULL);
@@ -6911,6 +6924,81 @@ static int g_ctx_star_item = -1;
 static int g_ctx_shuffle_item = -1;
 static int g_ctx_repeat_item = -1;
 
+typedef enum { CTX_NOW, CTX_ALBUM, CTX_ARTIST, CTX_TRACK, CTX_QUEUE } context_kind_t;
+typedef struct {
+    context_kind_t kind;
+    uint64_t id, album_id, artist_id, entry, parent_id;
+    screen_id_t source;
+    char title[96];
+} context_target_t;
+static context_target_t g_ctx_target;
+static uint32_t g_ctx_generation;
+
+static bool context_track(context_target_t *out,const player_track_t *track,screen_id_t source,uint64_t parent)
+{
+    if(!track->id) return false;
+    *out=(context_target_t){.kind=CTX_TRACK,.id=track->id,.album_id=track->album_id,
+        .artist_id=track->artist_id,.source=source,.parent_id=parent};
+    snprintf(out->title,sizeof(out->title),"%s",track->title);
+    return true;
+}
+
+static bool context_resolve(context_target_t *out,int type,int index)
+{
+    player_track_t track;
+    player_album_t album;
+    player_artist_t artist;
+    if(type==CTX_TOUCH_ALBUM && player_album_get(index,&album)) {
+        *out=(context_target_t){.kind=CTX_ALBUM,.id=album.id,.album_id=album.id,
+            .artist_id=album.artist_id,.source=g_current_screen};
+        snprintf(out->title,sizeof(out->title),"%s",album.title);return true;
+    }
+    if(type==CTX_TOUCH_ARTIST && player_artist_get(index,&artist)) {
+        *out=(context_target_t){.kind=CTX_ARTIST,.id=artist.id,.artist_id=artist.id,.source=g_current_screen};
+        snprintf(out->title,sizeof(out->title),"%s",artist.name);return true;
+    }
+    if(type==CTX_TOUCH_ALBUM_TRACK && player_album_get(albums_selected,&album) &&
+       player_album_track_get(album.id,index,&track)) return context_track(out,&track,SCR_ALBUMS,album.id);
+    if(type==CTX_TOUCH_ARTIST_TRACK && player_artist_get(artists_selected,&artist) &&
+       player_artist_song_get(artist.id,index,&track)) return context_track(out,&track,SCR_ARTISTS,artist.id);
+    if(type==CTX_TOUCH_SONG && player_song_get(index,&track)) return context_track(out,&track,SCR_SONGS,0);
+    if(type==CTX_TOUCH_QUEUE && np_last_queue_rev==player_queue_revision() && player_queue_at(index,&track)) {
+        if(!context_track(out,&track,SCR_NOW_PLAYING,0)) return false;
+        out->kind=CTX_QUEUE;out->entry=player_queue_entry(index);return out->entry!=0;
+    }
+    return false;
+}
+
+static bool context_capture(context_target_t *out)
+{
+    focus_item_t *focus=g_focus_index>=0 && g_focus_index<g_focus_count ? &g_focus[g_focus_index] : NULL;
+    int index=focus ? (int)(intptr_t)focus->user : -1;
+    if(g_current_screen==SCR_ALBUMS) {
+        if(albums_detail_open && focus && focus->activate==albums_track_action)
+            return context_resolve(out,CTX_TOUCH_ALBUM_TRACK,index);
+        return context_resolve(out,CTX_TOUCH_ALBUM,albums_selected);
+    }
+    if(g_current_screen==SCR_ARTISTS) {
+        if(artists_detail_open && focus && focus->activate==artists_track_action)
+            return context_resolve(out,CTX_TOUCH_ARTIST_TRACK,index);
+        if(artists_detail_open && focus && focus->activate==artists_album_action)
+            return context_resolve(out,CTX_TOUCH_ALBUM,index);
+        return context_resolve(out,CTX_TOUCH_ARTIST,artists_selected);
+    }
+    if(g_current_screen==SCR_SONGS) {
+        player_track_t track;
+        return songs_context_track(&track) && context_track(out,&track,SCR_SONGS,0);
+    }
+    if(g_current_screen==SCR_NOW_PLAYING) {
+        if(np_queue_visible && focus && focus->activate==np_queue_action)
+            return context_resolve(out,CTX_TOUCH_QUEUE,index);
+        player_snapshot_t snapshot;player_get_snapshot(&snapshot);
+        context_track(out,&snapshot.track,SCR_NOW_PLAYING,0);
+        out->kind=CTX_NOW;return true;
+    }
+    return false;
+}
+
 static int album_index_by_id(uint64_t album_id)
 {
     player_album_t album;
@@ -6939,16 +7027,17 @@ static void context_menu_focus_set(int index)
     for(int i = 0; i < g_ctx_menu_item_count; i++) {
         context_menu_item_t * item = &g_ctx_menu_items[i];
         bool focused = (i == index);
+        if(focused) lv_obj_scroll_to_view(item->row,LV_ANIM_OFF);
         theme_mark_selected(item->row, focused);
         lv_obj_set_style_bg_opa(item->row, focused ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
         lv_obj_set_style_bg_color(item->row, lv_color_hex(COL_FOCUS), 0);
         lv_obj_set_style_border_width(item->row, focused ? 3 : 0, 0);
         lv_obj_set_style_border_side(item->row, LV_BORDER_SIDE_LEFT, 0);
         lv_obj_set_style_border_color(item->row, lv_color_hex(COL_ACCENT), 0);
-        lv_obj_set_style_text_color(item->icon,
-                                    lv_color_hex(focused ? COL_TEXT
-                                                         : (item->active ? COL_ACCENT
-                                                                         : COL_MUTED)), 0);
+        lv_color_t icon_color=lv_color_hex(focused ? COL_TEXT : (item->active ? COL_ACCENT : COL_MUTED));
+        if(lv_obj_check_type(item->icon,&lv_image_class))
+            lv_obj_set_style_image_recolor(item->icon,icon_color,0);
+        else lv_obj_set_style_text_color(item->icon,icon_color,0);
         if(item->value) {
             lv_obj_set_style_text_color(item->value,
                                         lv_color_hex(item->active ? COL_ACCENT
@@ -6957,13 +7046,18 @@ static void context_menu_focus_set(int index)
     }
 }
 
+static void context_menu_activate(void);
+static void context_menu_activate_async(void *generation)
+{
+    if(g_ctx_menu_open && (uint32_t)(uintptr_t)generation==g_ctx_generation) context_menu_activate();
+}
 static void context_menu_item_click_cb(lv_event_t * event)
 {
     int index = (int)(intptr_t)lv_event_get_user_data(event);
     if(index < 0 || index >= g_ctx_menu_item_count) return;
     g_ctx_menu_focus = index;
     context_menu_item_t * item = &g_ctx_menu_items[index];
-    if(item->action) ui_call_async(item->action, NULL);
+    if(item->action) ui_call_async(context_menu_activate_async,(void *)(uintptr_t)g_ctx_generation);
 }
 
 static void context_menu_activate(void)
@@ -6989,7 +7083,9 @@ static void context_menu_group(lv_obj_t * parent, const char * title)
     lv_obj_set_flex_align(group, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scrollable(group, false);
-    make_label(group, title, FONT_GROUP, COL_MUTED);
+    lv_obj_t *label=make_label(group, title, FONT_GROUP, COL_MUTED);
+    lv_obj_set_width(label,LV_PCT(100));
+    ui_text_fade(label);
 }
 
 static int context_menu_item(lv_obj_t * parent, const char * icon,
@@ -7037,6 +7133,25 @@ static int context_menu_item(lv_obj_t * parent, const char * icon,
     return index;
 }
 
+static int context_menu_image_item(lv_obj_t *parent,const lv_image_dsc_t *source,
+                                   const char *text,focus_activate_fn action)
+{
+    int index=context_menu_item(parent,"",text,NULL,false,action);
+    if(index<0) return index;
+    context_menu_item_t *item=&g_ctx_menu_items[index];
+    lv_obj_delete(item->icon);
+    item->icon=lv_image_create(item->row);
+    lv_image_set_src(item->icon,source);
+    lv_obj_set_size(item->icon,34,32);
+    lv_image_set_inner_align(item->icon,LV_IMAGE_ALIGN_CENTER);
+    lv_obj_set_clickable(item->icon,false);
+    lv_obj_set_scrollable(item->icon,false);
+    lv_obj_set_style_image_recolor_opa(item->icon,LV_OPA_COVER,0);
+    lv_obj_set_style_image_recolor(item->icon,lv_color_hex(COL_MUTED),0);
+    lv_obj_move_to_index(item->icon,0);
+    return index;
+}
+
 static void context_menu_update_item(int index, const char * icon,
                                      const char * text, const char * value,
                                      bool active)
@@ -7053,9 +7168,7 @@ static void context_menu_update_item(int index, const char * icon,
 static void context_menu_go_album(void * user)
 {
     LV_UNUSED(user);
-    player_snapshot_t snapshot;
-    player_get_snapshot(&snapshot);
-    int index = album_index_by_id(snapshot.track.album_id);
+    int index = album_index_by_id(g_ctx_target.album_id);
     if(index < 0) return;
     context_menu_close();
     ui_show_screen(SCR_ALBUMS);
@@ -7070,9 +7183,7 @@ static void context_menu_go_album(void * user)
 static void context_menu_go_artist(void * user)
 {
     LV_UNUSED(user);
-    player_snapshot_t snapshot;
-    player_get_snapshot(&snapshot);
-    int index = artist_index_by_id(snapshot.track.artist_id);
+    int index = artist_index_by_id(g_ctx_target.artist_id);
     if(index < 0) return;
     context_menu_close();
     ui_show_screen(SCR_ARTISTS);
@@ -7082,18 +7193,66 @@ static void context_menu_go_artist(void * user)
     if(!g_page_loading) ui_rebuild_page();
 }
 
+static void context_menu_refresh(void)
+{
+    if(!g_ctx_menu_open || g_ctx_star_item<0) return;
+    bool starred=player_track_starred(g_ctx_target.id);
+    context_menu_item_t *item=&g_ctx_menu_items[g_ctx_star_item];
+    if(item->active==starred) return;
+    context_menu_update_item(g_ctx_star_item,starred ? ICON_STAR_FILL : ICON_STAR,
+                             starred ? "Unstar" : "Star",NULL,starred);
+}
+
 static void context_menu_star(void * user)
 {
     LV_UNUSED(user);
-    player_toggle_star();
-    np_refresh_ui();
+    if(!player_toggle_track_star(g_ctx_target.id)) ui_set_hint("Could not update star");
+    context_menu_refresh();
+    if(g_current_screen==SCR_NOW_PLAYING) np_refresh_ui();
+}
 
-    player_snapshot_t snapshot;
-    player_get_snapshot(&snapshot);
-    context_menu_update_item(g_ctx_star_item,
-                             snapshot.starred ? ICON_STAR_FILL : ICON_STAR,
-                             snapshot.starred ? "Unstar" : "Star",
-                             NULL, snapshot.starred);
+static void context_menu_play(void *user)
+{
+    LV_UNUSED(user);
+    context_target_t target=g_ctx_target;
+    context_menu_close();
+    if(target.kind==CTX_ALBUM) player_play_album(target.id);
+    else if(target.kind==CTX_ARTIST) player_play_artist(target.id);
+    else if(target.source==SCR_ALBUMS) {
+        int count=player_album_track_count(target.parent_id);
+        player_track_t track;
+        for(int i=0;i<count;i++) if(player_album_track_get(target.parent_id,i,&track) && track.id==target.id) {
+            player_play_album_from(target.parent_id,i);return;
+        }
+        ui_set_hint("Selection changed; reopen the menu");
+    }
+    else if(target.source==SCR_ARTISTS) player_play_artist_from(target.parent_id,target.id);
+    else player_play_song(target.id);
+}
+static void context_menu_shuffle_play(void *user)
+{
+    LV_UNUSED(user);context_target_t target=g_ctx_target;context_menu_close();
+    if(target.kind==CTX_ALBUM) player_play_album_shuffled(target.id);
+    else if(target.kind==CTX_ARTIST) player_play_artist_shuffled(target.id);
+}
+static void context_menu_enqueue(bool next)
+{
+    context_target_t target=g_ctx_target;context_menu_close();
+    bool ok;
+    if(target.kind==CTX_QUEUE) ok=player_queue_edit(target.entry,false);
+    else {
+        player_selection_t type=target.kind==CTX_ALBUM ? PLAYER_SELECTION_ALBUM :
+            target.kind==CTX_ARTIST ? PLAYER_SELECTION_ARTIST : PLAYER_SELECTION_TRACK;
+        ok=player_queue_add(type,target.id,next);
+    }
+    ui_set_hint(ok ? (next ? "Play Next requested" : "Add to Queue requested") : "Queue action unavailable");
+}
+static void context_menu_add_queue(void *user) { LV_UNUSED(user);context_menu_enqueue(false); }
+static void context_menu_play_next(void *user) { LV_UNUSED(user);context_menu_enqueue(true); }
+static void context_menu_remove_queue(void *user)
+{
+    LV_UNUSED(user);uint64_t entry=g_ctx_target.entry;context_menu_close();
+    ui_set_hint(player_queue_edit(entry,true) ? "Remove from Queue requested" : "Queue entry changed");
 }
 
 static void context_menu_shuffle(void * user)
@@ -7135,9 +7294,12 @@ static void context_menu_backdrop_cb(lv_event_t * event)
     context_menu_close();
 }
 
-static void context_menu_open(void)
+static void context_menu_open_target(const context_target_t *target)
 {
-    if(g_ctx_menu_open || g_current_screen != SCR_NOW_PLAYING) return;
+    if(g_ctx_menu_open || ui_device_blocked()) return;
+    g_ctx_target=*target;
+    g_ctx_generation++;
+    g_ctx_star_item=g_ctx_shuffle_item=g_ctx_repeat_item=-1;
 
     player_snapshot_t snapshot;
     player_get_snapshot(&snapshot);
@@ -7161,6 +7323,8 @@ static void context_menu_open(void)
 
     lv_obj_t * panel = lv_obj_create(g_ctx_menu);
     lv_obj_set_size(panel, CTX_MENU_WIDTH, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(panel,CONTENT_H-24,0);
+    lv_obj_set_scroll_dir(panel,LV_DIR_VER);
     lv_obj_set_align(panel, LV_ALIGN_CENTER);
     lv_obj_set_style_bg_color(panel, lv_color_hex(COL_CTX_PANEL), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
@@ -7172,8 +7336,9 @@ static void context_menu_open(void)
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START);
-    lv_obj_set_scrollable(panel, false);
+    lv_obj_set_scrollable(panel, true);
 
+    if(target->kind==CTX_NOW) {
     const char * repeat_icon = ICON_REPEAT;
     const char * repeat_value = "Off";
     if(snapshot.repeat == PLAYER_REPEAT_ALL) repeat_value = "All";
@@ -7190,9 +7355,9 @@ static void context_menu_open(void)
 
     context_menu_group(panel, "Star");
     g_ctx_star_item = context_menu_item(panel,
-                                        snapshot.starred ? ICON_STAR_FILL : ICON_STAR,
-                                        snapshot.starred ? "Unstar" : "Star",
-                                        NULL, snapshot.starred,
+                                        player_track_starred(target->id) ? ICON_STAR_FILL : ICON_STAR,
+                                        player_track_starred(target->id) ? "Unstar" : "Star",
+                                        NULL, player_track_starred(target->id),
                                         context_menu_star);
 
     context_menu_group(panel, "Playback");
@@ -7205,13 +7370,63 @@ static void context_menu_open(void)
                                           snapshot.repeat != PLAYER_REPEAT_OFF,
                                           context_menu_repeat);
 
+    }
+    else {
+        context_menu_group(panel,target->title);
+        if(target->kind==CTX_QUEUE) {
+            context_menu_image_item(panel,&context_play_next,"Play Next",context_menu_play_next);
+            context_menu_item(panel,ICON_CLOSE,"Remove from Queue",NULL,false,context_menu_remove_queue);
+        }
+        else {
+            context_menu_item(panel,ICON_PLAY,"Play",NULL,false,context_menu_play);
+            if(target->kind==CTX_ALBUM || target->kind==CTX_ARTIST)
+                context_menu_item(panel,ICON_SHUFFLE,"Shuffle Play",NULL,false,context_menu_shuffle_play);
+            context_menu_image_item(panel,&context_add_to_queue,"Add to Queue",context_menu_add_queue);
+            context_menu_image_item(panel,&context_play_next,"Play Next",context_menu_play_next);
+            if(target->kind==CTX_TRACK) {
+                bool starred=player_track_starred(target->id);
+                g_ctx_star_item=context_menu_item(panel,starred ? ICON_STAR_FILL : ICON_STAR,
+                    starred ? "Unstar" : "Star",NULL,starred,context_menu_star);
+            }
+        }
+        if((target->kind==CTX_TRACK || target->kind==CTX_QUEUE) && target->album_id)
+            context_menu_item(panel,ICON_DISC,"Go to album",NULL,false,context_menu_go_album);
+        if(target->kind!=CTX_ARTIST && target->artist_id)
+            context_menu_item(panel,ICON_PERSON,"Go to artist",NULL,false,context_menu_go_artist);
+    }
     context_menu_focus_set(0);
+}
+
+static void context_menu_open(void)
+{
+    context_target_t target={0};
+    if(!g_ctx_menu_open && context_capture(&target)) context_menu_open_target(&target);
+}
+static void context_touch_cb(lv_event_t *event)
+{
+    if(g_ctx_menu_open || g_page_loading) return;
+    lv_obj_t *row=lv_event_get_current_target(event);
+    uintptr_t binding=(uintptr_t)lv_event_get_user_data(event);
+    int type=binding&255;
+    int index=(int)(binding>>8)-1;
+    if(index<0) index=(int)(intptr_t)lv_obj_get_user_data(row);
+    context_target_t target={0};
+    if(!context_resolve(&target,type,index)) return;
+    lv_indev_t *input=lv_indev_active();
+    if(input) lv_indev_wait_release(input);
+    context_menu_open_target(&target);
+}
+static void context_touch_bind(lv_obj_t *row,int type,int index)
+{
+    uintptr_t binding=((uintptr_t)(index+1)<<8)|(unsigned)type;
+    lv_obj_add_event_cb(row,context_touch_cb,LV_EVENT_LONG_PRESSED,(void *)binding);
 }
 
 static void context_menu_close(void)
 {
     if(!g_ctx_menu_open) return;
     g_ctx_menu_open = false;
+    g_ctx_generation++;
     if(g_ctx_menu) {
         lv_obj_delete(g_ctx_menu);
         g_ctx_menu = NULL;
@@ -7564,6 +7779,11 @@ static void songs_row_click_cb(lv_event_t * event)
     ui_call_async(songs_activate_async, NULL);
 }
 
+static bool songs_context_track(player_track_t *track)
+{
+    return player_song_get(songs_selected,track);
+}
+
 static bool songs_key(ui_key_t key)
 {
     switch(key) {
@@ -7661,6 +7881,7 @@ static void songs_create(lv_obj_t * parent)
         lv_obj_set_gesture_bubble(row, false);
         enable_event_bubble(row);
         lv_obj_add_event_cb(row, songs_row_click_cb, LV_EVENT_CLICKED, NULL);
+        context_touch_bind(row,CTX_TOUCH_SONG,-1);
 
         songs_titles[i] = make_label(row, "", FONT_H2, COL_TEXT);
         lv_obj_set_flex_grow(songs_titles[i], 1);
@@ -10386,6 +10607,7 @@ static void ui_fast_scroll_reset(void);
 
 static void ui_page_teardown(void)
 {
+    context_menu_close();
     np_seek_reset();
     np_progress = NULL;
     ui_fast_scroll_reset();

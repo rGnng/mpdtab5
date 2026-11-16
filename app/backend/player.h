@@ -214,6 +214,12 @@ void player_play_playlist_shuffled(int index);
 /* Whole library in random order (Albums "Shuffle All"). */
 void player_play_all_shuffled(void);
 void player_queue_jump(int index);
+typedef enum { PLAYER_SELECTION_TRACK, PLAYER_SELECTION_ALBUM, PLAYER_SELECTION_ARTIST } player_selection_t;
+bool player_queue_add(player_selection_t type, uint64_t id, bool next);
+uint64_t player_queue_entry(int index);
+bool player_queue_edit(uint64_t entry, bool remove);
+bool player_track_starred(uint64_t id);
+bool player_toggle_track_star(uint64_t id);
 
 #ifdef __cplusplus
 } /* extern "C" */

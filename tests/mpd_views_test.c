@@ -115,13 +115,13 @@ static void now_playing(void)
         add(91000+i,81000+i,"Other album",artist_name,"Other song",5000,2025,1);
     }
     player_library_complete();pump(200);
-    context_menu_go_album(NULL);pump(600);
+    context_menu_open();context_menu_go_album(NULL);pump(600);
     check(g_current_screen==SCR_ALBUMS && albums_detail_open,"Go to Album must open the album detail");
     player_album_t album;player_album_get(albums_selected,&album);
     check(album.id==80001,"Go to Album must select the playing album");
     check(lv_obj_get_scroll_y(albums_left_list)>0,"Go to Album must reveal an offscreen destination");
     ui_select_screen(SCR_NOW_PLAYING);pump(300);
-    context_menu_go_artist(NULL);pump(600);
+    context_menu_open();context_menu_go_artist(NULL);pump(600);
     check(g_current_screen==SCR_ARTISTS && artists_detail_open,"Go to Artist must open the artist detail");
     player_artist_t artist;player_artist_get(artists_selected,&artist);
     check(!strcmp(artist.name,"Zulu"),"Go to Artist must select the playing track's album artist");

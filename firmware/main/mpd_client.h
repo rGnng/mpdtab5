@@ -85,6 +85,11 @@ int mpd_client_queue_list_count(void);
 int mpd_client_queue_list_base(void);
 uint32_t mpd_client_queue_list_revision(void);
 bool mpd_client_queue_list_get(int index, uint64_t *key);
+/* Stable entry handles include a connection epoch; raw MPD ID zero is valid. */
+uint64_t mpd_client_queue_entry(int index);
+esp_err_t mpd_client_queue_add(const uint64_t *keys, int count, bool next);
+esp_err_t mpd_client_queue_edit(uint64_t entry, bool remove);
+bool mpd_client_track_starred(uint64_t key);
 
 #define MPD_ARTWORK_SIZE 360
 uint32_t mpd_client_artwork_revision(void);

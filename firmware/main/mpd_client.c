@@ -45,6 +45,7 @@ static bool art_valid;
 static uint64_t *queue_keys;
 static uint32_t *queue_ids;
 static int queue_size;
+static uint32_t queue_epoch=1;
 static uint8_t hold_bit;
 static TaskHandle_t worker;
 
@@ -83,13 +84,15 @@ static void artwork_register(uint64_t album, uint64_t track);
 static void artwork_reset(void);
 static void artwork_step(uint32_t generation);
 
-typedef enum { CMD_TEXT, CMD_PLAY, CMD_ALL, CMD_JUMP, CMD_STAR, CMD_CLEAR_STARS, CMD_COLOPLAY } command_kind_t;
+typedef enum { CMD_TEXT, CMD_PLAY, CMD_ALL, CMD_JUMP, CMD_STAR, CMD_CLEAR_STARS, CMD_COLOPLAY,
+    CMD_QUEUE_ADD, CMD_QUEUE_NEXT, CMD_QUEUE_MOVE, CMD_QUEUE_REMOVE } command_kind_t;
 typedef struct {
     command_kind_t kind;
     uint32_t generation;
     int count, start;
     bool shuffle;
     uint32_t queue_id;
+    uint64_t entry;
     uint64_t *keys;
     char text[80];
     uint8_t coloplay[CP_BLE_BYTES];
@@ -231,9 +234,32 @@ static int star_position(uint64_t key) {
 esp_err_t mpd_client_queue_jump(int index) {
     command_t c={.kind=CMD_JUMP};
     take();
-    if(index>=0 && index<queue_size) c.queue_id=queue_ids[index];
+    bool valid=index>=0 && index<queue_size;
+    if(valid) c.queue_id=queue_ids[index];
     give();
-    return c.queue_id ? enqueue(&c) : ESP_ERR_INVALID_ARG;
+    return valid ? enqueue(&c) : ESP_ERR_INVALID_ARG;
+}
+uint64_t mpd_client_queue_entry(int index) {
+    take();
+    uint64_t entry=index>=0 && index<queue_size ? ((uint64_t)queue_epoch<<32)|queue_ids[index] : 0;
+    give(); return entry;
+}
+esp_err_t mpd_client_queue_add(const uint64_t *keys,int count,bool next) {
+    if(!keys || count<=0 || count>QUEUE_LIMIT) return ESP_ERR_INVALID_ARG;
+    command_t c={.kind=next ? CMD_QUEUE_NEXT : CMD_QUEUE_ADD,.count=count};
+    c.keys=heap_caps_malloc(count*sizeof(*keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!c.keys) return ESP_ERR_NO_MEM;
+    memcpy(c.keys,keys,count*sizeof(*keys)); return enqueue(&c);
+}
+esp_err_t mpd_client_queue_edit(uint64_t entry,bool remove) {
+    if(!entry) return ESP_ERR_INVALID_ARG;
+    command_t c={.kind=remove ? CMD_QUEUE_REMOVE : CMD_QUEUE_MOVE,.entry=entry};
+    return enqueue(&c);
+}
+bool mpd_client_track_starred(uint64_t key) {
+    take(); bool found=false;
+    for(int i=0;i<star_count && !found;i++) found=star_keys[i]==key;
+    give(); return found;
 }
 esp_err_t mpd_client_hid_command(const char *name) {
     if(!strcmp(name,"play")) return text_command("play");
@@ -487,6 +513,8 @@ static bool sync_library(void) {
     take(); state.library_syncing=false; state.revision++; give();
     return ok;
 }
+static bool queue_next_tick(uint32_t current,bool valid,bool random);
+static void queue_next_queue_changed(void);
 static bool poll_state(void) {
     mpd_state_t next={.battery=-1,.max_current_ma=-1,.volume=-1,.queue_index=-1,.connected=true,.identified=true};
     take(); snprintf(next.device_name,sizeof(next.device_name),"MPD · %.48s",config.host); give();
@@ -509,7 +537,7 @@ static bool poll_state(void) {
     }
     if(ok) text_copy(current_uri,sizeof(current_uri),p->uri);
     if(ok) { take(); next.starred=star_position(next.track_key)>=0; give(); publish(&next); }
-    return ok;
+    return ok && queue_next_tick(p->song_id,next.queue_index>=0,next.shuffle);
 }
 static bool sync_queue(void) {
     song_parser_t parser={0};
@@ -534,6 +562,7 @@ static bool sync_queue(void) {
     if(ok && p->catalog_changed) player_library_complete();
     if(ok && p->count <= p->capacity) {
         take(); memcpy(queue_keys,p->keys,p->count*sizeof(uint64_t)); memcpy(queue_ids,p->ids,p->count*sizeof(uint32_t)); queue_size=p->count; queue_revision++; give();
+        queue_next_queue_changed();
         queue_refresh_pending=false;
     }
     free(p->ids); free(p->keys);
@@ -686,6 +715,162 @@ static bool set_volume(float target) {
     volume_grid_requested(&volume_cursor,target,player_volume_steps());
     return true;
 }
+/* Real MPD random mode chooses by priority, while Tracks shuffles its physical
+ * queue and has no prioid command. Probe capabilities once per connection.
+ * Only the next requested entry gets priority 255; promote the following
+ * entry when it starts, preserving arbitrary-length album/artist order. */
+static int queue_priority_support=-1;
+static uint32_t *queue_next_ids;
+static int queue_next_count;
+static uint32_t queue_next_head;
+static bool queue_next_head_valid;
+static void queue_next_queue_changed(void) {
+    if(!queue_next_head_valid) return;
+    for(int i=0;i<queue_size;i++) if(queue_ids[i]==queue_next_head) return;
+    queue_next_head_valid=false;
+}
+static bool queue_priority_field(const char *key,const char *value,void *context) {
+    if(!strcmp(key,"command") && !strcmp(value,"prioid")) *(bool *)context=true;
+    return true;
+}
+static bool queue_priority_capability(bool *supported) {
+    if(queue_priority_support<0) {
+        bool found=false;
+        if(!mpd_wire_command(&wire,"commands",queue_priority_field,NULL,&found)) return false;
+        queue_priority_support=found ? 1 : 0;
+    }
+    *supported=queue_priority_support==1; return true;
+}
+static bool queue_next_tick(uint32_t current,bool valid,bool random) {
+    if(!queue_next_count) return true;
+    if(valid) {
+        for(int i=0;i<queue_next_count;i++) if(queue_next_ids[i]==current) {
+            memmove(queue_next_ids,queue_next_ids+i+1,(queue_next_count-i-1)*sizeof(*queue_next_ids));
+            queue_next_count-=i+1;queue_next_head_valid=false;break;
+        }
+    }
+    if(!queue_next_count) { free(queue_next_ids);queue_next_ids=NULL;return true; }
+    if(!random) return true;
+    if(queue_next_head_valid && queue_next_head==queue_next_ids[0]) return true;
+    for(int retry=0;queue_next_count && retry<8;retry++) {
+        char cmd[64];snprintf(cmd,sizeof(cmd),"prioid 255 %lu",(unsigned long)queue_next_ids[0]);
+        if(simple(cmd)) { queue_next_head=queue_next_ids[0];queue_next_head_valid=true;return true; }
+        if(wire.fd<0 || !strstr(wire.error,"ACK [50@")) return false;
+        /* The selected entry can be deleted by another client while queued. */
+        memmove(queue_next_ids,queue_next_ids+1,(--queue_next_count)*sizeof(*queue_next_ids));
+    }
+    if(!queue_next_count) { free(queue_next_ids);queue_next_ids=NULL; }
+    return true;
+}
+static bool queue_next_install(uint32_t *ids,int count) {
+    if(queue_next_head_valid) {
+        char cmd[64];snprintf(cmd,sizeof(cmd),"prioid 0 %lu",(unsigned long)queue_next_head);
+        if(!simple(cmd) && (wire.fd<0 || !strstr(wire.error,"ACK [50@"))) { free(ids);return false; }
+    }
+    int total=count;
+    for(int i=0;i<queue_next_count;i++) {
+        bool duplicate=false;
+        for(int j=0;j<count;j++) if(ids[j]==queue_next_ids[i]) { duplicate=true;break; }
+        if(!duplicate) ids[total++]=queue_next_ids[i];
+    }
+    free(queue_next_ids);queue_next_ids=ids;queue_next_count=total;queue_next_head_valid=false;
+    return queue_next_tick(0,false,true);
+}
+typedef struct { uint32_t *ids;int count,capacity; } queue_added_t;
+static bool queue_added_field(const char *key,const char *value,void *context) {
+    queue_added_t *added=context;
+    if(!strcmp(key,"Id")) {
+        if(added->count>=added->capacity) return false;
+        added->ids[added->count++]=(uint32_t)strtoul(value,NULL,10);
+    }
+    return true;
+}
+typedef struct { int position; uint32_t id; bool have_id; } queue_entry_info_t;
+static bool queue_entry_field(const char *key,const char *value,void *context) {
+    queue_entry_info_t *entry=context;
+    if(!strcmp(key,"Pos")) entry->position=atoi(value);
+    else if(!strcmp(key,"Id")) { entry->id=(uint32_t)strtoul(value,NULL,10); entry->have_id=true; }
+    return true;
+}
+/* All edits run on the socket owner. Resolve positions against the server,
+ * never against the UI's possibly older queue snapshot. */
+static bool queue_add_selection(const uint64_t *keys,int count,bool next) {
+    char quoted[4100];
+    if(!keys || count<=0) return false;
+    for(int i=0;i<count;i++) if(!uri_lookup(keys[i]) ||
+        !mpd_quote(quoted,sizeof(quoted),uri_lookup(keys[i]))) {
+        message("Selection changed; reopen the menu"); return true;
+    }
+    if(!poll_state()) return false;
+    mpd_state_t latest; mpd_client_get_state(&latest);
+    if(count>QUEUE_LIMIT-latest.queue_count) { message("Queue limit is 24000 tracks"); return true; }
+    bool priority=false;
+    if(next && latest.shuffle && !queue_priority_capability(&priority)) return false;
+    queue_added_t added={.capacity=count};
+    if(priority) {
+        added.ids=heap_caps_malloc((count+queue_next_count)*sizeof(*added.ids),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(!added.ids) { message("Not enough memory for Play Next");return true; }
+    }
+    char *batch=malloc(32768);
+    if(!batch) { free(added.ids);return false; }
+    int position=next ? (latest.queue_index>=0 ? latest.queue_index+1 : 0) : latest.queue_count;
+    bool ok=true;int index=0;
+    while(index<count && ok) {
+        strcpy(batch,"command_list_begin\n");size_t used=strlen(batch);
+        for(int n=0;index<count && n<100;n++) {
+            if(!mpd_quote(quoted,sizeof(quoted),uri_lookup(keys[index]))) { ok=false;break; }
+            if(used+strlen(quoted)+80>=32768) break;
+            used+=snprintf(batch+used,32768-used,"addid %s %d\n",quoted,position+index);
+            index++;
+        }
+        if(ok) {
+            snprintf(batch+used,32768-used,"command_list_end");
+            ok=mpd_wire_command(&wire,batch,priority ? queue_added_field : NULL,NULL,&added);
+        }
+        vTaskDelay(1);
+    }
+    free(batch);queue_refresh_pending=true;
+    if(!ok) { free(added.ids);return false; }
+    if(priority) {
+        if(added.count!=count) { free(added.ids);message("Server omitted queue entry IDs");return false; }
+        return queue_next_install(added.ids,added.count);
+    }
+    return true;
+}
+static bool queue_edit_entry(uint64_t entry,bool remove) {
+    if(!entry || (uint32_t)(entry>>32)!=queue_epoch) {
+        message("Queue connection changed; reopen the menu"); return true;
+    }
+    uint32_t id=(uint32_t)entry;
+    char cmd[96];
+    if(remove) {
+        snprintf(cmd,sizeof(cmd),"deleteid %lu",(unsigned long)id);
+    }
+    else {
+        if(!poll_state()) return false;
+        mpd_state_t latest; mpd_client_get_state(&latest);
+        queue_entry_info_t selected={.position=-1};
+        snprintf(cmd,sizeof(cmd),"playlistid %lu",(unsigned long)id);
+        if(!mpd_wire_command(&wire,cmd,queue_entry_field,NULL,&selected)) return false;
+        if(!selected.have_id || selected.position<0) { message("Queue entry was removed"); return true; }
+        if(selected.position==latest.queue_index) { message("Track is already playing"); return true; }
+        int position=latest.queue_index>=0 ? latest.queue_index+1 : 0;
+        if(latest.queue_index>=0 && selected.position<latest.queue_index) position--;
+        snprintf(cmd,sizeof(cmd),"moveid %lu %d",(unsigned long)id,position);
+    }
+    bool ok=simple(cmd); queue_refresh_pending=true;
+    if(ok && !remove) {
+        mpd_state_t latest;mpd_client_get_state(&latest);
+        bool priority=false;
+        if(latest.shuffle && !queue_priority_capability(&priority)) return false;
+        if(priority) {
+            uint32_t *ids=heap_caps_malloc((1+queue_next_count)*sizeof(*ids),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+            if(!ids) { message("Not enough memory for Play Next");return true; }
+            ids[0]=id;return queue_next_install(ids,1);
+        }
+    }
+    return ok;
+}
 static bool run_command(command_t *c) {
     if(c->kind==CMD_COLOPLAY){
         const uint8_t *p=c->coloplay;take();bool current=coloplay_session&&coloplay_session==cp_u32(p+4);give();
@@ -711,8 +896,15 @@ static bool run_command(command_t *c) {
         if(usage==0xb5||usage==0xb6)for(unsigned n=1;n<count;++n)if(!simple(operation))return false;
         snprintf(c->text,sizeof(c->text),"%s",operation);
     }
+    if(c->kind==CMD_QUEUE_ADD || c->kind==CMD_QUEUE_NEXT)
+        return queue_add_selection(c->keys,c->count,c->kind==CMD_QUEUE_NEXT);
+    if(c->kind==CMD_QUEUE_MOVE || c->kind==CMD_QUEUE_REMOVE)
+        return queue_edit_entry(c->entry,c->kind==CMD_QUEUE_REMOVE);
     if(c->kind==CMD_STAR) return c->keys && change_star(c->keys[0],false);
     if(c->kind==CMD_CLEAR_STARS) return change_star(0,true);
+    if(c->kind==CMD_PLAY || c->kind==CMD_ALL) {
+        free(queue_next_ids);queue_next_ids=NULL;queue_next_count=0;queue_next_head_valid=false;
+    }
     if(c->kind==CMD_PLAY) return play_selection(c->keys,c->count,c->start,c->shuffle);
     if(c->kind==CMD_ALL) {
         uint64_t *keys=heap_caps_malloc(uri_count*sizeof(*keys),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
@@ -756,8 +948,9 @@ static bool generation_changed(uint32_t generation) { take(); bool changed=gener
 static void disconnected(void) {
     mpd_wire_close(&wire);
     mpd_wire_close(&events);
+    free(queue_next_ids);queue_next_ids=NULL;queue_next_count=0;queue_next_head_valid=false;queue_priority_support=-1;
     take(); state.connected=state.identified=false; state.library_syncing=false; state.play_status=0; state.revision++;volume_cursor.active=0;volume_integer_only=false;coloplay_seek=0;
-    queue_size=0; queue_revision++; art_valid=false; art_revision++;
+    queue_size=0; queue_revision++; if(++queue_epoch==0) queue_epoch=1; art_valid=false; art_revision++;
     uint64_t *old_stars=star_keys; star_keys=NULL; star_count=0; star_revision++; state.starred=false;
     give(); free(old_stars);
     command_t c; while(xQueueReceive(commands,&c,0)==pdPASS) free(c.keys);
