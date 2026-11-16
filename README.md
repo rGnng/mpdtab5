@@ -9,6 +9,9 @@ artist, song and playlist browsers, Up Next, USB input, Ulanzi Bluetooth knob,
 screen/power settings, Wi-Fi configuration, web diagnostics and OTA. Playback
 runs on **your MPD server's audio output**. The Tab5 is a remote control.
 
+Current [controls and context menus](docs/controls.md), [validation results](docs/mpd-validation.md),
+and [firmware build/hardware notes](firmware/README.md) are documented separately.
+
 ## First use
 
 1. Boot with an SD card inserted. Existing Wi-Fi credentials can be imported
@@ -160,7 +163,10 @@ available; one controller is active at a time. See [pairing, protocol and valida
 For Star/Unstar, bind a ColoPlay **Bluetooth HID key** action to keypad `*`
 (usage **85**, modifiers **0**). This toggles the currently playing song in the
 server's Stared playlist. Context menu is **C** (usage **6**, modifiers **0**)
-on Now Playing; turn the knob to choose an item and press it to confirm.
+on Now Playing and the album, artist, song, and Up Next lists. Turn the knob
+to choose an action and press it to confirm. Context Star/Unstar acts on the
+selected song; the `*` shortcut still acts on the playing song. See the
+[complete key mappings and menu actions](docs/controls.md).
 
 ## Storage
 
@@ -224,8 +230,8 @@ python3 tools/ota_mpd.py --url http://127.0.0.1:10082
 The application image is `firmware/build/mpdtab5.bin`. The OTA helper uploads
 only the application and checks the running firmware's ELF SHA-256 after
 reboot. The existing Tab5 partition layout and C6 firmware are reused. A full
-USB flash and hardware details are covered in the inherited
-[firmware guide](firmware/README.md); its Apple playback setup is not used here.
+USB flash and hardware details are covered in the
+[firmware guide](firmware/README.md).
 No MFi identity or Apple authentication material is needed.
 
 ## Development
@@ -247,6 +253,8 @@ python3 -m unittest discover -s tests -p 'test_mpd_*.py' -v
 python3 -m unittest discover -s tests -p 'test_usb_*.py' -v
 python3 -m unittest discover -s tests -p 'test_album_view.py' -v
 python3 -m unittest discover -s tests -p 'test_thumb_identity.py' -v
+python3 -m unittest discover -s tests -p 'test_web_input.py' -v
+python3 -m unittest discover -s tests -p 'test_wifi_recovery.py' -v
 cmake -S . -B build -G Ninja -DIAP2TAB5_BUILD_UI_TESTS=ON
 cmake --build build -j
 ctest --test-dir build --output-on-failure
@@ -254,6 +262,11 @@ ctest --test-dir build --output-on-failure
 ```
 
 The simulator uses the inherited demo library; firmware always uses MPD.
+The two queue-action icons are fully opaque NRK Core Icons. To regenerate
+their 32 px alpha assets, install CairoSVG 2.8.2 and Pillow 12.0.0, then run
+`python3 tools/gen_context_icons.py`. Sources, modifications and attribution
+are listed in [assets/icons/README.md](assets/icons/README.md).
+
 Browser tests need `playwright` and its Chromium installation; they are skipped
 when Playwright is unavailable. Existing source assets and their notices are
 retained. MPD framing and command semantics follow the

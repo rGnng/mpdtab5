@@ -1,7 +1,12 @@
-# IAP2 Tab5 firmware
+# MPD Tab5 firmware
 
 ESP-IDF firmware for the M5Stack Tab5 (ESP32-P4). It reuses the same
-`app/ui` and `app/backend` code as the desktop simulator.
+`app/ui` and `app/backend` code as the desktop simulator. MPD playback runs
+on the configured server. See the [main README](../README.md) for first use,
+[controls](../docs/controls.md) for current inputs and context menus, and
+[USB-C networking](../docs/usb-network.md) for the normal running USB-C role.
+Apple-specific bring-up records retained below describe the inherited hardware
+support, not the MPD setup requirements.
 
 ## Toolchain
 
@@ -39,17 +44,16 @@ handler, and disconnect cancels that input's pending gesture. For web debug,
 using a separate input state.
 
 Hold the D100H knob and turn clockwise / counter-clockwise to raise / lower
-iPod volume, one native relative step per detent. A plain click activates on
+MPD volume using the saved volume scale. A plain click activates on
 release; any held turn cancels that activation. USB and BLE share this gesture
 handler, with separate state for each input source. Disconnect cancels a pending click.
 Web debug can exercise the same path using `POST /api/keystate?k=knob&down=1`,
 then `k=knobcw&down=1` or `k=knobccw&down=1`, followed by `k=knob&down=0`.
 
-On this machine ESP-IDF is installed at `/home/ops/esp/esp-idf-5.5.6`:
+Activate your ESP-IDF 5.5.6 installation before building, for example:
 
 ```bash
-export PATH="/home/ops/.local/share/uv/python/cpython-3.12-linux-aarch64-gnu/bin:$PATH"
-. /home/ops/esp/esp-idf-5.5.6/export.sh
+source ~/esp/esp-idf-5.5.6/export.sh
 ```
 
 ## USB ports and host modes
@@ -57,7 +61,7 @@ export PATH="/home/ops/.local/share/uv/python/cpython-3.12-linux-aarch64-gnu/bin
 | Port | P4 connection | Role |
 | --- | --- | --- |
 | USB-A (J10) | `USB2_OTG` high-speed pins 49/50; VBUS switched by the BSP | USB host (iPod, HID keyboard) |
-| USB-C (J8) | FSLS PHY0 (GPIO24/25); CC1/CC2 5.1k to GND; VBUS is `USB_5VIN` input | USB Serial/JTAG console by default; FS host when powered through a hub/dock |
+| USB-C (J8) | FSLS PHY0 (GPIO24/25); CC1/CC2 5.1k to GND; VBUS is `USB_5VIN` input | CDC-NCM network device in mode 0; FS host in mode 2 |
 
 The USB-C data lines are wired to **FSLS PHY0**, not the PHY that ESP-IDF
 uses by default. `usb_host_core.c` therefore calls
@@ -69,8 +73,8 @@ GPIO26/27 are connected to the ES8388 as I2S DOUT/BCLK. Switching the FS
 host to PHY0 also moves USB Serial/JTAG to PHY1, so its pads must be disabled
 with `usb_serial_jtag_ll_phy_enable_pad(false)` **before** switching. Leaving
 them enabled takes over the audio pins even though codec opens and tone
-writes succeed. The USB-A-only mode retains the USB-C serial console; in
-Both A+C mode use the web debug log instead. The sound fix was OTA tested
+writes succeed. MPD mode 0 uses USB-C CDC-NCM networking, and mode 2 uses USB-C as a host.
+Use the web debug log in either running mode. The sound fix was OTA tested
 on 2026-11-08; the user confirmed audible feedback with Both A+C enabled.
 
 The USB-C port itself is a sink/device port: the CC pins have 5.1k
@@ -80,14 +84,15 @@ Tab5 uses USB-C as a host. This was verified with a Ulanzi D100H behind a USB
 hub with the battery removed. A plain hub that only draws power from the host
 will not power the Tab5.
 
-`usb_mode` in `/sdcard/config.json`:
+`usb_mode` in `/sdcard/mpd/config.json`:
 
-- `0`: USB-A HighSpeed Only (default); USB-C remains a device / serial console.
+- `0`: USB-A HighSpeed Only (default); USB-C provides the MPD Tab5 CDC-NCM network adapter.
 - `2`: USB-A HS & USB-C OTG (Both A+C): USB-A HS + USB-C FS dual host. Verified with an iPod on
   USB-A and a Ulanzi D100H behind a powered USB-C hub at the same time.
 
-The two P4 OTG controllers can run as hosts simultaneously. The serial debug
-commands `(` / `)` select USB-A HS / Both A+C and reboot.
+The two P4 OTG controllers can run as hosts simultaneously. Change USB mode
+through Settings or the web interface, then reboot. USB-C networking advertises
+no gateway or DNS; its default addresses are `172.32.30.1` / `172.32.30.2`.
 
 See [`docs/usb-modes.md`](../docs/usb-modes.md) for the boot flow, controller
 and PHY mapping, TT limitation, OTG device caveats, web interfaces, and the
@@ -98,7 +103,6 @@ Settings UI integration notes for `usb_mode`.
 ```bash
 cd firmware
 idf.py set-target esp32p4   # first time only
-python3 ../tools/gen_iap2_identity.py   # MFi key is not committed
 idf.py build
 ```
 
@@ -108,32 +112,29 @@ fresh build directory); the old CMake cache is not compatible. Do a full
 bootloader/partition images differ from 5.4. Later code-only updates can use
 `app-flash` again.
 
-The mock library under `assets/mock` is **not** part of the hardware image.
-The Tab5 loads its media library from `/sdcard/library.bin`; Now Playing
-metadata and artwork come from iAP2. The desktop simulator is the only build
-that uses `assets/mock`.
-
-`firmware/main/iap2_identity.c` contains the Apple Accessories private key
-and is intentionally excluded from git. Generate it locally from the MFi
-identity files (default `../iap2cert/certificate.p7b` and
-`../iap2cert/identity.pk8`) with `tools/gen_iap2_identity.py`. Keys without
-an embedded public point are supported: authentication passes the seeded
-DRBG to mbedTLS when parsing the key so it can derive that point.
+The application image is `firmware/build/mpdtab5.bin`. MPD firmware does not
+require an MFi identity, Apple authentication material, or a local mock library.
+The server supplies metadata and artwork; application configuration and caches
+are under `/sdcard/mpd/`. The desktop simulator uses `assets/mock`.
 
 ## Flash / monitor
 
-The Tab5 USB-C port exposes the ESP32-P4 USB Serial/JTAG. Auto-reset into
-download mode normally works. If it does not, connect USB-C to the computer,
-hold the Tab5 power button until the green LED flashes, then release it.
-Recheck the serial port after entering download mode. See the root README's
-[detailed P4 flashing procedure](../README.md#flash-the-esp32-p4-application)
-for tool installation, first flashing, OTA, and recovery.
+For a full USB flash, enter the ESP32-P4 download mode through USB-C. Running
+MPD firmware normally uses USB-C for networking, so a Serial/JTAG console need
+not be available until download mode is entered. If the serial port is missing,
+connect USB-C to the computer, hold the Tab5 power button until the green LED
+flashes, then release it.
+Recheck the serial port after entering download mode. The root README covers
+[application-only build and OTA](../README.md#build-and-ota); a full flash also
+writes the bootloader and partition table.
 
 ```bash
-idf.py -p /dev/ttyACM0 flash monitor
+idf.py -p /dev/ttyACM0 flash
 ```
 
-Exit the monitor with `Ctrl+]`.
+Use `idf.py -p <console-port> monitor` only when a running serial console is
+available. Exit it with `Ctrl+]`; web diagnostics remain available over Wi-Fi
+and USB-C networking.
 
 ## Partition table
 
@@ -153,10 +154,11 @@ full `idf.py flash` once (not `app-flash`); subsequent code-only updates can use
 
 ## SD card configuration
 
-The card is mounted at `/sdcard` (FAT32 recommended). Ready-to-copy examples
-live in `../docs/sd/`. Two files are used:
+The card is mounted at `/sdcard` (FAT32 recommended). All MPD application
+files live under `/sdcard/mpd/`; see the [storage table](../README.md#storage).
+Configuration examples live in `../docs/sd/`.
 
-`/sdcard/config.json`:
+`/sdcard/mpd/config.json`:
 
 ```json
 {
@@ -165,7 +167,7 @@ live in `../docs/sd/`. Two files are used:
   "sound_enabled": true,
   "debug_log": false,
   "volume": 65,
-  "ap_ssid": "IAP2TAB5",
+  "ap_ssid": "MPDTAB5",
   "clock_12h": false,
   "sort_field": 0,
   "sort_desc": true,
@@ -217,7 +219,7 @@ Missing or invalid files fall back to built-in defaults. The firmware writes
 the file back after every settings change (one write per second at most while
 the knob is being turned).
 
-`/sdcard/wifi.txt` (only for station mode):
+`/sdcard/mpd/wifi.txt` (only for station mode):
 
 ```
 MyHomeWiFi
@@ -234,7 +236,7 @@ in either location, firmware starts the open AP fallback.
 
 Wi-Fi starts in AP mode when no station credentials are available:
 
-- SSID: `IAP2TAB5` (open, no password)
+- SSID: `MPDTAB5` (configurable; open, no password)
 - Address: <http://192.168.4.1>
 
 The page shows uptime/heap/SD/Wi-Fi state, edits the config above, reboots, and
@@ -255,7 +257,7 @@ Useful endpoints:
 | `GET /api/display` | actual backlight PWM registers, VSYNC/DMA/render counters and internal memory |
 | `GET /api/display/trace?since=N` | CSV of up to 1024 recent samples at 100 ms intervals; `X-Diag-Next` resumes collection |
 | `POST /api/display/mark` | timestamp an observed flicker in the live/SD log |
-| `GET /api/config` / `POST /api/config` | read/write `/sdcard/config.json` |
+| `GET /api/config` / `POST /api/config` | read/write `/sdcard/mpd/config.json` |
 | `GET /api/log?since=N` | log text after sequence N (`X-Log-Seq`) |
 | `GET /api/log/stream?since=N` | live SSE log stream; resumes with `Last-Event-ID` |
 | `POST /api/loglevel?tag=usb&level=4` | change a log tag level at runtime |
@@ -319,7 +321,7 @@ and the [official voltage/current interpretation](https://github.com/m5stack/M5U
 
 `library_available` in `/api/status` reports the UI's actual library gate.
 Albums, Artists, Songs and Playlists are disabled until the SD library is ready
-and the iPod is identified; all touch, keyboard/keypad and debug navigation
+and the MPD connection is available; all touch, keyboard/keypad and debug navigation
 uses the same check. An unavailable library returns to Now Playing, cancels
 pending page loads and skips the disabled tabs when switching pages.
 The application polls card status outside the display lock every two seconds;
@@ -359,79 +361,48 @@ established hardware limit or a confirmed root cause. The device was left at
 brightness settings fall back to Low (45%) while Screen Off remains a true
 backlight-off action.
 
-Example OTA upload:
+Application-only OTA from the repository root:
 
 ```bash
-curl --data-binary @firmware/build55/iap2tab5.bin \
-     http://10.0.0.181/api/ota
+python3 tools/ota_mpd.py --url http://127.0.0.1:10082
 ```
 
-A 2.7 MB image uploads in roughly 10-20 seconds on the tested C6 1.4.1
-firmware.
+The helper uploads `firmware/build/mpdtab5.bin`, then checks that the running
+ELF SHA-256 matches `firmware/build/mpdtab5.elf` after reboot. It does not flash
+the C6, bootloader, or partition table.
 
-**C6 firmware note:** the Tab5 factory ESP32-C6 runs ESP-Hosted 1.4.1, while
-the host component here is 2.13.x. The AP works, but the host logs a version
-mismatch and station mode may be unreliable. For production, flash the C6 with
-an ESP-Hosted 2.13.x slave image. The Tab5 C6 reset is active-high on the
-tested unit; the board preset is overridden in `sdkconfig.defaults`.
+A factory-method backlight trial on 2026-11-15 used 5 kHz, 12-bit PWM and the
+factory's `4095 * brightness / 100` duty calculation. The user still observed
+flicker and little visible difference between 5% and 45%. That trial was
+reverted; current firmware retains the 44.1 kHz, 9-bit driver described above.
+This does not establish the electrical cause of the flicker.
+
+**C6 firmware:** the validated device runs ESP-Hosted 2.13.1, matching the host
+component. The original factory 1.4.1 image lacks the required 2.x Bluetooth
+support. See the [C6 firmware and flashing guide](../tools/c6_firmware/README.md)
+for the separate maintenance procedure. Normal P4 application OTA leaves it
+unchanged.
 
 ## Serial debug keys
 
-While the USB HID knob/keypad is not connected, the USB Serial/JTAG console
-accepts single-key commands:
+When a serial console is available, the current input task accepts these
+single-character aliases. USB-C normally provides networking; use the web
+[debug controls](../docs/controls.md#web-and-serial-debugging) on running firmware.
 
 | Key | Action |
 | --- | --- |
-| `w` / `s` | knob up / down |
-| `Enter` | knob press |
-| `b` | back |
-| `p` / `n` | Page Up / Page Down (page the active list) |
-| `[` / `]` | previous / next screen |
-| `c` | context menu |
-| `1`..`5` | jump to Now Playing / Albums / Artists / Songs / Playlists |
-| `6` | back |
-| `7` | play / pause |
-| `m` | open Settings (debug) |
-| `r` | toggle screen flip 0/180 (debug) |
-| `h` | HTTP self-test of `/api/status` (debug) |
-| `k` | benchmark full-screen redraw (debug) |
-| `l` | benchmark one list page (debug) |
-| `d` | scroll active list 240 px and benchmark (debug) |
-| `a` | print usbmux/lockdownd/AFC status (debug) |
-| `f` | re-run the AFC directory/stat/read probe (debug) |
-| `u` | upload a lockdownd pair plist over serial, end with `EOF` |
-| `y` | copy MediaLibrary.sqlitedb + WAL/SHM to `/sdcard/AFC` |
-| `Y` | format the SD card (destructive) and mount it |
-| `V` | verify `/sdcard/AFC/MLDB.*` by hashing the local files |
-| `S` | remount the SD card and print AFC/library file sizes |
-| `T` / `W` | dump `MLDB.SQL` / `MLDB.WAL` as base64 over the console |
-| `Q` | upload `/sdcard/library.json` as base64, end with `EOF` |
-| `z` | hash the media DB over AFC without SD |
-| `J` | toggle iAP2 (USB config 2) / AFC (config 4), save to NVS, reboot |
-| `x` | run the embedded MFi P-256 signing self-test |
-| `o` | iAP2 play/pause |
-| `,` / `.` | iAP2 previous / next track |
-| `P` | re-send the iAP2 500 mA USB current budget after identification |
-| `*` | print the USB-A power switch / IO-expander state |
-| `&` | print the INA226 battery bus voltage/current |
+| `w` / `s` | Up / Down; Previous/Restart / Next on closed-queue Now Playing |
+| Enter | Activate; Play/Pause on closed-queue Now Playing |
+| `b` | Back; close a menu or an open Up Next panel |
+| `p` / `n` | Page Up / Page Down; page lists only |
+| `[` / `]` | Previous / next tab; `[` toggles Up Next on Now Playing |
+| `c` | Context for the selected item; close an open context menu |
+| `1`–`5` | Now Playing / Albums / Artists / Songs / Playlists |
+| `6` | Back |
+| `7` | Play/Pause |
 
-The same mapping is used by a USB HID keyboard/knob on the USB-A port. The
-HID listener also accepts keypad `8/2/5` and keyboard volume up/down as
-knob up/down/press. On Albums and Songs, `p` / `n` page the list first
-instead of switching screens.
-
-Send `g` to dump the current screen as **hex-encoded** RGB565 (debug use
-only):
-
-```
-IAP2SHOTHEX <w> <h> <stride>
-<two hex digits per byte, stride*h bytes total>
-IAP2SHOT_END
-```
-
-Hex is used because the USB Serial/JTAG console is a terminal: a raw binary
-stream gets `0x0a` expanded to `0x0d 0x0a`, which shifts image rows. The dump
-also yields to the idle task periodically so the task watchdog stays happy.
+The old iAP2 maintenance-console commands are not implemented by the current
+MPD serial input task. Use the supported web APIs for diagnostics and settings.
 
 ## Notes
 

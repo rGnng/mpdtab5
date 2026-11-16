@@ -1,5 +1,9 @@
 # USB 角色切换：USB-A HS / Both A+C
 
+> 本文保留 iAP2 双 host 的硬件说明。当前 MPD 固件的 mode 0 在 USB-C 上运行
+> CDC-NCM 网络，并将配置保存到 `/sdcard/mpd/config.json`；旧的 USB-C console
+> 描述不适用于当前运行固件。参见 [USB-C 网络说明](usb-network.md)。
+
 本文说明 Tab5 的 USB host 角色如何配置、什么时候生效、哪些东西必须在编译期决定，以及之后把 USB 切换加到 Settings UI 时需要注意的代码位置。
 
 ## 结论

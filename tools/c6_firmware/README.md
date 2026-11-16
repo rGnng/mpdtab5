@@ -68,10 +68,10 @@ header is the only programming interface.
 
 ## Flashing
 
-The root README contains the [complete C6 flashing procedure](../../README.md#flash-the-esp32-c6-wi-fible-firmware),
-including tool setup, checksum verification, wiring, and a full manual-reset
-command for adapters without DTR/RTS. The short procedure below assumes the
-ESP-IDF environment is active and the adapter supports automatic reset.
+Use the wiring and boot/reset instructions above with the bundled C6 image
+and checksum files. The procedure below assumes the ESP-IDF environment is
+active and the adapter supports automatic reset. This is separate from
+[P4 application OTA](../../README.md#build-and-ota).
 
 1. Confirm that Tab5 USB/battery/other power is disconnected and the TTL jig is
    set to **3.3 V**, with its supply output connected to J1 pin 1 and GND to pin 6.

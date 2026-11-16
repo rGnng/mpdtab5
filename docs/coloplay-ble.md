@@ -13,7 +13,7 @@ current supervisor and saved-controller list. The private UUID service is
 `firmware/main/coloplay_ble_protocol.h` in both projects defines 20-byte frames.
 The extension carries commands once, without also injecting their HID reports.
 
-Supported controls: Volume Up/Down using Tab5's saved 1/16 or 1/64 grid, mute, Play/Pause,
+Supported controls: Volume Up/Down using Tab5's saved Volume Scale, mute, Play/Pause,
 Play, Pause, Stop, Previous/Next Track, bounded Fast Forward/Rewind and navigation
 keys. The raw MPD volume, playing/paused/stopped state, seek direction, position,
 track identity and bounded title/artist are sent back. No mixer is reported as
@@ -24,7 +24,12 @@ server star from any playback/library screen. Bind **Bluetooth HID key** to
 **usage 85 (`0x55`, keypad multiply), modifiers 0** in ColoPlay's scene editor.
 Shift+8 is also accepted: usage 37 (`0x25`), modifier 2 (left Shift) or 32 (right
 Shift). These are HID usages, not ASCII codes. C is usage 6, modifiers 0, and
-opens/closes the context menu on Now Playing. Other modified keys are rejected.
+opens/closes context menus on Now Playing, Albums, Artists, Songs, and Up Next.
+The menu acts on the selected item; its Star/Unstar action can target a song
+that is not playing. Page Up/Down only page lists and never open Up Next.
+Brackets switch tabs, with `[` toggling Up Next on Now Playing. See the
+[controls reference](controls.md) for menu actions and HID usage values.
+Other modified keys are rejected.
 
 Volume uses normalized floats on BLE and fractional percentages on MPD, matching
 [Tracks `628ee5b`](https://github.com/rGnng/tracks/commit/628ee5b).
