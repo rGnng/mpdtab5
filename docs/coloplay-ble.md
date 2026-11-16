@@ -2,7 +2,7 @@
 
 The separate ColoPlay peer driver adds bidirectional controls to the existing
 Bluetooth controller selection. The current paired release is ColoPlay
-**0.8.1-navigation-details**, built from the working tree based on **`3c4e519`**; image hashes
+**0.8.2-sleep-sync**, built from the working tree based on **`1f24f5d`**; image hashes
 and live checks are in the [release record](../coloplay/docs/development.md#current-verified-release).
 The driver originally built on `a34fa8a` and retains the existing
 `volume_grid_step` helper and MPD command worker. D100H discovery/heartbeat and
@@ -252,3 +252,15 @@ Settings values refresh during editing. Decorative headers and playback
 buttons do not inflate song positions. The optional heading stream uses
 `CP_FEATURE_NAV_HEADING`; see the [shared protocol](../shared/README.md) for its frame layout.
 Legacy peers retain the original navigation frame format and generic headings.
+
+## Shared sleep and wake (0.8.2)
+
+Negotiated `CP_FEATURE_SLEEP` adds an independent Tab5 sleep/timer snapshot and
+activity, sleep and wake requests. The UI policy stays on the Tab5 UI thread;
+BLE callbacks only queue logical input. Playing holds its countdown, manual
+blanking follows the existing policy and first wake input is consumed. ColoPlay
+mirrors screen/LED state and keeps its own local timer only as a fallback when
+feedback is unsupported or stale. USB keeps ownership when connected; the same
+sleep messages continue over BLE when it takes over. The [shared contract](../shared/README.md#shared-sleep-and-wake)
+defines bounds, freshness and byte layout. Physical versus host-fixture test
+scope is recorded in the [OTA validation](mpd-validation.md#shared-sleep-and-wake-ota--2026-11-16).

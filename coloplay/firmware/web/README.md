@@ -176,3 +176,8 @@ state navigation retains drafts and implements arrow/Home/End keyboard focus.
 Screen saves stay independent. The API announces schema 3; stale shared lighting
 fields are rejected with a refresh message. The 208-byte NVS record migrates
 legacy versions 1/2, using current scene levels to translate old Dim modifiers.
+
+The Sleep panel uses `controller.sleep` to show the linked Tab5 timeout and live
+countdown/status beside its title. Its timer input/save are disabled while
+synced; the saved local fallback returns on disconnect, including an unsaved
+local draft. Polling only reads state and never saves the shared timer to NVS.

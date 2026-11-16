@@ -228,6 +228,13 @@ int main(int argc, char **argv)
     check(!ui_screen_is_on(),"Idle LVGL timer must blank a paused player");
     check(screen_off_cues==offs+1,"Idle screen-off must play one transition cue");
     ui_user_activity();
+    cp_sleep_t sleep;ui_sleep_snapshot(&sleep);
+    check(sleep.minutes==30&&(sleep.flags&CP_SLEEP_COUNTDOWN)&&sleep.remaining_ms>1799000,"Shared timer snapshot reflects the actual restarted Tab5 countdown");
+    uint8_t packet[20];cp_sleep_packet(packet,7,&sleep);check(cp_sleep_valid(packet,20),"Tab5 snapshot encodes a valid negotiated sleep packet");
+    ui_handle_key(UI_KEY_SCREEN_OFF);ui_sleep_snapshot(&sleep);
+    check(!ui_screen_is_on()&&(sleep.flags&CP_SLEEP_MANUAL)&&!sleep.remaining_ms,"Remote sleep blanks and exports manual state");
+    ui_handle_key(UI_KEY_ACTIVITY);ui_sleep_snapshot(&sleep);
+    check(ui_screen_is_on()&&!(sleep.flags&CP_SLEEP_MANUAL),"Activity-only command wakes without a navigation or playback action");
     cfg.screen_off_minutes=0; ui_set_system_config(&cfg);
     lv_tick_inc(3601000); lv_timer_handler();
     check(ui_screen_is_on(),"Off setting must disable automatic screen blanking");

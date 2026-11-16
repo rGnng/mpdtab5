@@ -7,7 +7,7 @@ function styleControls(root=document){
 }
 
 const $=id=>document.getElementById(id), option=(label,value)=>new Option(label,value);
-let generalPending=0,sleepDirty=false;
+let generalPending=0,sleepDirty=false,sleepDraft=null;
 let state=null,polling=false,commandQueue=Promise.resolve(),commandPending=0;
 let cfg=null,selectedScene=null,input='key1',gesture='single',draft=[],dirty=false,sceneBusy=false,bindingSource=null,editorMode='add',sceneNameMode='create';
 let logCursor=null,logBoot=null,logBusy=false,logPaused=false,logText="";
@@ -45,9 +45,24 @@ function command(data,panel='lighting'){commandPending++;const task=async()=>{tr
 $('scene-change-sound').onchange=async()=>{const control=$('scene-change-sound'),previous=state?.general?.scene_change_sound??true;generalPending++;control.disabled=true;try{const general=await request('/api/general',{scene_change_sound:control.checked?1:0});if(state)state.general=general;panelNotice('sound','Saved')}catch(e){control.checked=previous;panelNotice('sound',e.message,true)}finally{generalPending--;control.disabled=false;await poll()}};
 $('sound-volume').oninput=()=>$('sound-volume-value').textContent=$('sound-volume').value+'%';
 $('sound-volume').onchange=async()=>{const control=$('sound-volume');generalPending++;control.disabled=true;try{const general=await request('/api/general',{sound_volume:control.value});if(state)state.general=general;panelNotice('sound','Sound volume saved')}catch(e){panelNotice('sound',e.message,true)}finally{generalPending--;control.disabled=false;await poll()}};
-$('sleep-timeout-minutes').oninput=()=>{sleepDirty=true};
+$('sleep-timeout-minutes').oninput=()=>{sleepDirty=true;sleepDraft=$('sleep-timeout-minutes').value};
 $('sleep-config').onsubmit=async e=>{e.preventDefault();const button=$('sleep-save'),control=$('sleep-timeout-minutes');generalPending++;button.disabled=control.disabled=true;try{const general=await request('/api/general',{sleep_timeout_minutes:$('sleep-timeout-minutes').value});if(state)state.general=general;sleepDirty=false;panelNotice('sleep','Sleep timer saved')}catch(e){panelNotice('sleep',e.message,true)}finally{generalPending--;button.disabled=control.disabled=false;await poll()}};
-function renderGeneral(){if(!state?.general||generalPending)return;$('scene-change-sound').checked=state.general.scene_change_sound;if(document.activeElement!==$('sound-volume')){$('sound-volume').value=state.general.sound_volume??70;$('sound-volume-value').textContent=$('sound-volume').value+'%'};if(!sleepDirty&&document.activeElement!==$('sleep-timeout-minutes'))$('sleep-timeout-minutes').value=state.general.sleep_timeout_minutes??60}
+function renderGeneral(){
+  if(!state?.general||generalPending)return;
+  $('scene-change-sound').checked=state.general.scene_change_sound;
+  if(document.activeElement!==$('sound-volume')){$('sound-volume').value=state.general.sound_volume??70;$('sound-volume-value').textContent=$('sound-volume').value+'%'}
+  const sleep=state.controller?.sleep,linked=!!sleep?.synced,control=$('sleep-timeout-minutes');
+  control.disabled=$('sleep-save').disabled=linked;
+  $('sleep-timeout-label').textContent=linked?'Tab5 sleep after (minutes)':'Sleep after (minutes)';
+  if(linked)control.value=sleep.minutes;
+  else if(document.activeElement!==control)control.value=sleepDirty?sleepDraft:state.general.sleep_timeout_minutes??60;
+  let status='Local timer';
+  if(linked){
+    const remaining=Math.ceil(sleep.remaining_ms/1000),countdown=Math.floor(remaining/60)+':'+String(remaining%60).padStart(2,'0');
+    status=!sleep.awake?'Tab5: asleep':sleep.playing?'Tab5: awake, playing':sleep.countdown?'Tab5: sleep in '+countdown:'Tab5: awake, timer off';
+  }
+  $('sleep-link-status').textContent=status;
+}
 function controllerTransport(){return state?.controller?.transport||'none'}
 function controllerConnectionName(){return {usb_cdc_acm:'USB CDC-ACM',ble:'Bluetooth',none:'Disconnected'}[controllerTransport()]||'Disconnected'}
 function renderControllerConnection(){$('controller-transport').textContent=controllerConnectionName()}

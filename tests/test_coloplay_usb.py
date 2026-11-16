@@ -86,7 +86,19 @@ int main(void){
    assert(!memcmp(p+10,(p[1]==CP_NAV_TEXT?nav.focus:nav.heading)+*used,p[9]));*used+=p[9];
  }
  assert(focus_used==95&&title_used==95);
- disconnect();assert(!s_star_feedback&&!s_navigation_heading);
+ cp_sleep_t sleep={.flags=CP_SLEEP_ON|CP_SLEEP_COUNTDOWN,.minutes=60,.remaining_ms=30000};
+ coloplay_usb_publish_sleep(&sleep);before=tx_count;assert(state(0,0));assert(tx_count==before+2);
+ offer.bytes[17]|=CP_FEATURE_SLEEP;consume(&offer,230);assert(tx_data[tx_count-1][17]&CP_FEATURE_SLEEP);
+ before=tx_count;assert(state(0,0));assert(tx_count==before+3&&cp_sleep_valid(tx_data[before+2],20)&&cp_u32(tx_data[before+2]+12)==30000);
+ sleep.flags=CP_SLEEP_MANUAL;sleep.remaining_ms=0;coloplay_usb_publish_sleep(&sleep);
+ unsigned old_commands=commands,old_keys=key_events;
+ cp_header(input.bytes,CP_VOLUME,601,456);cp_put16(input.bytes+8,233);cp_put16(input.bytes+10,1);cp_put16(input.bytes+12,1);
+ consume(&input,240);assert(commands==old_commands&&key_events==old_keys+1&&last_key==UI_KEY_ACTIVITY);
+ cp_header(input.bytes,CP_SLEEP,602,456);cp_put16(input.bytes+8,CP_SLEEP_OFF);cp_put16(input.bytes+10,1);
+ consume(&input,250);assert(last_key==UI_KEY_SCREEN_OFF);old_keys=key_events;consume(&input,251);assert(key_events==old_keys);
+ cp_put16(input.bytes+2,603);cp_put16(input.bytes+8,CP_SLEEP_WAKE);consume(&input,260);assert(last_key==UI_KEY_ACTIVITY);
+ cp_put32(input.bytes+4,455);old_keys=key_events;consume(&input,270);assert(key_events==old_keys);
+ disconnect();assert(!s_star_feedback&&!s_navigation_heading&&!s_sleep_supported);
  puts("PASS USB host handshake/challenge, ownership, deduplication, stale session, volume/media replies, navigation fragmentation and disconnect");
  return 0;
 }

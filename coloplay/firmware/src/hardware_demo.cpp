@@ -42,6 +42,7 @@ static_assert(SPI_USER_REG(SPI_PORT) == DR_REG_SPI2_BASE + 0x10,
 
 namespace HardwareDemo {
 namespace {
+SleepFollower gSleepFollow;
 constexpr float kTau = 6.28318530718f;
 constexpr uint16_t kBackground = 0x0843, kMuted = 0x8CB3;
 constexpr uint16_t kMint = 0x4FF4, kViolet = 0xA37F, kAmber = 0xFD87;
@@ -219,6 +220,7 @@ void setupEncoder() {
   gEncoder = pcnt_counter_resume(PCNT_UNIT_0) == ESP_OK;
 }
 
+void animateLeds(uint32_t now);
 void pollInputs(uint32_t now) {
   if (gSceneEpoch != SceneService::epoch()) {
     gSceneEpoch = SceneService::epoch(); gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
@@ -236,6 +238,18 @@ void pollInputs(uint32_t now) {
     ControllerService::cancel();DeviceLog::println("[inputs] queue overflow; cancelled pending inputs");
   }
   if(held||activity)gIdle.activity(now);
+  const auto sleep=gSleepFollow.update(ControllerService::snapshot().sleep,gAwake,activity,held,now);
+  if(sleep.becameLocal)gIdle.activity(now);
+  if(sleep.linked&&sleep.awake!=gAwake){
+    gAwake=sleep.awake;gSceneOverlayUntil=0;gLastFrame=now-200;updateBrightness();animateLeds(now);
+    DeviceLog::println(gAwake?"[sleep] Tab5 awake":"[sleep] Tab5 asleep; screen and LEDs off");
+  }
+  if(sleep.notify)ControllerService::send(CP_SLEEP,CP_SLEEP_ACTIVITY,1);
+  if(sleep.consume){
+    InputWorker::discard();
+    if(sleep.reset)gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
+    return;
+  }
   const bool wakeByInput=activity&&!gAwake;
   InputWorker::Event event;
   for(int i=0;i<64&&InputWorker::next(event);++i){
@@ -469,7 +483,10 @@ int applyAction(const SceneSettings::Action &a, int repetitions) {
       result=AudioDemo::snapshot().volume; break;
     case kRainbow: gLighting.mode=LightingSettings::kRainbow; lightingChanged=true; break;
     case kStatic: gLighting.mode=LightingSettings::kStatic; gLighting.color=a.colorRgb(); lightingChanged=true; break;
-    case kToggleAwake: gAwake=!gAwake;gIdle.activity(millis());break;
+    case kToggleAwake:
+      if(ControllerService::snapshot().sleep.fresh)ControllerService::send(CP_SLEEP,gAwake?CP_SLEEP_OFF:CP_SLEEP_WAKE,1);
+      else gAwake=!gAwake;
+      gIdle.activity(millis());break;
     case kSync: ClockService::requestSync(); break;
     case kTone: break; // SceneService applies the per-action sound switch.
     case kBluetoothVolume: {
@@ -571,7 +588,7 @@ void tick() {
     gSleepMinutes=GeneralService::sleepTimeoutMinutes();gIdle.configure(gSleepMinutes,now);
   }
   pollInputs(now);
-  if(gAwake&&gIdle.due(now)){
+  if(gAwake&&!ControllerService::snapshot().sleep.fresh&&gIdle.due(now)){
     gAwake=false;gSceneOverlayUntil=0;setBacklight();animateLeds(now);
     DeviceLog::println("[sleep] inactivity timeout; screen and LEDs off");
   }
@@ -745,7 +762,9 @@ bool configure(WebServer &server, String &error) {
     gLedTest = ledTest;
     gLedTestUntil = millis() + 5000;
   }
-  gAwake = awake;
+  if(server.hasArg("awake")&&ControllerService::snapshot().sleep.fresh){
+    if(!ControllerService::send(CP_SLEEP,awake?CP_SLEEP_WAKE:CP_SLEEP_OFF,1)){error="Tab5 sleep command unavailable";return false;}
+  }else gAwake = awake;
   if(server.hasArg("awake"))gIdle.activity(millis());
   updateBrightness();
   if (server.hasArg("volume")) AudioDemo::setVolume(volume);

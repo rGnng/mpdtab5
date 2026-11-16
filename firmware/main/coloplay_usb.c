@@ -16,6 +16,17 @@
 #include <stdatomic.h>
 #include <stdio.h>
 
+static _Atomic(QueueHandle_t) s_sleep_mailbox;
+static bool s_sleep_supported;
+void coloplay_usb_publish_sleep(const cp_sleep_t *state){
+    QueueHandle_t mailbox=atomic_load(&s_sleep_mailbox);
+    if(!mailbox){mailbox=xQueueCreate(1,sizeof(*state));atomic_store(&s_sleep_mailbox,mailbox);}
+    if(mailbox)xQueueOverwrite(mailbox,state);
+}
+static bool remote_screen_off(void){
+    cp_sleep_t state;QueueHandle_t mailbox=atomic_load(&s_sleep_mailbox);
+    return s_sleep_supported&&mailbox&&xQueuePeek(mailbox,&state,0)==pdTRUE&&!(state.flags&CP_SLEEP_ON);
+}
 static const char *TAG="coloplay_usb";
 typedef struct {uint8_t kind,bytes[CP_BLE_BYTES];} frame_t;
 typedef struct {uint8_t command[CP_BLE_BYTES],result;} result_t;
@@ -66,6 +77,7 @@ static void hello(uint8_t *data){
     data[16]=CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;
     if(s_star_feedback)data[17]|=CP_FEATURE_STAR;
     if(s_navigation_heading)data[17]|=CP_FEATURE_NAV_HEADING;
+    if(s_sleep_supported)data[17]|=CP_FEATURE_SLEEP;
 }
 static bool state(uint16_t request,uint8_t result){
     mpd_state_t state={0};mpd_client_get_remote_state(&state);
@@ -78,7 +90,10 @@ static bool state(uint16_t request,uint8_t result){
     cp_header(data,CP_VOLUME_STATE,request,s_nonce);cp_put_float(data+8,state.connected?state.volume:-1.0f);
     data[12]=result;data[13]=player_volume_steps();cp_put16(data+14,state.volume_request);
     cp_put_float(data+16,state.connected&&state.volume_grid_steps==data[13]?state.volume_grid_target:-1.0f);
-    return send_frame(CP_USB_DATA,data);
+    if(!send_frame(CP_USB_DATA,data))return false;
+    cp_sleep_t sleep;QueueHandle_t mailbox=atomic_load(&s_sleep_mailbox);
+    if(s_sleep_supported&&mailbox&&xQueuePeek(mailbox,&sleep,0)==pdTRUE){cp_sleep_packet(data,s_nonce,&sleep);return send_frame(CP_USB_DATA,data);}
+    return true;
 }
 static bool key(uint16_t usage,uint16_t modifiers,ui_key_t *out){
     if((usage==0x55&&!modifiers)||(usage==0x25&&(modifiers==2||modifiers==32))){*out=UI_KEY_STAR;return true;}
@@ -97,11 +112,17 @@ static void command(const uint8_t *data){
     const uint16_t id=cp_u16(data+2);
     for(unsigned i=0;i<32;++i)if(s_recent[i]==id){state(id,s_recent_result[i]);return;}
     uint8_t result=CP_ACCEPTED;
-    if(data[1]==CP_KEY){
+    if(data[1]==CP_SLEEP){
+        if(!s_sleep_supported)result=CP_UNSUPPORTED;
+        else{usb_hid_input_post_key(cp_u16(data+8)==CP_SLEEP_OFF?UI_KEY_SCREEN_OFF:UI_KEY_ACTIVITY);result=CP_APPLIED;}
+    }else if(data[1]!=CP_RELEASE&&remote_screen_off()){
+        usb_hid_input_post_key(UI_KEY_ACTIVITY);result=CP_NO_CHANGE;
+    }else if(data[1]==CP_KEY){
         ui_key_t value;
         if(!key(cp_u16(data+8),cp_u16(data+12),&value))result=CP_UNSUPPORTED;
         else{for(unsigned n=0;n<cp_u16(data+10);++n)usb_hid_input_post_key(value);result=CP_APPLIED;}
     }else{
+        if(s_sleep_supported&&data[1]!=CP_RELEASE)usb_hid_input_post_key(UI_KEY_ACTIVITY);
         const esp_err_t err=mpd_client_coloplay_command(data);
         if(err!=ESP_OK)result=err==ESP_ERR_NO_MEM?CP_BUSY:CP_FAILED;
     }
@@ -114,6 +135,7 @@ static void consume(const frame_t *frame,int64_t now){
        (data[8]&(CP_CAP_STATE|CP_CAP_VOLUME_FLOAT|CP_CAP_NAVIGATION))==(CP_CAP_STATE|CP_CAP_VOLUME_FLOAT|CP_CAP_NAVIGATION)){
         if(!s_nonce)s_nonce=cp_u32(data+4);
         if(s_nonce!=cp_u32(data+4))return;
+        s_sleep_supported=(data[17]&CP_FEATURE_SLEEP)!=0;
         s_star_feedback=(data[17]&CP_FEATURE_STAR)!=0;
         s_navigation_heading=(data[8]&CP_CAP_NAVIGATION)&&(data[17]&CP_FEATURE_NAV_HEADING);
         s_last_rx=now;uint8_t out[CP_BLE_BYTES];hello(out);send_frame(CP_USB_HELLO,out);return;
@@ -171,7 +193,7 @@ static void disconnect(void){
     const bool was_ready=atomic_exchange(&s_ready,false);atomic_store(&s_session,0);
     if(was_ready){mpd_client_coloplay_usb_release();ESP_LOGI(TAG,"USB controller released; BLE may resume");}
     if(s_device){cdc_acm_host_close(s_device);s_device=NULL;}
-    atomic_store(&s_open,false);s_nonce=0;s_last_rx=s_probe_at=0;s_star_feedback=s_navigation_heading=false;
+    atomic_store(&s_open,false);s_nonce=0;s_last_rx=s_probe_at=0;s_star_feedback=s_navigation_heading=s_sleep_supported=false;
     xQueueReset(s_rx);xQueueReset(s_results);memset(s_recent,0,sizeof(s_recent));s_recent_at=0;
     // Driver callbacks have stopped after close; parser has one producer again.
     memset(&s_parser,0,sizeof(s_parser));atomic_store(&s_gone,false);

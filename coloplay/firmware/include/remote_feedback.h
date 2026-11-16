@@ -2,11 +2,13 @@
 #include "navigation_feedback.h"
 #include "volume_prediction.h"
 #include "playback_clock.h"
+#include "sleep_feedback.h"
 
 // No I/O or allocations. The transport serializes access to this state.
 class RemoteFeedback {
  public:
   struct Snapshot {
+    SleepFeedback::State sleep;
     NavigationFeedback::State navigation;
     bool navigationSupported=false,navigationHeadingSupported=false;
     bool starSupported=false,starKnown=false,starred=false;
@@ -26,13 +28,15 @@ class RemoteFeedback {
   VolumePrediction prediction;
   PlaybackClock clock;
   NavigationFeedback navigation;
+  SleepFeedback sleep;
   void clear(){
     const bool enabled=state.enabled,ready=state.ready;
     state=Snapshot();state.enabled=enabled;state.ready=ready;
-    prediction.reset();clock.reset();navigation.reset();memset(text_,0,sizeof(text_));
+    prediction.reset();clock.reset();navigation.reset();sleep.reset();memset(text_,0,sizeof(text_));
   }
   bool accept(const uint8_t *p,size_t size,uint32_t session,uint32_t now){
     if(!session||!cp_packet(p,size)||cp_u32(p+4)!=session)return false;
+    if(p[1]==CP_SLEEP_STATE)return sleep.accept(p,size,now);
     if(p[1]==CP_NAVIGATION_HEADING||p[1]==CP_NAV_HEADING_TEXT)return state.navigationSupported&&state.navigationHeadingSupported&&navigation.accept(p,size,now);
     if(p[1]==CP_NAVIGATION||p[1]==CP_NAV_TEXT)return state.navigationSupported&&navigation.accept(p,size,now);
     if(p[1]==CP_TEXT){
@@ -50,6 +54,7 @@ class RemoteFeedback {
     if(!cp_state_valid(p,size))return false;
     state.extension=true;
     if(p[1]==CP_HELLO){
+      sleep.configure((p[17]&CP_FEATURE_SLEEP)!=0);
       state.starSupported=(p[17]&CP_FEATURE_STAR)!=0;
       if(!state.starSupported)state.starKnown=state.starred=false;
       state.navigationSupported=(p[16]&CP_CAP_NAVIGATION)!=0;
@@ -78,6 +83,7 @@ class RemoteFeedback {
   }
   Snapshot snapshot(uint32_t now)const{
     auto out=state;const bool linked=out.connected&&(out.wired||out.secured);
+    out.sleep=sleep.snapshot(now,linked);
     out.navigation=navigation.snapshot(now,linked);
     out.positionMs=clock.position(now);out.positionValid=clock.valid(now);
     out.volumeSteps=prediction.steps();out.volumePending=prediction.pending();out.volumeCompleted=prediction.completed();

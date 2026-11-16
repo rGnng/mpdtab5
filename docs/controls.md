@@ -180,3 +180,14 @@ Where a serial console is available, `w`/`s`, Enter, `b`, `p`/`n`, `[`/`]`,
 There is no separate serial `queue` word command. USB-C normally provides
 [CDC-NCM networking](usb-network.md), so use the web debug page on running MPD
 firmware rather than relying on a USB-C Serial/JTAG console.
+
+## ColoPlay shared sleep and wake
+
+With the 0.8.2 extension on both devices, Tab5's Screen Off setting controls
+connected sleep over USB serial or BLE. Playing keeps the timer idle;
+paused/stopped playback starts its countdown. Input on either device resets
+that countdown and wakes both when necessary. The first wake gesture is
+consumed through release so it cannot also select, change volume or navigate.
+Manual sleep/wake from either side follows the same state. ColoPlay's existing
+NVS sleep timer is retained for disconnected or older peers; its Device → Sleep
+panel shows the Tab5 setting and countdown read-only while synchronized.

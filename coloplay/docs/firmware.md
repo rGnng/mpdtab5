@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current verified release: **0.8.1-navigation-details**, OTA-tested on 2026-11-16.
+Current verified release: **0.8.2-sleep-sync**, OTA-tested on 2026-11-16.
 The gadget is configured
 through the **Connection**, **Controls**, **Playback**, **Lighting** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
@@ -129,6 +129,20 @@ and scene cues retain their behavior during migration, while other actions
 start off. Each action can be changed independently, including Global bindings.
 
 ### Sleep
+
+With a supporting Tab5 connected over USB CDC-ACM or BLE, ColoPlay follows
+Tab5's sleep state and timer. **Tab5 sleep after (minutes)** shows its configured
+0/30/60-minute value and is read-only here; change it in Tab5 Settings or its
+web configuration. The title shows the countdown, playback-held timer or asleep
+state. Tab5 stays awake during playback and starts its countdown when playback
+stops or pauses. Input on either device resets the shared timer. The first
+button/knob/touch gesture wakes both devices without also executing its action;
+held wake buttons stay suppressed through release. Manual screen/LED toggles
+on ColoPlay control both devices, and Tab5's manual blank also turns ColoPlay's
+screen and LEDs off. Radio, USB, web and OTA remain available.
+
+Without supported fresh sleep feedback, the saved local setting below applies.
+It is retained independently and is never overwritten by the Tab5 timer.
 
 **Sleep after (minutes)** controls inactivity sleep. The default is **60 minutes
 (1 hour)**; choose 1–1440 minutes or **0** to disable it, then **Save**. The timer

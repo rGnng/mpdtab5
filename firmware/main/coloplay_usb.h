@@ -5,6 +5,7 @@
 #include "cJSON.h"
 void coloplay_usb_start(void);
 void coloplay_usb_publish_navigation(const ui_navigation_t *state);
+void coloplay_usb_publish_sleep(const cp_sleep_t *state);
 // MPD worker hands results to the USB task, never performs USB I/O itself.
 bool coloplay_usb_result(const uint8_t *command,uint8_t result);
 void coloplay_usb_json(cJSON *root);

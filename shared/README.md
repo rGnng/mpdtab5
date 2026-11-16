@@ -40,3 +40,30 @@ at 10–19. Both fields must complete before publishing a revision. Legacy peers
 retain kind 21 with the original uint16 focus length and no heading fragments.
 Empty headings restore the generic view title. Stale/partial revisions do not
 mix an old heading with a new focus label.
+
+## Shared sleep and wake
+
+`CP_FEATURE_SLEEP` is bit 2 of feature byte 17 in capabilities/USB OFFER and
+Tab5 HELLO. Only negotiated peers receive kind 25 `CP_SLEEP_STATE`. It carries
+flags at byte 8 (awake=1, countdown running=2, playing=4, manual blank=8),
+reserved zero at 9, timeout minutes at 10–11 and remaining milliseconds at
+12–15; bytes 16–19 are zero. Timeout values are Tab5's 0, 30 or 60 minutes.
+The UI thread publishes this snapshot independently of MPD availability and
+navigation; transport tasks copy it through bounded mailboxes. USB sends it
+with its 250 ms state cadence; BLE uses its 400 ms cadence. Frame size, wire
+version and existing state/time fields remain unchanged.
+
+Kind 5 `CP_SLEEP` requests use the normal session, nonzero request ID and
+repeat-count field of 1. Usage at 8–9 is Activity=1, Screen Off=2 or Wake=3;
+bytes 12–19 are zero. Activity and Wake reset Tab5's timer without invoking a
+key binding; Screen Off uses its existing manual blank policy. Requests use
+normal transport ownership, deduplication and result routing. Input arriving
+while Tab5 is asleep wakes it and is consumed, including volume/media commands.
+ColoPlay suppresses a physical wake gesture through release, and throttles
+held/rotary activity updates. No sleep command is emitted to a legacy HID peer.
+
+Tab5 owns connected screen/LED sleep. ColoPlay follows fresh sleep state and
+extrapolates the displayed remaining time without independently deciding when
+to blank. Sleep freshness expires after two seconds; missing support or lost
+feedback restores the unchanged local fallback timer. Neither remaining time
+nor negotiated settings are written to ColoPlay NVS.

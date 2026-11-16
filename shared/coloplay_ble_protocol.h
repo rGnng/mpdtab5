@@ -11,12 +11,15 @@
 #define CP_BLE_COMMAND "a91c0003-c169-4acb-9f5d-121d621d17b5"
 #define CP_BLE_STATE "a91c0004-c169-4acb-9f5d-121d621d17b5"
 #define CP_BLE_BYTES 20
-enum {CP_BLE_VERSION=1,CP_MEDIA=1,CP_VOLUME=2,CP_KEY=3,CP_RELEASE=4,
-      CP_HELLO=16,CP_STATE=17,CP_TEXT=18,CP_TRACK=19,CP_VOLUME_STATE=20,CP_NAVIGATION=21,CP_NAV_TEXT=22,CP_NAVIGATION_HEADING=23,CP_NAV_HEADING_TEXT=24};
+enum {CP_BLE_VERSION=1,CP_MEDIA=1,CP_VOLUME=2,CP_KEY=3,CP_RELEASE=4,CP_SLEEP=5,
+      CP_HELLO=16,CP_STATE=17,CP_TEXT=18,CP_TRACK=19,CP_VOLUME_STATE=20,CP_NAVIGATION=21,CP_NAV_TEXT=22,CP_NAVIGATION_HEADING=23,CP_NAV_HEADING_TEXT=24,CP_SLEEP_STATE=25};
 enum {CP_PENDING=0,CP_ACCEPTED=1,CP_APPLIED=2,CP_FAILED=3,CP_NO_CHANGE=4,CP_UNSUPPORTED=5,CP_BUSY=6};
 enum {CP_CAP_MEDIA=1,CP_CAP_VOLUME=2,CP_CAP_KEY=4,CP_CAP_STATE=8,CP_CAP_VOLUME_FLOAT=16,CP_CAP_VOLUME_PREDICT=32,CP_CAP_VOLUME_SCALE=64,CP_CAP_NAVIGATION=128};
 /* Optional feature byte 17 in capabilities, USB OFFER and host HELLO. */
-enum {CP_FEATURE_STAR=1,CP_FEATURE_NAV_HEADING=2};
+enum {CP_FEATURE_STAR=1,CP_FEATURE_NAV_HEADING=2,CP_FEATURE_SLEEP=4};
+enum {CP_SLEEP_ACTIVITY=1,CP_SLEEP_OFF=2,CP_SLEEP_WAKE=3};
+enum {CP_SLEEP_ON=1,CP_SLEEP_COUNTDOWN=2,CP_SLEEP_PLAYING=4,CP_SLEEP_MANUAL=8};
+typedef struct {uint8_t flags;uint16_t minutes;uint32_t remaining_ms;} cp_sleep_t;
 enum {CP_STATE_STAR_KNOWN=4,CP_STATE_STARRED=8,CP_STATE_CONNECTED=128};
 enum {CP_NAV_CONTEXT=1,CP_NAV_EDITING=2,CP_NAV_LOADING=4,CP_NAV_FOCUS=8,CP_NAV_QUEUE=16,CP_NAV_SCREEN_ON=32};
 typedef struct {uint8_t view,flags;uint32_t index,count;char focus[96],heading[96];} cp_navigation_t;
@@ -39,9 +42,20 @@ static inline bool cp_command_valid(const uint8_t *p,size_t n){
       (step==0.0f||(step==1.0f/16&&(arg==1||arg==16))||(step==1.0f/64&&(arg==1||arg==64)));
   }
   if(p[1]==CP_KEY)return usage>0&&usage<=0xe7&&arg<=255&&count>=1&&count<=127;
+  if(p[1]==CP_SLEEP)return usage>=CP_SLEEP_ACTIVITY&&usage<=CP_SLEEP_WAKE&&count==1&&!arg&&!cp_u16(p+14)&&!cp_u32(p+16);
   return p[1]==CP_RELEASE;
 }
 static inline void cp_header(uint8_t *p,uint8_t kind,uint16_t id,uint32_t session){memset(p,0,CP_BLE_BYTES);p[0]=CP_BLE_VERSION;p[1]=kind;cp_put16(p+2,id);cp_put32(p+4,session);}
+static inline void cp_sleep_packet(uint8_t *p,uint32_t session,const cp_sleep_t *s){
+  cp_header(p,CP_SLEEP_STATE,0,session);p[8]=s->flags;cp_put16(p+10,s->minutes);cp_put32(p+12,s->remaining_ms);
+}
+static inline bool cp_sleep_valid(const uint8_t *p,size_t n){
+  if(!cp_packet(p,n)||p[1]!=CP_SLEEP_STATE||p[8]&~15||p[9]||cp_u32(p+16))return false;
+  const unsigned m=cp_u16(p+10),f=p[8];const uint32_t remaining=cp_u32(p+12);
+  return (m==0||m==30||m==60)&&remaining<=m*60000u&&
+    (!(f&CP_SLEEP_COUNTDOWN)||((f&CP_SLEEP_ON)&&m&&!(f&CP_SLEEP_PLAYING)))&&
+    (!(f&CP_SLEEP_MANUAL)||!(f&CP_SLEEP_ON))&&((f&CP_SLEEP_ON)||!remaining);
+}
 /* Heading-capable peers use byte lengths at 18/19 and send both text fields
  * under one revision. Legacy peers retain the uint16 focus length at 18. */
 static inline void cp_navigation_header(uint8_t *out,uint16_t revision,uint32_t session,

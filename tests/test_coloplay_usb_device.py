@@ -70,6 +70,13 @@ int main(){
  assert(snapshot().starSupported&&snapshot().starKnown&&snapshot().starred);
  data[10]=cp_state_flags(true,123,false,0,true);deliver(CP_USB_DATA,data);
  assert(snapshot().starKnown&&!snapshot().starred);
+ assert(!send(CP_SLEEP,CP_SLEEP_OFF,1,0,0)); // No negotiation yet.
+ cp_header(data,CP_HELLO,0,session);data[8]=64;data[16]=CP_CAP_VOLUME_FLOAT;data[17]=CP_FEATURE_SLEEP;
+ deliver(CP_USB_HELLO,data);assert(!send(CP_SLEEP,CP_SLEEP_OFF,1,0,0)); // Wait for initial sleep snapshot.
+ cp_sleep_t sleep={CP_SLEEP_ON|CP_SLEEP_COUNTDOWN,30,5000};cp_sleep_packet(data,session,&sleep);deliver(CP_USB_DATA,data);
+ assert(snapshot().sleep.fresh&&snapshot().sleep.minutes==30&&statusJson().find("remaining_ms")!=std::string::npos);
+ assert(send(CP_SLEEP,CP_SLEEP_OFF,1,0,0));
+ cp_sleep_packet(data,session+1,&sleep);deliver(CP_USB_DATA,data);assert(snapshot().sleep.fresh);
  // A new host challenge discards prediction and creates a new nonce, even if DTR stays asserted.
  cp_header(data,CP_HELLO,0,8);now+=300;deliver(CP_USB_PROBE,data);assert(!snapshot().wired);
  auto &wire=frames.back();parser={};for(auto b:wire)cp_usb_feed(&parser,b,&kind,offer);

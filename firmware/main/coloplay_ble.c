@@ -17,6 +17,17 @@
 #include <stdio.h>
 #include <stdatomic.h>
 
+static _Atomic(QueueHandle_t) s_sleep_mailbox;
+static bool s_sleep_supported;
+void coloplay_ble_publish_sleep(const cp_sleep_t *state){
+    QueueHandle_t mailbox=atomic_load(&s_sleep_mailbox);
+    if(!mailbox){mailbox=xQueueCreate(1,sizeof(*state));atomic_store(&s_sleep_mailbox,mailbox);}
+    if(mailbox)xQueueOverwrite(mailbox,state);
+}
+static bool remote_screen_off(void){
+    cp_sleep_t state;QueueHandle_t mailbox=atomic_load(&s_sleep_mailbox);
+    return s_sleep_supported&&mailbox&&xQueuePeek(mailbox,&state,0)==pdTRUE&&!(state.flags&CP_SLEEP_ON);
+}
 static const char *TAG="coloplay_ble";
 static const ble_uuid128_t s_service=BLE_UUID128_INIT(0xb5,0x17,0x1d,0x62,0x1d,0x12,0x5d,0x9f,0xcb,0x4a,0x69,0xc1,0x01,0,0x1c,0xa9);
 static uint16_t s_start,s_end,s_conn=0xffff,s_caps,s_command,s_command_end,s_state,s_cccd;
@@ -85,7 +96,7 @@ static void state_packet(uint8_t *out,uint16_t request,uint8_t result){
     cp_put32(out+12,state.elapsed_ms);cp_put32(out+16,state.duration_ms);
 }
 static bool queue_state(uint16_t request,uint8_t result){
-    if(s_count+(s_float_volume?2:1)>32)return false;
+    if(s_count+(s_float_volume?2:1)+(s_sleep_supported?1:0)>32)return false;
     uint8_t data[CP_BLE_BYTES];state_packet(data,request,result);
     if(!queue(data))return false;
     if(s_float_volume){
@@ -96,8 +107,10 @@ static bool queue_state(uint16_t request,uint8_t result){
             data[13]=player_volume_steps();cp_put16(data+14,state.volume_request);
             cp_put_float(data+16,state.connected&&state.volume_grid_steps==data[13]?state.volume_grid_target:-1.0f);
         }
-        return queue(data);
+        if(!queue(data))return false;
     }
+    cp_sleep_t sleep;QueueHandle_t mailbox=atomic_load(&s_sleep_mailbox);
+    if(s_sleep_supported&&mailbox&&xQueuePeek(mailbox,&sleep,0)==pdTRUE){cp_sleep_packet(data,s_session,&sleep);return queue(data);}
     return true;
 }
 static void hello_packet(uint8_t *data){
@@ -106,10 +119,11 @@ static void hello_packet(uint8_t *data){
     if(s_navigation_supported)data[16]|=CP_CAP_NAVIGATION;
     if(s_star_feedback)data[17]|=CP_FEATURE_STAR;
     if(s_navigation_heading)data[17]|=CP_FEATURE_NAV_HEADING;
+    if(s_sleep_supported)data[17]|=CP_FEATURE_SLEEP;
 }
 void coloplay_ble_reset(void){
     atomic_store(&s_navigation_active,false);
-    ++s_generation;s_start=s_end=s_caps=s_command=s_command_end=s_state=s_cccd=0;s_conn=0xffff;s_session=0;s_ready=s_writing=s_float_volume=s_prediction=s_star_feedback=s_navigation_heading=false;s_read=s_count=0;s_track=UINT64_MAX;
+    ++s_generation;s_start=s_end=s_caps=s_command=s_command_end=s_state=s_cccd=0;s_conn=0xffff;s_session=0;s_ready=s_writing=s_float_volume=s_prediction=s_star_feedback=s_navigation_heading=s_sleep_supported=false;s_read=s_count=0;s_track=UINT64_MAX;
     memset(s_recent,0,sizeof(s_recent));s_recent_next=0;s_native_steps=0;
     s_navigation_supported=s_navigation_have=s_navigation_sending=false;s_navigation_revision=0;s_next_navigation=0;
     if(s_results){xQueueReset(s_results);}mpd_client_coloplay_release();
@@ -148,6 +162,7 @@ static int caps_read(uint16_t conn,const struct ble_gatt_error *error,struct ble
     }
     s_float_volume=(bytes[8]&CP_CAP_VOLUME_FLOAT)!=0;
     s_navigation_supported=(bytes[8]&CP_CAP_NAVIGATION)!=0;
+    s_sleep_supported=(bytes[17]&CP_FEATURE_SLEEP)!=0;
     s_star_feedback=(bytes[17]&CP_FEATURE_STAR)!=0;
     s_navigation_heading=s_navigation_supported&&(bytes[17]&CP_FEATURE_NAV_HEADING);
     s_prediction=s_float_volume&&(bytes[8]&CP_CAP_VOLUME_PREDICT)&&(bytes[8]&CP_CAP_VOLUME_SCALE);
@@ -189,10 +204,16 @@ bool coloplay_ble_notification(uint16_t conn,uint16_t handle,const uint8_t *data
     const uint16_t id=cp_u16(data+2);
     for(unsigned i=0;i<16;++i)if(s_recent[i]==id){queue_state(id,s_recent_result[i]);return true;}
     s_last_id=id;s_last_result=CP_ACCEPTED;
-    if(data[1]==CP_KEY){
+    if(data[1]==CP_SLEEP){
+        if(!s_sleep_supported)s_last_result=CP_UNSUPPORTED;
+        else{usb_hid_input_post_key(cp_u16(data+8)==CP_SLEEP_OFF?UI_KEY_SCREEN_OFF:UI_KEY_ACTIVITY);s_last_result=CP_APPLIED;}
+    }else if(data[1]!=CP_RELEASE&&remote_screen_off()){
+        usb_hid_input_post_key(UI_KEY_ACTIVITY);s_last_result=CP_NO_CHANGE;
+    }else if(data[1]==CP_KEY){
         ui_key_t value;if(!key(cp_u16(data+8),cp_u16(data+12),&value))s_last_result=CP_UNSUPPORTED;
         else {for(int n=0;n<cp_u16(data+10);++n)usb_hid_input_post_key(value);s_last_result=CP_APPLIED;}
     }else{
+        if(s_sleep_supported&&data[1]!=CP_RELEASE)usb_hid_input_post_key(UI_KEY_ACTIVITY);
         const esp_err_t err=mpd_client_coloplay_command(data);
         if(err!=ESP_OK)s_last_result=err==ESP_ERR_NO_MEM?CP_BUSY:CP_FAILED;
     }

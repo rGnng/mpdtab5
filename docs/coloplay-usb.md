@@ -132,3 +132,13 @@ USB lease: the independent worker keeps heartbeats running. Forty-five
 subsequent samples retain one session/open count with zero lease timeouts,
 invalid/stale frames or drops. Early Serial/JTAG connected-flag gaps no longer
 reset a fresh protocol session.
+
+## Shared sleep and wake (0.8.2)
+
+USB CDC-ACM carries the negotiated Tab5 sleep state, timer setting and remaining
+time alongside existing playback/navigation feedback. Tab5 is authoritative;
+activity on ColoPlay resets that same timer, and manual sleep/wake works both
+ways. The first wake gesture is consumed, including volume/media actions. The
+wire feature is optional, retains the 20-byte payload and is shared with BLE;
+see the [contract](../shared/README.md#shared-sleep-and-wake) and
+[OTA validation](mpd-validation.md#shared-sleep-and-wake-ota--2026-11-16).

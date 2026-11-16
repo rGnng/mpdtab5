@@ -242,6 +242,7 @@ static bool web_key_parse(const char *name, ui_key_t *key)
 {
     static const struct { const char *name; ui_key_t key; } keys[] = {
         {"up", UI_KEY_UP},
+        {"wake", UI_KEY_ACTIVITY},
         {"down", UI_KEY_DOWN},
         {"enter", UI_KEY_ENTER},
         {"back", UI_KEY_BACK},
@@ -1491,6 +1492,10 @@ static esp_err_t status_get(httpd_req_t * req)
         player_get_snapshot(&snap);
         cJSON_AddBoolToObject(root, "starred", snap.starred);
         cJSON_AddBoolToObject(root, "screen_on", ui_screen_is_on());
+        cp_sleep_t sleep;ui_sleep_snapshot(&sleep);cJSON *idle=cJSON_AddObjectToObject(root,"sleep");
+        cJSON_AddBoolToObject(idle,"awake",sleep.flags&CP_SLEEP_ON);cJSON_AddBoolToObject(idle,"countdown",sleep.flags&CP_SLEEP_COUNTDOWN);
+        cJSON_AddBoolToObject(idle,"playing",sleep.flags&CP_SLEEP_PLAYING);cJSON_AddBoolToObject(idle,"manual",sleep.flags&CP_SLEEP_MANUAL);
+        cJSON_AddNumberToObject(idle,"minutes",sleep.minutes);cJSON_AddNumberToObject(idle,"remaining_ms",sleep.remaining_ms);
         cJSON_AddBoolToObject(root, "library_available", ui_library_available());
         player_library_status_t library;
         player_library_status(&library);

@@ -570,7 +570,7 @@ static void dispatch_key_event(const key_event_t * evt)
     }
     /* Record physical presses before gestures defer their logical action.
      * Consuming a wake press also cancels its later click/long-press action. */
-    if(evt->kind != KEY_EVENT_GESTURE_CANCEL && evt->down && bsp_display_lock(1000)) {
+    if(evt->kind != KEY_EVENT_GESTURE_CANCEL && !(evt->kind==KEY_EVENT_KEY&&evt->key==UI_KEY_SCREEN_OFF) && evt->down && bsp_display_lock(1000)) {
         bool woke = ui_user_activity();
         bsp_display_unlock();
         if(woke) {

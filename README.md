@@ -146,6 +146,11 @@ song context menus. It removes that occurrence without changing playback or
 the queue; Stared continues to use **Unstar**. This update is OTA-verified,
 including a user-confirmed removal of the final entry from a regular playlist.
 
+ColoPlay follows Tab5's sleep/wake state and 0/30/60-minute timer over USB
+serial or BLE. Activity resets the shared countdown, and the first wake gesture
+is consumed. ColoPlay retains its local timer for disconnected use. See the
+[shared sleep protocol](shared/README.md#shared-sleep-and-wake).
+
 Tap or drag the Now Playing progress bar to seek, including with Up Next open.
 The position previews while dragging and sends one seek on release. Paused
 playback stays paused; changing track or leaving the view cancels an unfinished drag.

@@ -8,7 +8,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.8.1-navigation-details** (OTA-tested on 2026-11-16), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.8.2-sleep-sync** (OTA-tested on 2026-11-16), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
@@ -123,6 +123,20 @@ These two POSTs preserve the other preference. `hardware.idle_ms` also resets
 on scene/configuration changes, explicit wake and timeout changes. It is runtime
 state, not a saved countdown. Sleep leaves HTTP/USB available and reports
 `hardware.awake=false`; Blank affects only display visibility while awake.
+
+`controller.sleep` reports the active transport's `supported`, `synced`,
+`awake`, `countdown`, `playing`, `manual`, `minutes` and `remaining_ms` values.
+These describe Tab5's UI sleep policy, independent of MPD connectivity. The
+remaining time is extrapolated while a fresh countdown is running; the
+`awake` flag changes only from authoritative Tab5 state (with a short local
+preview for a physical wake). `synced` expires after two seconds without a
+sleep snapshot. USB retains priority over BLE.
+
+When synced, `POST /api/lighting` with `awake=0|1` requests sleep/wake on Tab5,
+and the local outputs follow its response. `general.sleep_timeout_minutes`
+remains the persistent disconnected fallback; direct API edits only change
+that fallback. The web page displays the shared Tab5 timer read-only while
+synced. Sleep/wake messages and remaining time never rewrite NVS.
 
 Playback star feedback is reported in `controller.star_supported`,
 `controller.star_known` and `controller.starred` (and the Bluetooth diagnostics

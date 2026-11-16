@@ -48,6 +48,15 @@ int main(){
   cp_header(data,CP_STATE,0,7);data[9]=1;data[10]=cp_state_flags(true,123,true,0,true);
   assert(peer.accept(data,20,7,6101)&&!peer.snapshot(6101).starKnown&&!peer.snapshot(6101).starred);
 
+  // Sleep is independent of MPD availability, and stale sessions cannot blank the device.
+  cp_sleep_t sleep={CP_SLEEP_ON|CP_SLEEP_COUNTDOWN,30,10000};
+  cp_sleep_packet(data,7,&sleep);assert(!peer.accept(data,20,7,6200));
+  cp_header(data,CP_HELLO,0,7);data[17]=CP_FEATURE_SLEEP;assert(peer.accept(data,20,7,6201));
+  cp_sleep_packet(data,7,&sleep);assert(peer.accept(data,20,7,6202));
+  assert(peer.snapshot(6302).sleep.fresh&&peer.snapshot(6302).sleep.remainingMs==9900);
+  cp_put32(data+4,8);assert(!peer.accept(data,20,7,6400));assert(peer.snapshot(6400).sleep.awake);
+  assert(!peer.snapshot(8202).sleep.fresh);peer.clear();assert(!peer.snapshot(8203).sleep.supported);
+
   uint8_t frame[CP_USB_FRAME_BYTES],kind,out[CP_BLE_BYTES];cp_usb_encode(frame,CP_USB_DATA,data);
   for(unsigned chunk=1;chunk<=32;++chunk){
     cp_usb_parser_t parser={};unsigned found=0;

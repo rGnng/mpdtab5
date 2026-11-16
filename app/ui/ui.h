@@ -3,6 +3,7 @@
 
 #include "lvgl.h"
 #include "../backend/np_battery.h"
+#include "../../shared/coloplay_ble_protocol.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -38,6 +39,8 @@ typedef enum {
     UI_KEY_SHUFFLE,
     UI_KEY_REPEAT,
     UI_KEY_QUEUE,
+    UI_KEY_ACTIVITY,
+    UI_KEY_SCREEN_OFF,
 } ui_key_t;
 
 /**
@@ -71,6 +74,7 @@ void ui_attach_touch(lv_indev_t *indev);
 bool ui_user_activity(void);
 bool ui_screen_is_on(void);
 void ui_screen_off(void);
+void ui_sleep_snapshot(cp_sleep_t *out);
 void ui_set_screen_power_cb(void (*cb)(bool on));
 
 /** Enable/disable touch input (persisted by the platform layer later). */

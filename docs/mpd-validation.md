@@ -1,5 +1,36 @@
 # MPD controller validation
 
+## Shared sleep and wake OTA — 2026-11-16
+
+ColoPlay **0.8.2-sleep-sync** and Tab5 were application-only OTA-updated. Running
+identities match ColoPlay MD5 `a3befdb762e0e7378c1aa65c3d374e7e` and Tab5 ELF SHA-256
+`a3e0946d7af9ebe14ad4ff68ab5b1869bee6d809e27f250ba18c0b1f2bfebe48`.
+Tab5 owns connected screen/LED sleep, manual wake and its 0/30/60-minute timer.
+The stored local ColoPlay fallback and all saved scene/Global/appearance/network
+settings matched the snapshots. No NVS or on-disk configuration format changed.
+
+Host validation passes the full ColoPlay regression suite, all 21 native UI
+CTests, eight screen-idle policy tests, five controller transport/ownership/I/O
+fixtures and 34 input-dispatch tests. New coverage exercises negotiated sleep
+frames, legacy peers, malformed fields, stale sessions/feedback, rollover,
+bounded activity, held wake suppression, UI-thread sleep/wake dispatch and
+asleep media/volume suppression. Browser fixtures at 375/1280 pixels verify
+linked timer/status, read-only controls, fallback/draft restoration and no
+writes or JavaScript errors. Both firmware builds pass.
+
+The live USB CDC-ACM test passed Tab5-to-ColoPlay and ColoPlay-to-Tab5 sleep/wake,
+including zero screen/ring/button output while asleep. A first remote knob
+command woke both devices without moving the playlist focus; a second command
+navigated normally. Now Playing was restored. Ten samples showed matching timer
+settings and a decreasing synchronized countdown, a stable USB session, fresh
+secure BLE standby and healthy MPD, SD and USB-C CDC-NCM networking. Playback,
+volume, modes, playlists and saved settings were unchanged by these checks.
+
+The USB cable remained connected, so a physical BLE-only sleep/wake check was
+not performed. Production BLE host fixtures pass; secure BLE feedback was
+observed in standby during the USB check. The private evidence bundle is retained under
+`coloplay/backups/sleep-sync-release/`.
+
 ## Remove from Playlist OTA — 2026-11-16
 
 Regular playlist-detail song menus now include Remove from Playlist, while

@@ -14,3 +14,4 @@ void coloplay_ble_tick(int64_t now);
 void coloplay_ble_result(const uint8_t *command,uint8_t result);
 /* UI thread publishes a bounded copy; only the BLE task sends it. */
 void coloplay_ble_publish_navigation(const ui_navigation_t *state);
+void coloplay_ble_publish_sleep(const cp_sleep_t *state);

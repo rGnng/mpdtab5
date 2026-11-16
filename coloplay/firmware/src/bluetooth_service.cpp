@@ -72,7 +72,7 @@ class SecurityCallbacks:public BLESecurityCallbacks {
  }
 } gSecurityCallbacks;
 class CapsCallbacks:public BLECharacteristicCallbacks {
- void onRead(BLECharacteristic *c)override{uint8_t data[CP_BLE_BYTES];portENTER_CRITICAL(&gMux);cp_header(data,CP_HELLO,0,gSession);portEXIT_CRITICAL(&gMux);data[8]=CP_CAP_MEDIA|CP_CAP_VOLUME|CP_CAP_KEY|CP_CAP_STATE|CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;data[17]=CP_FEATURE_STAR|CP_FEATURE_NAV_HEADING;c->setValue(data,sizeof(data));}
+ void onRead(BLECharacteristic *c)override{uint8_t data[CP_BLE_BYTES];portENTER_CRITICAL(&gMux);cp_header(data,CP_HELLO,0,gSession);portEXIT_CRITICAL(&gMux);data[8]=CP_CAP_MEDIA|CP_CAP_VOLUME|CP_CAP_KEY|CP_CAP_STATE|CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;data[17]=CP_FEATURE_STAR|CP_FEATURE_NAV_HEADING|CP_FEATURE_SLEEP;c->setValue(data,sizeof(data));}
 } gCapsCallbacks;
 class StateCallbacks:public BLECharacteristicCallbacks {
  void onWrite(BLECharacteristic *c)override{
@@ -180,7 +180,8 @@ void tick(bool hardwareReady){
 }
 bool send(uint8_t kind,uint16_t usage,int count,uint16_t parameter,uint16_t duration){
   if(kind==CP_VOLUME){parameter=1;duration=0;}
-  auto s=snapshot();if(!gQueue||!s.connected||!s.secured||count<1||count>(kind==CP_VOLUME?32767:127)||(!s.extension&&kind==CP_VOLUME&&parameter!=1)){portENTER_CRITICAL(&gMux);gFeedback.state.result=CP_UNSUPPORTED;gFeedback.state.pending=false;portEXIT_CRITICAL(&gMux);return false;}
+  auto s=snapshot();if(kind==CP_SLEEP&&(!s.extension||!s.sleep.fresh))return false;
+  if(!gQueue||!s.connected||!s.secured||count<1||count>(kind==CP_VOLUME?32767:127)||(!s.extension&&kind==CP_VOLUME&&parameter!=1)){portENTER_CRITICAL(&gMux);gFeedback.state.result=CP_UNSUPPORTED;gFeedback.state.pending=false;portEXIT_CRITICAL(&gMux);return false;}
   Out out;portENTER_CRITICAL(&gMux);if(++gNextRequest==0)++gNextRequest;if(kind==CP_VOLUME&&gNextRequest==gFeedback.prediction.completed()){if(++gNextRequest==0)++gNextRequest;}cp_header(out.bytes,kind,gNextRequest,gSession);portEXIT_CRITICAL(&gMux);cp_put16(out.bytes+8,usage);cp_put16(out.bytes+10,count);cp_put16(out.bytes+12,parameter);cp_put16(out.bytes+14,duration);if(!cp_command_valid(out.bytes,sizeof(out.bytes)))return false;
   if(!s.extension&&count!=1)return false; // callers enqueue each native HID tap separately.
   portENTER_CRITICAL(&gMux);const bool room=kind!=CP_VOLUME||gFeedback.prediction.canQueue();portEXIT_CRITICAL(&gMux);

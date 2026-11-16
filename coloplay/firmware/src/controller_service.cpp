@@ -29,7 +29,7 @@ void offer(uint32_t now){
   uint8_t data[CP_BLE_BYTES];cp_header(data,CP_HELLO,0,gSession);
   cp_put32(data+9,gChallenge);
   data[8]=CP_CAP_MEDIA|CP_CAP_VOLUME|CP_CAP_KEY|CP_CAP_STATE|CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;
-  data[17]=CP_FEATURE_STAR|CP_FEATURE_NAV_HEADING;
+  data[17]=CP_FEATURE_STAR|CP_FEATURE_NAV_HEADING|CP_FEATURE_SLEEP;
   if(frame(CP_USB_OFFER,data))gLastOffer=now;
 }
 void received(uint8_t kind,const uint8_t *data,uint32_t now){
@@ -93,6 +93,7 @@ void tick(bool hardwareReady){
 bool send(uint8_t kind,uint16_t usage,int count,uint16_t parameter,uint16_t duration){
   portENTER_CRITICAL(&gMux);
   if(!gConnected){portEXIT_CRITICAL(&gMux);return BluetoothService::send(kind,usage,count,parameter,duration);}
+  if(kind==CP_SLEEP&&!gFeedback.snapshot(millis()).sleep.fresh){portEXIT_CRITICAL(&gMux);return false;}
   if(kind==CP_VOLUME){parameter=1;duration=0;}
   if(count<1||count>(kind==CP_VOLUME?32767:127)||(kind==CP_VOLUME&&!gFeedback.prediction.canQueue())){portEXIT_CRITICAL(&gMux);return false;}
   if(!++gRequest)++gRequest;
@@ -121,6 +122,8 @@ String statusJson(){
   out+=",\"star_supported\":"+String(s.starSupported?"true":"false")+",\"star_known\":"+String(s.starKnown?"true":"false")+",\"starred\":"+String(s.starred?"true":"false");
   out+=",\"playback\":"+String(s.playback)+",\"seek\":"+String(s.seek)+",\"title\":"+quote(s.title)+",\"artist\":"+quote(s.artist);
   out+=",\"position_ms\":"+String(s.positionMs)+",\"duration_ms\":"+String(s.durationMs)+",\"position_valid\":"+String(s.positionValid?"true":"false");
+  out+=",\"sleep\":{\"supported\":"+String(s.sleep.supported?"true":"false")+",\"synced\":"+String(s.sleep.fresh?"true":"false")+",\"awake\":"+String(s.sleep.awake?"true":"false");
+  out+=",\"countdown\":"+String(s.sleep.countdown?"true":"false")+",\"playing\":"+String(s.sleep.playing?"true":"false")+",\"manual\":"+String(s.sleep.manual?"true":"false")+",\"minutes\":"+String(s.sleep.minutes)+",\"remaining_ms\":"+String(s.sleep.remainingMs)+"}";
   out+=",\"navigation\":{\"fresh\":"+String(s.navigation.fresh?"true":"false")+",\"view_id\":"+String(s.navigation.ui.view)+",\"heading\":"+quote(s.navigation.ui.heading)+",\"flags\":"+String(s.navigation.ui.flags);
   out+=",\"index\":"+String(s.navigation.ui.index)+",\"count\":"+String(s.navigation.ui.count)+",\"focus\":"+quote(s.navigation.ui.focus)+"}}";return out;
 }

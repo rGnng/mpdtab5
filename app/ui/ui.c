@@ -333,6 +333,17 @@ static void ui_screen_apply(bool was_on)
 }
 
 bool ui_screen_is_on(void) { return !g_screen_idle.off; }
+void ui_sleep_snapshot(cp_sleep_t *out)
+{
+    memset(out,0,sizeof(*out));
+    out->minutes=(uint16_t)(g_screen_idle.timeout_ms/60000u);
+    out->flags=(ui_screen_is_on()?CP_SLEEP_ON:0)|(g_screen_idle.playing?CP_SLEEP_PLAYING:0)|(g_screen_idle.manual?CP_SLEEP_MANUAL:0);
+    if(ui_screen_is_on()&&g_screen_idle.timeout_ms){
+        uint32_t elapsed=g_screen_idle.playing?0:lv_tick_get()-g_screen_idle.quiet_since_ms;
+        out->remaining_ms=elapsed>=g_screen_idle.timeout_ms?0:g_screen_idle.timeout_ms-elapsed;
+        if(!g_screen_idle.playing)out->flags|=CP_SLEEP_COUNTDOWN;
+    }
+}
 
 bool ui_user_activity(void)
 {
@@ -3821,6 +3832,8 @@ static void ui_dispatch_key(ui_key_t key)
 
 static void ui_handle_key_single(ui_key_t key)
 {
+    if(key==UI_KEY_SCREEN_OFF){ui_screen_off();return;}
+    if(key==UI_KEY_ACTIVITY){ui_user_activity();return;}
     pagination_touch_mode(false);
     if(ui_user_activity()) return;
     /* Page and modal handlers can consume Enter/Back before the generic
@@ -11270,6 +11283,8 @@ static void ui_afc_sync_build(lv_obj_t * screen)
 static void ui_handle_key_repeat_raw(ui_key_t key, int count)
 {
     if(count <= 0) return;
+    if(key==UI_KEY_SCREEN_OFF){ui_screen_off();return;}
+    if(key==UI_KEY_ACTIVITY){ui_user_activity();return;}
     if(ui_user_activity()) return;
     if(!g_afc_sync_mode && !ui_screen_enabled(g_current_screen)) {
         ui_show_screen(SCR_NOW_PLAYING);
@@ -11392,6 +11407,8 @@ static void ui_fast_scroll_visual_update(lv_timer_t * timer)
 void ui_handle_key_repeat_timed(ui_key_t key, int count, uint32_t first_ms, uint32_t last_ms)
 {
     if(count <= 0) return;
+    if(key==UI_KEY_SCREEN_OFF){ui_screen_off();return;}
+    if(key==UI_KEY_ACTIVITY){ui_user_activity();return;}
     pagination_touch_mode(false);
     if(ui_user_activity()) { ui_fast_scroll_reset_reason("wake"); return; }
     if(key != UI_KEY_UP && key != UI_KEY_DOWN) {

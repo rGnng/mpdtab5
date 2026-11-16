@@ -203,7 +203,22 @@ brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
 
-The latest Tab5-only **Remove from Playlist** OTA is **2,930,784 bytes**, with
+**0.8.2-sleep-sync** is the current paired release, OTA-verified on 2026-11-16.
+ColoPlay is **3,267,072 bytes** in `ota_app0` (MD5
+`a3befdb762e0e7378c1aa65c3d374e7e`, SHA-256
+`5fdca670a8525a755327fc1966c2073aed86cdd38528111d1534c341467dbdb8`), leaving **1,451,520 bytes**
+in either application slot. Its ELF SHA-256 is
+`15021f7d782c5fea37029bf30a125f37abe377c45b603173d68190ebd20b8ccd`.
+Tab5 is **2,932,640 bytes**, with ELF SHA-256
+`a3e0946d7af9ebe14ad4ff68ab5b1869bee6d809e27f250ba18c0b1f2bfebe48`.
+The [shared-sleep validation record](../../docs/mpd-validation.md#shared-sleep-and-wake-ota--2026-11-16)
+describes test scope and retained settings. Exact images, previous known-good
+applications and source evidence are in the ignored `backups/sleep-sync-release/`.
+Remaining time and linked settings do not change any NVS format.
+
+The following image records describe preceding releases.
+
+The preceding Tab5-only **Remove from Playlist** OTA is **2,930,784 bytes**, with
 verified ELF SHA-256
 `6fff2a4c16c35b082ea0de3496683c673b92e3ce56eb27a191a71ecb73385e7e`.
 ColoPlay remains on 0.8.1. The user confirmed deleting the last song from a

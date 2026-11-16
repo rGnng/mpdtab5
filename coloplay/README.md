@@ -22,8 +22,12 @@ or a direct [USB CDC-ACM link](../docs/coloplay-usb.md). See the
 
 ## Current baseline
 
-Current verified release: **`0.8.1-navigation-details`**, OTA-tested on 2026-11-16.
-The new source corrects detail-view headings, Play/Shuffle labels and track-only
+Current verified release: **`0.8.2-sleep-sync`**, OTA-tested on 2026-11-16.
+Connected sleep/wake and the countdown follow Tab5 over USB serial or BLE.
+Input on either device wakes both; the first wake gesture is consumed. The
+local timer remains a disconnected fallback, and the web Sleep panel shows
+Tab5's timer read-only while synchronized.
+The source corrects detail-view headings, Play/Shuffle labels and track-only
 positions across Albums, Artists and Playlists; Settings returns names/values.
 Its star indicator is a small dot below the playback time line.
 Global is a protected bindings-only scope, separate from the selectable scenes.

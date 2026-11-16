@@ -366,6 +366,8 @@ static void coloplay_navigation_timer(lv_timer_t *timer)
     (void)timer;ui_navigation_t state;ui_navigation_snapshot(&state);
     coloplay_ble_publish_navigation(&state);
     coloplay_usb_publish_navigation(&state);
+    cp_sleep_t sleep;ui_sleep_snapshot(&sleep);
+    coloplay_ble_publish_sleep(&sleep);coloplay_usb_publish_sleep(&sleep);
 }
 
 void app_main(void)

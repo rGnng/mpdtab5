@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay source: **0.8.1-navigation-details**; the verified OTA
+Current ColoPlay source: **0.8.2-sleep-sync**; the verified OTA
 is in the [release record](development.md#current-verified-release).
 Both applications now live in the [MPD Tab5 repository](../../README.md), using
 the common definitions in [shared/](../../shared/README.md).
@@ -424,3 +424,15 @@ Settings values refresh during editing. Decorative headers and playback
 buttons do not inflate song positions. The optional heading stream uses
 `CP_FEATURE_NAV_HEADING`; see the [shared protocol](../../shared/README.md) for its frame layout.
 Legacy peers retain the original navigation frame format and generic headings.
+
+## Shared sleep and wake (0.8.2)
+
+A negotiated sleep channel follows the active USB CDC-ACM/BLE transport. Tab5
+owns the 0/30/60-minute timer and screen state; ColoPlay mirrors screen/LED
+sleep and shows its countdown in Device → Sleep. Input resets the shared timer
+and a sleeping device's first gesture wakes both without an action. Manual
+sleep/wake works from either side. Existing playback-start wake behavior is
+retained, and playing holds the automatic countdown. Disconnected or legacy
+peers retain ColoPlay's saved local timer without an NVS migration. See the
+[wire contract](../../shared/README.md#shared-sleep-and-wake) and
+[validation record](../../docs/mpd-validation.md#shared-sleep-and-wake-ota--2026-11-16).

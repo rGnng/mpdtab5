@@ -43,12 +43,12 @@ static int64_t esp_timer_get_time(void) { return clock_us; }
 bool ui_user_activity(void) { bool woke=!screen_on;screen_on=true;if(woke)wakes++;return woke; }
 bool ui_screen_is_on(void) { return screen_on; }
 void ui_screen_off(void) { screen_on=false;offs++; }
-void ui_handle_key(ui_key_t key) { if(key==UI_KEY_ENTER)enter_after_up=actions[UI_KEY_UP];actions[key]++; }
+void ui_handle_key(ui_key_t key) { if(key==UI_KEY_SCREEN_OFF){ui_screen_off();return;}if(key==UI_KEY_ACTIVITY){ui_user_activity();return;}if(key==UI_KEY_ENTER)enter_after_up=actions[UI_KEY_UP];actions[key]++; }
 void ui_handle_key_repeat(ui_key_t key,int n) { actions[key]+=n; }
 static uint32_t lv_tick_get(void) { return (uint32_t)(clock_us/1000); }
 void ui_handle_key_repeat_timed(ui_key_t key,int n,uint32_t first,uint32_t last) { nav_first=first;nav_last=last;nav_count=n;actions[key]+=n; }
 void ui_play_key_feedback(ui_key_t key) { (void)key;feedback++; }
-static void iap2_host_hid_release(void) {}
+static void mpd_client_hid_release(void) {}
 static int xQueuePeek(void *q,void *data,int ticks) { (void)q;(void)data;(void)ticks;return 0; }
 static int xQueueReceive(void *q,void *data,int ticks) { (void)q;(void)data;(void)ticks;return 0; }
 '''
@@ -86,6 +86,7 @@ void poll_at(int64_t now) {
   dispatch_top_right(i,ULANZI_TOP_RIGHT_POLL,now);
  }
 }
+void sleep_command(int off) {usb_hid_input_post_key(off?UI_KEY_SCREEN_OFF:UI_KEY_ACTIVITY);dispatch_key_event(&queued);}
 void keyboard_play(void) { usb_hid_input_post_key(UI_KEY_7);dispatch_key_event(&queued); }
 void keyboard_tab(void) { usb_hid_input_post_key(UI_KEY_SCREEN_NEXT);dispatch_key_event(&queued); }
 int side_prev_count(void) { return actions[UI_KEY_SCREEN_PREV]; }
@@ -118,6 +119,14 @@ int is_on(void) { return screen_on; }
     def setUp(self):self.lib.reset(1)
     def post(self,id,down,t=0,source=0,delayed=None):
         self.lib.input(source,id,down,t,t if delayed is None else delayed)
+
+    def test_sleep_command_does_not_wake_before_blanking_and_activity_is_actionless(self):
+        self.lib.reset(0);self.lib.sleep_command(1)
+        self.assertEqual((self.lib.is_on(),self.lib.wake_count(),self.lib.off_count()),(0,0,1))
+        self.lib.sleep_command(0)
+        self.assertEqual((self.lib.is_on(),self.lib.wake_count(),self.lib.play_count()),(1,1,0))
+        self.lib.sleep_command(1)
+        self.assertEqual((self.lib.is_on(),self.lib.off_count()),(0,2))
 
     def test_short_play_fires_only_on_up(self):
         self.post(2,True)
