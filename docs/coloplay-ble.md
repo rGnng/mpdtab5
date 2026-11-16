@@ -56,8 +56,10 @@ ELF SHA-256 and live round-trip checks are recorded in
 On ColoPlay, enable General → Bluetooth and Start pairing. Scan/select ColoPlay
 in Tab5's existing Bluetooth page. Encrypted bonding and reconnect reuse the
 current supervisor and saved-controller list. The private UUID service is
-`a91c0001-c169-4acb-9f5d-121d621d17b5`; the identical
-`firmware/main/coloplay_ble_protocol.h` in both projects defines 20-byte frames.
+`a91c0001-c169-4acb-9f5d-121d621d17b5`;
+the [shared protocol header](../shared/coloplay_ble_protocol.h) defines 20-byte
+frames for both applications. Compatibility headers retain their existing
+include paths.
 The extension carries commands once, without also injecting their HID reports.
 
 Supported controls: Volume Up/Down using Tab5's saved Volume Scale, mute, Play/Pause,
@@ -196,7 +198,7 @@ there is no runtime square root or logarithm. Tab5 sends the selected scale,
 actual raw scalar, confirmed raw target and completion watermark over BLE so
 ColoPlay can predict promptly and reconcile pending turns. Its physical volume
 screen shows only the icon and bar; raw values remain available in diagnostics.
-See the [full findings and examples](https://github.com/rGnng/esp32colo/blob/main/docs/tab5-integration.md#observed-macos-volume-scale).
+See the [full findings and examples](../coloplay/docs/tab5-integration.md#observed-macos-volume-scale).
 
 
 Scale validation (2026-11-15): 101 MPD tests, 8 scale/volume tests, the

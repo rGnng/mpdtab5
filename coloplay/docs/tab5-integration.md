@@ -2,6 +2,8 @@
 
 Current ColoPlay source: **0.6.33-navigation-nvs**; the last verified OTA
 is in the [release record](development.md#current-verified-release).
+Both applications now live in the [MPD Tab5 repository](../../README.md), using
+the common definitions in [shared/](../../shared/README.md).
 Volume-scale support follows Tab5 commit
 [`80acc5d`](https://github.com/rGnng/mpdtab5/commit/80acc5de9439fda8e1da57e541adb66d2f1cc20a), using matching
 shared protocol and volume-grid headers. The original recorded Tab5 peer driver is
@@ -279,8 +281,8 @@ The default effect gain is 70%; the existing codec speaker level remains separat
 
 ## Wire protocol and execution
 
-The identical `coloplay_ble_protocol.h` headers in both projects define version
-1. Every frame is 20 bytes, fitting the default ATT payload without requiring
+The [shared protocol header](../../shared/coloplay_ble_protocol.h) defines version
+1 for both applications. Every frame is 20 bytes, fitting the default ATT payload without requiring
 an MTU upgrade. All multibyte integers are little endian.
 
 | Characteristic | UUID suffix | Direction |
@@ -356,15 +358,24 @@ comparison against untouched `a34fa8a` found no new failing cases. Its focused
 MPD/volume/BLE tests and native UI CTests pass. See the release record for exact
 image fingerprints and remaining live qualification limits.
 
-## Deferred Serial companion
+## Next: USB CDC-ACM transport
 
-Serial actions and a desktop companion remain future work. Preserve the same
-logical command/state model, with distinct **Serial volume** and Bluetooth
-sources, exact grid/count requests, command results and returned playback state.
-A future sequence format must be bounded and release held keys on cancellation.
-The current console carries logs, so a companion needs explicit framing and
-must never interpret arbitrary log text as keys. CDC-ECM is USB networking;
-a Tab5 USB-A host driver/bridge would be required for a direct wired link.
+The next transport is a direct wired MPD/Tab5 controller link, using Tab5's
+USB-A host port and ColoPlay's USB-C port. It is planned, not implemented by
+the repository merge. Tab5's existing USB-C CDC-NCM network connection must
+remain available for its computer/MPD link.
+
+The wired link should reuse the shared command/state model, volume-scale
+feedback, navigation snapshots and acknowledgments. Prefer USB after a valid
+handshake and retain BLE for wireless use; session ownership and request
+deduplication must prevent one input reaching MPD twice during transport
+changes. The current ColoPlay console carries logs, so framed control messages
+must be separated from arbitrary log text. CDC-ACM is USB serial; CDC-ECM/NCM
+are USB networking and do not provide this serial transport.
+
+A PC companion and general-purpose keyboard macros are outside the current
+MPD/Tab5 focus. The original proof-of-concept firmware remains available as a
+reference for separate projects.
 
 Tab5's existing HTTP controls remain available for IP integrations:
 `POST /api/mpd/volume`, `/api/mpd/control` and `GET /api/status`. Root `volume`

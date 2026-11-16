@@ -17,6 +17,26 @@ hold-to-page controls; existing Tab5 touch, USB and Ulanzi actions remain intact
 Current [controls and context menus](docs/controls.md), [validation results](docs/mpd-validation.md),
 and [firmware build/hardware notes](firmware/README.md) are documented separately.
 
+## ColoPlay firmware
+
+This repository also contains the [ColoPlay ESP32-S3 firmware](coloplay/README.md),
+imported with its full history from [rGnng/esp32colo](https://github.com/rGnng/esp32colo).
+That project began as a proof of concept for rebuilding the LifeSmart/ColoLight
+ColoPlay firmware. Development here focuses on ColoPlay as an MPD/MPD Tab5
+controller; the original work remains a reference for other ColoPlay projects.
+
+| Directory | Purpose |
+| --- | --- |
+| `app/`, `firmware/` | Existing Tab5 application and ESP-IDF firmware |
+| `coloplay/` | ColoPlay application, hardware findings, tools and tests |
+| `shared/` | Common BLE protocol and volume-scale definitions |
+
+The two devices still build separate application images. Tab5's existing build
+commands below are unchanged. For ColoPlay, follow its
+[build and recovery guide](coloplay/docs/flash.md); run its scripts from `coloplay/`.
+BLE is the working controller link. A direct USB CDC-ACM link is planned.
+See the [migration record](docs/coloplay-migration.md) for history and validation.
+
 ## First use
 
 1. Boot with an SD card inserted. Existing Wi-Fi credentials can be imported

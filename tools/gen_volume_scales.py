@@ -13,5 +13,5 @@ for mode,count in [(16,16),(64,64),(2,50),(5,20)]:
  out.append(f'static const float volume_scale_{mode}[{count+1}]={{\n')
  for at in range(0,len(values),8):out.append('    '+','.join(values[at:at+8])+',\n')
  out.append('};\n')
-(root/'app/backend/volume_scale_tables.h').write_text(''.join(out))
+(root/'shared/volume_scale_tables.h').write_text(''.join(out))
 print('Generated 154 targets (616 bytes)')

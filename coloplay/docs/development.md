@@ -5,7 +5,9 @@ feature development; this document describes its implementation and evidence
 limits. User-facing behavior belongs in the [firmware guide](firmware.md),
 requests in the [API](api.md), and build/update procedures in [Flashing](flash.md).
 Bluetooth controls, pairing and the bidirectional media-state contract are in the
-[Tab5 integration guide](tab5-integration.md). Serial companion work remains deferred.
+[Tab5 integration guide](tab5-integration.md). The firmware now lives under
+`coloplay/` in MPD Tab5; see the [migration record](../../docs/coloplay-migration.md).
+A direct USB CDC-ACM transport is planned. A PC companion is outside the current scope.
 
 ## Compact scene persistence (0.6.33)
 

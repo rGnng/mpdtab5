@@ -8,9 +8,11 @@ in [Current verified release](development.md#current-verified-release).
 
 ## Tool setup and build
 
-Run from the repository root:
+Run from `coloplay/` in the MPD Tab5 repository. All paths and commands in this
+guide are relative to that directory:
 
 ```bash
+cd coloplay  # from the MPD Tab5 repository root
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install platformio 'esptool>=5.4,<6'

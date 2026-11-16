@@ -4,8 +4,17 @@
 
 Custom ESP32-S3 firmware and hardware reference for the **LifeSmart/ColoLight
 ColoPlay C169**. Factory firmware uses the name **ColoPLAY V1**. Hardware
-bring-up is complete; this repository is the working baseline for feature
-development. The build target and default hostname remain `coloplay`.
+bring-up is complete. This firmware now lives in
+[MPD Tab5](../README.md), alongside the Tab5 application and
+[shared protocol and volume definitions](../shared/README.md).
+The build target and default hostname remain `coloplay`.
+
+The original [esp32colo project](https://github.com/rGnng/esp32colo) began as a
+proof of concept for rebuilding the ColoPlay firmware. Its code and history
+were imported here, and remain a reference for other ColoPlay projects.
+Development now focuses on ColoPlay as an MPD/MPD Tab5 controller, using BLE
+today and a planned direct USB CDC-ACM link. See the
+[migration record](../docs/coloplay-migration.md).
 
 > **Compatibility and warranty:** This is a rewritten replacement firmware.
 > It is not compatible with the factory firmware or factory software in any way.
@@ -103,7 +112,8 @@ unsupported characters use `?`. The LED-ring progress fill can run clockwise or
 symmetrically from bottom to top. Connecting uses the
 locally bundled Iconify `andrsrxn:bluetooth-connecting` icon without text.
 General includes saved sound-effects volume for local tones and scene cues. Existing scenes and General settings remain intact.
-Serial companion actions and a dedicated long-sequence editor remain future work.
+A PC companion and general-purpose macro expansion are outside this project's
+current MPD/Tab5 focus and can be pursued separately.
 
 ## Documentation
 
@@ -137,9 +147,11 @@ For an already provisioned device, open `http://coloplay.local/` over WiFi, or
 `http://172.32.29.1/` over USB Ethernet with its default address configuration.
 The web home page contains all settings, diagnostics and the OTA link.
 
-In a checkout with `firmware/include/secrets.h` configured:
+From the repository root, enter `coloplay/`. With `firmware/include/secrets.h`
+configured, run:
 
 ```bash
+cd coloplay
 ./scripts/build_firmware.sh
 ./scripts/test_http_ota.sh
 ./scripts/ota_upload.sh http://coloplay.local
