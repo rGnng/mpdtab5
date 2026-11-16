@@ -6,6 +6,7 @@
 #include "text_util.h"
 #include "volume_grid.h"
 #include "coloplay_ble.h"
+#include "coloplay_usb.h"
 #include "coloplay_ble_protocol.h"
 #include "app_config.h"
 #include "jpeg_thumbnail.h"
@@ -76,7 +77,7 @@ static uint16_t coloplay_volume_completed;
 static float server_volume=-1.0f;
 static bool volume_integer_only=false;
 static uint8_t coloplay_seek;
-static uint32_t coloplay_session;
+static uint32_t coloplay_session,coloplay_ble_session,coloplay_usb_session,coloplay_epoch;
 static int64_t coloplay_seek_deadline,coloplay_next_seek;
 static char current_uri[2048];
 static char library_id[64];
@@ -97,6 +98,7 @@ typedef struct {
     char text[80];
     uint8_t coloplay[CP_BLE_BYTES];
     uint8_t remote_result;
+    uint32_t coloplay_epoch;
 } command_t;
 static void take(void) { xSemaphoreTake(mutex,portMAX_DELAY); }
 static void give(void) { xSemaphoreGive(mutex); }
@@ -185,8 +187,15 @@ const char *mpd_client_status(void) {
 }
 bool mpd_client_get_state(mpd_state_t *out) { if(!mutex || !out) return false; take(); *out=state; give(); return true; }
 bool mpd_client_get_remote_state(mpd_state_t *out){if(!mutex||!out)return false;take();*out=state;give();return true;}
-void mpd_client_coloplay_begin(uint32_t session){if(!mutex)return;take();coloplay_session=session;coloplay_seek=0;coloplay_volume_completed=state.volume_request=0;give();}
-void mpd_client_coloplay_release(void){if(!mutex)return;take();coloplay_session=0;coloplay_seek=0;coloplay_volume_completed=state.volume_request=0;give();}
+static void coloplay_owner(uint32_t session){
+    coloplay_session=session;++coloplay_epoch;coloplay_seek=0;
+    coloplay_volume_completed=state.volume_request=0;
+}
+void mpd_client_coloplay_begin(uint32_t session){if(!mutex)return;take();coloplay_ble_session=session;if(!coloplay_usb_session)coloplay_owner(session);give();}
+void mpd_client_coloplay_release(void){if(!mutex)return;take();coloplay_ble_session=0;if(!coloplay_usb_session)coloplay_owner(0);give();}
+void mpd_client_coloplay_usb_begin(uint32_t session){if(!mutex)return;take();coloplay_usb_session=session;coloplay_owner(session);give();}
+void mpd_client_coloplay_usb_release(void){if(!mutex)return;take();coloplay_usb_session=0;coloplay_owner(coloplay_ble_session);give();}
+bool mpd_client_coloplay_accepts(uint32_t session){if(!mutex)return false;take();const bool yes=session&&session==coloplay_session;give();return yes;}
 uint8_t mpd_client_coloplay_seek_state(void){if(!mutex)return 0;take();uint8_t value=esp_timer_get_time()<coloplay_seek_deadline?coloplay_seek:0;give();return value;}
 bool mpd_client_is_enabled(void) { return true; }
 bool mpd_client_is_connected(void) { mpd_state_t s={0}; return mpd_client_get_state(&s) && s.connected; }
@@ -200,7 +209,10 @@ static esp_err_t enqueue(command_t *c) {
 }
 esp_err_t mpd_client_coloplay_command(const uint8_t *packet){
     if(!cp_command_valid(packet,CP_BLE_BYTES))return ESP_ERR_INVALID_ARG;
-    command_t command={.kind=CMD_COLOPLAY,.remote_result=CP_APPLIED};memcpy(command.coloplay,packet,CP_BLE_BYTES);return enqueue(&command);
+    command_t command={.kind=CMD_COLOPLAY,.remote_result=CP_APPLIED};
+    take();command.coloplay_epoch=coloplay_epoch;const bool active=coloplay_session&&coloplay_session==cp_u32(packet+4);give();
+    if(!active)return ESP_ERR_INVALID_STATE;
+    memcpy(command.coloplay,packet,CP_BLE_BYTES);return enqueue(&command);
 }
 static esp_err_t text_command(const char *text) {
     command_t c={.kind=CMD_TEXT}; snprintf(c.text,sizeof(c.text),"%s",text); return enqueue(&c);
@@ -873,7 +885,7 @@ static bool queue_edit_entry(uint64_t entry,bool remove) {
 }
 static bool run_command(command_t *c) {
     if(c->kind==CMD_COLOPLAY){
-        const uint8_t *p=c->coloplay;take();bool current=coloplay_session&&coloplay_session==cp_u32(p+4);give();
+        const uint8_t *p=c->coloplay;take();bool current=coloplay_session&&coloplay_session==cp_u32(p+4)&&c->coloplay_epoch==coloplay_epoch;give();
         if(!current){c->remote_result=CP_FAILED;return true;}
         const uint16_t usage=cp_u16(p+8),count=cp_u16(p+10),parameter=cp_u16(p+12);
         if(p[1]==CP_RELEASE){take();coloplay_seek=0;give();return true;}
@@ -941,7 +953,7 @@ static bool run_command(command_t *c) {
 static void coloplay_volume_complete(const command_t *c){
     if(c->kind!=CMD_COLOPLAY||c->coloplay[1]!=CP_VOLUME)return;
     take();
-    if(coloplay_session==cp_u32(c->coloplay+4))coloplay_volume_completed=cp_u16(c->coloplay+2);
+    if(coloplay_session==cp_u32(c->coloplay+4)&&c->coloplay_epoch==coloplay_epoch)coloplay_volume_completed=cp_u16(c->coloplay+2);
     give();
 }
 static bool generation_changed(uint32_t generation) { take(); bool changed=generation!=config_revision; give(); return changed; }
@@ -1027,7 +1039,7 @@ static void worker_task(void *arg) {
                     if(!applied) { message(wire.error[0] ? wire.error : "MPD command failed"); if(wire.fd<0) ok=false; }
                     /* Poll after each action so successive toggles use live state. */
                     if(ok) ok=poll_state();
-                    if(c.kind==CMD_COLOPLAY)coloplay_ble_result(c.coloplay,applied&&ok?c.remote_result:CP_FAILED);
+                    if(c.kind==CMD_COLOPLAY){const uint8_t result=applied&&ok?c.remote_result:CP_FAILED;if(!coloplay_usb_result(c.coloplay,result))coloplay_ble_result(c.coloplay,result);}
                 }
                 free(c.keys);
                 if(!ok) break;

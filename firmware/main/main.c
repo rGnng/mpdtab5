@@ -26,6 +26,7 @@
 #include "rtc_time.h"
 #include "usb_hid_input.h"
 #include "coloplay_ble.h"
+#include "coloplay_usb.h"
 #include "usbmux_host.h"
 #include "lockdown_client.h"
 #include "afc_client.h"
@@ -364,6 +365,7 @@ static void coloplay_navigation_timer(lv_timer_t *timer)
 {
     (void)timer;ui_navigation_t state;ui_navigation_snapshot(&state);
     coloplay_ble_publish_navigation(&state);
+    coloplay_usb_publish_navigation(&state);
 }
 
 void app_main(void)
@@ -549,6 +551,7 @@ void app_main(void)
     }
 
     mpd_client_start();
+    coloplay_usb_start();
 
     /* Watch the ESP-Hosted/C6 link; a hung C6 otherwise needs a manual
      * power cycle even though the P4 UI keeps running. */

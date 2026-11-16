@@ -181,6 +181,7 @@ static bool key(uint16_t usage,uint16_t modifiers,ui_key_t *out){
 }
 bool coloplay_ble_notification(uint16_t conn,uint16_t handle,const uint8_t *data,unsigned len){
     if(conn!=s_conn||handle!=s_command){return false;}if(!s_ready||!cp_command_valid(data,len)||cp_u32(data+4)!=s_session){return true;}
+    if(!mpd_client_coloplay_accepts(s_session))return true; // USB owns controller input while its lease is active.
     const uint16_t id=cp_u16(data+2);
     for(unsigned i=0;i<16;++i)if(s_recent[i]==id){queue_state(id,s_recent_result[i]);return true;}
     s_last_id=id;s_last_result=CP_ACCEPTED;

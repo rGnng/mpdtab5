@@ -23,6 +23,7 @@ int main(){
  FakeUsb::space=0;
  for(int i=0;i<100;++i){port.write(payload.data(),payload.size());UsbConsole::tick();}
  assert(UsbConsole::queued()==8192&&UsbConsole::dropped()>0);
+ const uint8_t frame[32]={};assert(!UsbConsole::writeFrame(frame,sizeof(frame))&&UsbConsole::queued()==8192);
  FakeUsb::connected=false;UsbConsole::tick();assert(!UsbConsole::queued()&&!UsbConsole::connected()&&port.write(uint8_t(5))==0);
  UsbConsole::useNetwork(false);assert(UsbConsole::connected());Serial.space=0;assert(port.write(uint8_t(6))==1);UsbConsole::tick();assert(UsbConsole::queued()==1);
  Serial.space=1;UsbConsole::tick();assert(!UsbConsole::queued()&&Serial.tx.back()==6);

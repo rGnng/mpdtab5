@@ -15,7 +15,7 @@
 #include "scene_icons.h"
 #include "general_service.h"
 #include "idle_timer.h"
-#include "bluetooth_service.h"
+#include "controller_service.h"
 #include "volume_display.h"
 #include "playback_ring.h"
 #include "playback_service.h"
@@ -117,14 +117,14 @@ bool playbackContext(){
     screen==SceneSettings::kBluetoothPlaybackScreen||screen==SceneSettings::kBluetoothVolumeScreen||screen==SceneSettings::kBluetoothNavigationScreen||
     SceneService::ringDisplay()==SceneSettings::kRingBluetoothProgress;
 }
-bool playbackAvailable(const BluetoothService::Snapshot &s){return s.fresh&&s.available&&s.playback>=0&&s.playback<=2;}
+bool playbackAvailable(const ControllerService::Snapshot &s){return s.fresh&&s.available&&s.playback>=0&&s.playback<=2;}
 bool screenVisible(uint32_t now){
   if(!gAwake)return false;
   if(sceneOverlayVisible(now))return true;
   const auto screen=SceneService::screen();
   if(screen==SceneSettings::kBlank)return false;
-  if(screen==SceneSettings::kBluetoothPlaybackScreen){const auto s=BluetoothService::snapshot();return PlaybackSettings::screen(PlaybackService::settings(),playbackAvailable(s),s.playback)!=2;}
-  if(screen==SceneSettings::kBluetoothNavigationScreen){const auto s=BluetoothService::snapshot();if(s.navigation.fresh&&s.navigation.ui.view==0&&!(s.navigation.ui.flags&(CP_NAV_CONTEXT|CP_NAV_QUEUE|CP_NAV_LOADING|CP_NAV_EDITING)))return PlaybackSettings::screen(PlaybackService::settings(),playbackAvailable(s),s.playback)!=2;}
+  if(screen==SceneSettings::kBluetoothPlaybackScreen){const auto s=ControllerService::snapshot();return PlaybackSettings::screen(PlaybackService::settings(),playbackAvailable(s),s.playback)!=2;}
+  if(screen==SceneSettings::kBluetoothNavigationScreen){const auto s=ControllerService::snapshot();if(s.navigation.fresh&&s.navigation.ui.view==0&&!(s.navigation.ui.flags&(CP_NAV_CONTEXT|CP_NAV_QUEUE|CP_NAV_LOADING|CP_NAV_EDITING)))return PlaybackSettings::screen(PlaybackService::settings(),playbackAvailable(s),s.playback)!=2;}
   return true;
 }
 
@@ -233,7 +233,7 @@ void pollInputs(uint32_t now) {
   if(sampled.dropped!=gInputDropped){
     gInputDropped=sampled.dropped;InputWorker::discard();
     gInputGeneration=InputWorker::configure(SceneService::combinations(),SceneService::gestureBindings(),gSceneEpoch);
-    BluetoothService::cancel();DeviceLog::println("[inputs] queue overflow; cancelled pending inputs");
+    ControllerService::cancel();DeviceLog::println("[inputs] queue overflow; cancelled pending inputs");
   }
   if(held||activity)gIdle.activity(now);
   const bool wakeByInput=activity&&!gAwake;
@@ -295,7 +295,7 @@ void render(uint32_t now) {
   } else switch (SceneService::screen()) {
     case SceneSettings::kClock: drawClock(); break;
     case SceneSettings::kBluetoothVolumeScreen: {
-      const auto s=BluetoothService::snapshot();
+      const auto s=ControllerService::snapshot();
       if(!s.fresh||!s.available){bluetoothConnecting();break;}
       const float value=VolumeDisplay::value(s.fresh,s.available,s.displayVolume);
       // Fixed geometry keeps command acknowledgements from shifting the layout.
@@ -314,7 +314,7 @@ void render(uint32_t now) {
     case SceneSettings::kBluetoothNavigationScreen:
     case SceneSettings::kBluetoothPlaybackScreen: {
       using namespace PlaybackSettings;
-      const auto s=BluetoothService::snapshot();const auto &prefs=PlaybackService::settings();
+      const auto s=ControllerService::snapshot();const auto &prefs=PlaybackService::settings();
       if(SceneService::screen()==SceneSettings::kBluetoothNavigationScreen){
         const auto &nav=s.navigation;const auto &ui=nav.ui;
         if(!nav.fresh){bluetoothConnecting();break;}
@@ -365,7 +365,7 @@ void render(uint32_t now) {
 void animateLeds(uint32_t now) {
   if (gLedTest && static_cast<int32_t>(now - gLedTestUntil) >= 0) gLedTest = 0;
   const auto feedback = SceneService::feedback();
-  const auto remote=BluetoothService::snapshot();
+  const auto remote=ControllerService::snapshot();
   const float remoteVolume=VolumeDisplay::value(remote.fresh,remote.available,remote.displayVolume);
   const float remotePercent=remoteVolume<0?-1.0f:remoteVolume*100.0f;
   const int progress=PlaybackRing::progress(remote.fresh&&remote.available,remote.playback,remote.positionMs,remote.durationMs,remote.positionValid);
@@ -465,16 +465,16 @@ int applyAction(const SceneSettings::Action &a, int repetitions) {
     case kSync: ClockService::requestSync(); break;
     case kTone: break; // SceneService applies the per-action sound switch.
     case kBluetoothVolume: {
-      const auto s=BluetoothService::snapshot();const int usage=a.value>0?0xe9:0xea;
-      if(s.extension)BluetoothService::send(CP_VOLUME,usage,repetitions);
-      else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_VOLUME,usage,1))break;
-      result=VolumeDisplay::percent(BluetoothService::snapshot().displayVolume);break;
+      const auto s=ControllerService::snapshot();const int usage=a.value>0?0xe9:0xea;
+      if(s.extension)ControllerService::send(CP_VOLUME,usage,repetitions);
+      else for(int n=0;n<repetitions;++n)if(!ControllerService::send(CP_VOLUME,usage,1))break;
+      result=VolumeDisplay::percent(ControllerService::snapshot().displayVolume);break;
     }
     case kBluetoothMedia:
-      if(a.target==2)BluetoothService::send(CP_RELEASE,a.value,1);
-      else {const auto s=BluetoothService::snapshot();if(s.extension&&(a.value==0xb5||a.value==0xb6))BluetoothService::send(CP_MEDIA,a.value,repetitions,a.target,a.target?0:200);else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_MEDIA,a.value,1,a.target,a.target?0:200))break;}
+      if(a.target==2)ControllerService::send(CP_RELEASE,a.value,1);
+      else {const auto s=ControllerService::snapshot();if(s.extension&&(a.value==0xb5||a.value==0xb6))ControllerService::send(CP_MEDIA,a.value,repetitions,a.target,a.target?0:200);else for(int n=0;n<repetitions;++n)if(!ControllerService::send(CP_MEDIA,a.value,1,a.target,a.target?0:200))break;}
       break;
-    case kBluetoothKey: {const auto s=BluetoothService::snapshot();if(s.extension)BluetoothService::send(CP_KEY,a.value,repetitions,a.target);else for(int n=0;n<repetitions;++n)if(!BluetoothService::send(CP_KEY,a.value,1,a.target))break;break;}
+    case kBluetoothKey: {const auto s=ControllerService::snapshot();if(s.extension)ControllerService::send(CP_KEY,a.value,repetitions,a.target);else for(int n=0;n<repetitions;++n)if(!ControllerService::send(CP_KEY,a.value,1,a.target))break;break;}
     default: break;
   }
   if (lightingChanged) { gLightingDirty=true; gLightingChangedAt=millis(); }
@@ -645,7 +645,7 @@ String statusJson() {
   json += ",\"brightness\":" + String(LightingSettings::pwm(gLighting.ring));
   json += ",\"ring_brightness\":" + String(gLighting.ring);
   json += ",\"keys_brightness\":" + String(gLighting.keys);
-  const auto remote=BluetoothService::snapshot();
+  const auto remote=ControllerService::snapshot();
   json += ",\"progress_permille\":"+String(PlaybackRing::progress(remote.fresh&&remote.available,remote.playback,remote.positionMs,remote.durationMs,remote.positionValid));
   json += ",\"ring_effective\":" + String(gAwake ? gRingLevel : 0);
   json += ",\"keys_effective\":" + String(gAwake ? gKeysLevel : 0);

@@ -29,15 +29,12 @@ esp_err_t gStartError=ESP_OK;
 BLEServer *gServer=nullptr;BLECharacteristic *gCaps=nullptr,*gCommand=nullptr,*gKeyboard=nullptr,*gConsumer=nullptr;
 BLEAdvertising *gAdvertising=nullptr;
 portMUX_TYPE gMux=portMUX_INITIALIZER_UNLOCKED;
-VolumePrediction gVolumePrediction;
-NavigationFeedback gNavigation;
-Snapshot gState;PlaybackClock gPlaybackClock;uint32_t gSession=0;std::atomic<uint32_t> gPairUntil{0};uint16_t gNextRequest=0,gConn=0;
+RemoteFeedback gFeedback;uint32_t gSession=0;std::atomic<uint32_t> gPairUntil{0};uint16_t gNextRequest=0,gConn=0;
 std::atomic<bool> gDisconnect{false},gPersistPeer{false},gAdvertisingOn{false};uint8_t gRemote[6]={};
 struct Out {uint8_t bytes[CP_BLE_BYTES];};QueueHandle_t gQueue=nullptr;
 bool gReleasing=false;uint32_t gReleaseAt=0;uint8_t gReleaseReport=0;
 uint32_t gRequestAt=0;
 uint16_t gLoggedVolumeRequest=0;int gLoggedVolumeResult=-1;
-char gText[2][64]={};
 uint32_t gSent=0,gDropped=0;std::atomic<uint32_t> gInvalid{0};
 uint8_t gReportMap[]={
   0x05,0x01,0x09,0x06,0xa1,0x01,0x85,0x01,
@@ -50,10 +47,10 @@ bool hasPeer(){uint8_t any=0;for(auto byte:gSettings.peer)any|=byte;return any!=
 bool pairing(){return gPairUntil&&static_cast<int32_t>(gPairUntil-millis())>0;}
 String quote(const char *value){String s="\"";for(const unsigned char *p=(const unsigned char*)value;*p;++p){if(*p=='"'||*p=='\\')s+='\\';if(*p>=32)s+=char(*p);}return s+'"';}
 String address(const uint8_t *p){char out[18];snprintf(out,sizeof(out),"%02X:%02X:%02X:%02X:%02X:%02X",p[0],p[1],p[2],p[3],p[4],p[5]);return out;}
-void clearState(){gNavigation.reset();gState.navigationSupported=false;gState.request=gState.usage=0;gState.result=CP_PENDING;gPlaybackClock.reset();gVolumePrediction.reset();gState.volumePrediction=false;gState.gridTarget=-1;gState.track=0;gState.elapsedMs=gState.durationMs=0;gState.connected=gState.secured=gState.extension=gState.floatVolume=gState.fresh=gState.available=gState.pending=false;gState.volume=-1;gState.playback=255;gState.seek=0;gState.title[0]=gState.artist[0]=0;}
+void clearState(){gFeedback.clear();}
 class ServerCallbacks:public BLEServerCallbacks {
  void onConnect(BLEServer*,esp_ble_gatts_cb_param_t *param)override {
-   portENTER_CRITICAL(&gMux);clearState();gState.connected=true;gConn=param->connect.conn_id;memcpy(gRemote,param->connect.remote_bda,6);gSession=esp_random();if(!gSession)gSession=1;gNextRequest=0;portEXIT_CRITICAL(&gMux);
+   portENTER_CRITICAL(&gMux);clearState();gFeedback.state.connected=true;gConn=param->connect.conn_id;memcpy(gRemote,param->connect.remote_bda,6);gSession=esp_random();if(!gSession)gSession=1;gNextRequest=0;portEXIT_CRITICAL(&gMux);
    const auto settings=readSettings();
    if(!settings.enabled||(!pairing()&&memcmp(gRemote,settings.peer,6))){gDisconnect=true;return;}
    gServer->updateConnParams(param->connect.remote_bda,6,12,0,500);
@@ -71,7 +68,7 @@ class SecurityCallbacks:public BLESecurityCallbacks {
  void onAuthenticationComplete(esp_ble_auth_cmpl_t auth)override{
    const auto settings=readSettings();
    if(!auth.success||!settings.enabled||(!pairing()&&memcmp(auth.bd_addr,settings.peer,6))){gDisconnect=true;return;}
-   portENTER_CRITICAL(&gMux);gState.secured=true;memcpy(gRemote,auth.bd_addr,6);gPersistPeer=true;portEXIT_CRITICAL(&gMux);
+   portENTER_CRITICAL(&gMux);gFeedback.state.secured=true;memcpy(gRemote,auth.bd_addr,6);gPersistPeer=true;portEXIT_CRITICAL(&gMux);
  }
 } gSecurityCallbacks;
 class CapsCallbacks:public BLECharacteristicCallbacks {
@@ -79,31 +76,9 @@ class CapsCallbacks:public BLECharacteristicCallbacks {
 } gCapsCallbacks;
 class StateCallbacks:public BLECharacteristicCallbacks {
  void onWrite(BLECharacteristic *c)override{
-   const std::string bytes=c->getValue();const auto *p=(const uint8_t*)bytes.data();
+   const std::string bytes=c->getValue();
    portENTER_CRITICAL(&gMux);
-   if(!gState.secured||!cp_packet(p,bytes.size())||cp_u32(p+4)!=gSession){++gInvalid;portEXIT_CRITICAL(&gMux);return;}
-   if(p[1]==CP_NAVIGATION||p[1]==CP_NAV_TEXT){if(!gState.navigationSupported||!gNavigation.accept(p,bytes.size(),millis()))++gInvalid;}
-   else if(p[1]==CP_TEXT){const unsigned field=p[2]&0x7f,offset=p[3],n=p[8];if((field==1||field==2)&&offset<63&&n<=11&&offset+n<=63){char *target=gText[field-1];if(!offset)memset(target,0,64);memcpy(target+offset,p+9,n);target[offset+n]=0;if(p[2]&0x80)memcpy(field==1?gState.title:gState.artist,target,64);}else ++gInvalid;}
-   else if(p[1]==CP_TRACK){gState.track=uint64_t(cp_u32(p+8))|(uint64_t(cp_u32(p+12))<<32);gPlaybackClock.track(gState.track);gState.title[0]=gState.artist[0]=0;memset(gText,0,sizeof(gText));}
-   else if(cp_state_valid(p,bytes.size())){
-     gState.extension=true;if(p[1]==CP_HELLO){
-       gState.navigationSupported=(p[16]&CP_CAP_NAVIGATION)!=0;
-       gState.floatVolume=(p[16]&CP_CAP_VOLUME_FLOAT)!=0;
-       gState.volumePrediction=gState.floatVolume&&(p[16]&CP_CAP_VOLUME_PREDICT)&&(p[16]&CP_CAP_VOLUME_SCALE);
-       gVolumePrediction.configure(gState.volumePrediction,p[8]);
-     }
-     if(p[1]==CP_STATE){gState.receivedAt=millis();gState.available=(p[10]&0x80)!=0;if(!gState.floatVolume)gState.volume=(int8_t)p[8]<0?-1.0f:(int8_t)p[8]/100.0f;gState.playback=p[9];gState.seek=p[10]&3;gState.elapsedMs=cp_u32(p+12);gState.durationMs=cp_u32(p+16);
-       gPlaybackClock.update(gState.available,gState.playback,gState.seek,gState.elapsedMs,gState.durationMs,gState.receivedAt);
-       const uint16_t request=cp_u16(p+2);if(!gState.floatVolume&&request&&request==gState.request){gState.result=p[11];gState.pending=p[11]==CP_PENDING||p[11]==CP_ACCEPTED;}}
-     if(p[1]==CP_VOLUME_STATE&&gState.floatVolume){
-       const uint16_t request=cp_u16(p+2);
-       if(!gState.volumePrediction||gVolumePrediction.observe(cp_float(p+8),cp_float(p+16),p[13],cp_u16(p+14),request,p[12],millis())){
-         gState.volume=cp_float(p+8);
-         gState.gridTarget=gState.volumePrediction?cp_float(p+16):-1.0f;
-       }
-       if(request&&request==gState.request){gState.result=p[12];gState.pending=p[12]==CP_PENDING||p[12]==CP_ACCEPTED;}
-     }
-   }else ++gInvalid;
+   if(!gFeedback.state.secured||!gFeedback.accept((const uint8_t*)bytes.data(),bytes.size(),gSession,millis()))++gInvalid;
    portEXIT_CRITICAL(&gMux);
  }
 } gStateCallbacks;
@@ -151,7 +126,7 @@ void start(){
   auto *state=service->createCharacteristic(CP_BLE_STATE,BLECharacteristic::PROPERTY_WRITE);state->setAccessPermissions(ESP_GATT_PERM_WRITE_ENCRYPTED);state->setCallbacks(&gStateCallbacks);service->start();
   stage(9);
   gAdvertising=BLEDevice::getAdvertising();gAdvertising->addServiceUUID(CP_BLE_SERVICE);gAdvertising->addServiceUUID((uint16_t)0x1812);gAdvertising->setAppearance(0x03c1);gAdvertising->setScanResponse(true);gAdvertising->setMinPreferred(6);gAdvertising->setMaxPreferred(12);
-  gQueue=xQueueCreate(32,sizeof(Out));gStarted=gQueue!=nullptr;portENTER_CRITICAL(&gMux);gState.ready=gStarted;portEXIT_CRITICAL(&gMux);
+  gQueue=xQueueCreate(32,sizeof(Out));gStarted=gQueue!=nullptr;portENTER_CRITICAL(&gMux);gFeedback.state.ready=gStarted;portEXIT_CRITICAL(&gMux);
   stage(10);
 }
 void releaseHid(){uint8_t zero[8]={};if(gReleaseReport==1){gKeyboard->setValue(zero,8);gKeyboard->notify();}else{gConsumer->setValue(zero,2);gConsumer->notify();}gReleasing=false;}
@@ -165,20 +140,18 @@ void logVolumeState(const Snapshot &s){
     unsigned(s.request),s.result>=0&&s.result<=CP_BUSY?results[s.result]:"unknown",unsigned(s.pending),s.volume,s.preview,s.volumeSteps,s.volumePending);
 }
 } // namespace
-void load(){if(gRtcMagic==0xb1e01690){gPreviousStage=gRtcStage;gPreviousHeap=gRtcHeap;}gOpen=gPrefs.begin("bluetooth",false);Settings saved;if(gOpen&&gPrefs.getBytesLength("settings")==sizeof(saved)&&gPrefs.getBytes("settings",&saved,sizeof(saved))==sizeof(saved)&&saved.version==1&&saved.enabled<=1){gSettings=saved;gStored=true;}gState.enabled=gSettings.enabled;}
+void load(){if(gRtcMagic==0xb1e01690){gPreviousStage=gRtcStage;gPreviousHeap=gRtcHeap;}gOpen=gPrefs.begin("bluetooth",false);Settings saved;if(gOpen&&gPrefs.getBytesLength("settings")==sizeof(saved)&&gPrefs.getBytes("settings",&saved,sizeof(saved))==sizeof(saved)&&saved.version==1&&saved.enabled<=1){gSettings=saved;gStored=true;}gFeedback.state.enabled=gSettings.enabled;}
 Snapshot snapshot(){
-  portENTER_CRITICAL(&gMux);
-  const uint32_t now=millis();auto out=gState;
-  out.navigation=gNavigation.snapshot(now,out.connected&&out.secured);
-  out.positionMs=gPlaybackClock.position(now);out.positionValid=gPlaybackClock.valid(now);
-  out.volumeSteps=gVolumePrediction.steps();out.volumePending=gVolumePrediction.pending();out.volumeCompleted=gVolumePrediction.completed();
-  out.predictionReady=gVolumePrediction.ready();out.predicting=gVolumePrediction.active(now);
-  out.preview=out.predicting?gVolumePrediction.predicted():-1.0f;
-  out.displayVolume=gVolumePrediction.display(now,out.volume);
-  portEXIT_CRITICAL(&gMux);
-  out.enabled=gSettings.enabled;out.fresh=out.connected&&out.secured&&out.receivedAt&&uint32_t(now-out.receivedAt)<PlaybackClock::kFreshMs;
-  if(!out.fresh){out.available=out.positionValid=false;out.volume=out.preview=out.displayVolume=-1;out.predicting=out.predictionReady=false;out.playback=255;}
+  portENTER_CRITICAL(&gMux);auto out=gFeedback.snapshot(millis());out.enabled=gSettings.enabled;portEXIT_CRITICAL(&gMux);
   return out;
+}
+void resetInputs(){
+  if(gQueue)xQueueReset(gQueue);
+  portENTER_CRITICAL(&gMux);
+  const int steps=gFeedback.prediction.steps();gFeedback.prediction.reset();
+  gFeedback.prediction.configure(gFeedback.state.volumePrediction,steps);
+  gFeedback.state.pending=false;gFeedback.state.request=0;
+  portEXIT_CRITICAL(&gMux);
 }
 void tick(bool hardwareReady){
   gRecovery=!hardwareReady;if(!hardwareReady)return;
@@ -186,10 +159,10 @@ void tick(bool hardwareReady){
   if(gDisconnect||(!gSettings.enabled&&snapshot().connected)){gDisconnect=false;gServer->disconnect(gConn);}
   if(gPersistPeer){portENTER_CRITICAL(&gMux);memcpy(gSettings.peer,gRemote,6);gPersistPeer=false;portEXIT_CRITICAL(&gMux);gStored=gOpen&&gPrefs.putBytes("settings",&gSettings,sizeof(gSettings))==sizeof(gSettings);gPairUntil=0;DeviceLog::println("[bluetooth] secure bonded peer connected");}
   auto s=snapshot();const bool advertise=gSettings.enabled&&!s.connected&&(pairing()||hasPeer());
-  if(s.pending&&uint32_t(millis()-gRequestAt)>5000){portENTER_CRITICAL(&gMux);gState.pending=false;gState.result=CP_FAILED;portEXIT_CRITICAL(&gMux);s=snapshot();}
+  if(s.pending&&uint32_t(millis()-gRequestAt)>5000){portENTER_CRITICAL(&gMux);gFeedback.state.pending=false;gFeedback.state.result=CP_FAILED;portEXIT_CRITICAL(&gMux);s=snapshot();}
   portENTER_CRITICAL(&gMux);
-  const bool predictionTimeout=gVolumePrediction.expire(millis());
-  if(!s.fresh||!s.available)gVolumePrediction.invalidate();
+  const bool predictionTimeout=gFeedback.prediction.expire(millis());
+  if(!s.fresh||!s.available)gFeedback.prediction.invalidate();
   portEXIT_CRITICAL(&gMux);
   if(predictionTimeout)DeviceLog::println("[bluetooth] volume prediction timeout; waiting for host synchronization");
   // Log command transitions on the main task, outside BLE callback locks.
@@ -207,15 +180,15 @@ void tick(bool hardwareReady){
 }
 bool send(uint8_t kind,uint16_t usage,int count,uint16_t parameter,uint16_t duration){
   if(kind==CP_VOLUME){parameter=1;duration=0;}
-  auto s=snapshot();if(!gQueue||!s.connected||!s.secured||count<1||count>(kind==CP_VOLUME?32767:127)||(!s.extension&&kind==CP_VOLUME&&parameter!=1)){portENTER_CRITICAL(&gMux);gState.result=CP_UNSUPPORTED;gState.pending=false;portEXIT_CRITICAL(&gMux);return false;}
-  Out out;portENTER_CRITICAL(&gMux);if(++gNextRequest==0)++gNextRequest;if(kind==CP_VOLUME&&gNextRequest==gVolumePrediction.completed()){if(++gNextRequest==0)++gNextRequest;}cp_header(out.bytes,kind,gNextRequest,gSession);portEXIT_CRITICAL(&gMux);cp_put16(out.bytes+8,usage);cp_put16(out.bytes+10,count);cp_put16(out.bytes+12,parameter);cp_put16(out.bytes+14,duration);if(!cp_command_valid(out.bytes,sizeof(out.bytes)))return false;
+  auto s=snapshot();if(!gQueue||!s.connected||!s.secured||count<1||count>(kind==CP_VOLUME?32767:127)||(!s.extension&&kind==CP_VOLUME&&parameter!=1)){portENTER_CRITICAL(&gMux);gFeedback.state.result=CP_UNSUPPORTED;gFeedback.state.pending=false;portEXIT_CRITICAL(&gMux);return false;}
+  Out out;portENTER_CRITICAL(&gMux);if(++gNextRequest==0)++gNextRequest;if(kind==CP_VOLUME&&gNextRequest==gFeedback.prediction.completed()){if(++gNextRequest==0)++gNextRequest;}cp_header(out.bytes,kind,gNextRequest,gSession);portEXIT_CRITICAL(&gMux);cp_put16(out.bytes+8,usage);cp_put16(out.bytes+10,count);cp_put16(out.bytes+12,parameter);cp_put16(out.bytes+14,duration);if(!cp_command_valid(out.bytes,sizeof(out.bytes)))return false;
   if(!s.extension&&count!=1)return false; // callers enqueue each native HID tap separately.
-  portENTER_CRITICAL(&gMux);const bool room=kind!=CP_VOLUME||gVolumePrediction.canQueue();portEXIT_CRITICAL(&gMux);
+  portENTER_CRITICAL(&gMux);const bool room=kind!=CP_VOLUME||gFeedback.prediction.canQueue();portEXIT_CRITICAL(&gMux);
   if(!room){++gDropped;return false;}
   if(xQueueSend(gQueue,&out,0)!=pdTRUE){++gDropped;return false;}
   gRequestAt=millis();
-  portENTER_CRITICAL(&gMux);gState.request=gNextRequest;gState.usage=usage;gState.result=s.extension?CP_PENDING:CP_ACCEPTED;gState.pending=s.extension;
-  if(kind==CP_VOLUME&&s.extension)gVolumePrediction.queued(gNextRequest,(usage==0xe9?1:-1)*count,millis());
+  portENTER_CRITICAL(&gMux);gFeedback.state.request=gNextRequest;gFeedback.state.usage=usage;gFeedback.state.result=s.extension?CP_PENDING:CP_ACCEPTED;gFeedback.state.pending=s.extension;
+  if(kind==CP_VOLUME&&s.extension)gFeedback.prediction.queued(gNextRequest,(usage==0xe9?1:-1)*count,millis());
   portEXIT_CRITICAL(&gMux);return true;
 }
 void cancel(){if(gQueue)xQueueReset(gQueue);const auto s=snapshot();if(s.connected&&s.secured)send(CP_RELEASE,0,1);}

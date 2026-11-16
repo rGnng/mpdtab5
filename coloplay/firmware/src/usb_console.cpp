@@ -57,4 +57,11 @@ uint32_t dropped(){
 size_t queued(){
   portENTER_CRITICAL(&gTxLock);const size_t count=gTx.size();portEXIT_CRITICAL(&gTxLock);return count;
 }
+bool writeFrame(const uint8_t *data,size_t size){
+  if(!connected())return false;
+  portENTER_CRITICAL(&gTxLock);
+  const bool room=size<=8192-gTx.size();
+  if(room)gTx.append(data,size);
+  portEXIT_CRITICAL(&gTxLock);return room;
+}
 }

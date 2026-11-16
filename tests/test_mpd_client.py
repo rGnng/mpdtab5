@@ -59,7 +59,7 @@ static bool volume_integer_only=false;
 static int mpd_playlist_version;
 static mpd_config_t config;
 static char current_uri[4096];
-static uint32_t coloplay_session=7;static uint8_t coloplay_seek;static int64_t coloplay_seek_deadline,coloplay_next_seek;
+static uint32_t coloplay_epoch;static uint32_t coloplay_session=7;static uint8_t coloplay_seek;static int64_t coloplay_seek_deadline,coloplay_next_seek;
 static int64_t esp_timer_get_time(void) { return 1000000; }
 static bool remote_repeat,remote_single,mpd_updating;
 static unsigned reported_queue_size, database_songs;
@@ -161,6 +161,9 @@ int test_coloplay(int kind,int usage,int count,int parameter,int level,int play,
     cp_header(c.coloplay,kind,1,session);cp_put16(c.coloplay+8,usage);cp_put16(c.coloplay+10,count);cp_put16(c.coloplay+12,parameter);
     server_volume=level;state.volume=level<0?-1.0f:level/100.0f;state.play_status=play;coloplay_session=7;
     if(!run_command(&c)){return CP_FAILED;}return c.remote_result;
+}
+int test_coloplay_retired_epoch(void) {
+    ++coloplay_epoch;int result=test_coloplay(2,233,1,1,50,1,7);--coloplay_epoch;return result;
 }
 float test_fraction(void) { return state.volume; }
 float test_grid_target(void) { return state.volume_grid_target; }
@@ -716,6 +719,9 @@ static unsigned uri_count,uri_used;
             value=self.percent_text(self.target(index,64))
             self.server(self.volume_poll('25.4')+[(f'setvol {value}\n'.encode(),b'OK\n')])
             self.assertEqual(self.lib.test_coloplay(2,usage,3,1,0,1,7),2);self.threads[-1].join()
+
+    def test_coloplay_rejects_queued_command_after_transport_handover(self):
+        self.assertEqual(self.lib.test_coloplay_retired_epoch(),3)
 
     def test_coloplay_rejects_old_session_and_missing_mixer(self):
         self.assertEqual(self.lib.test_coloplay(2,233,1,64,50,1,999),3)

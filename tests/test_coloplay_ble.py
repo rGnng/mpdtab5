@@ -38,6 +38,7 @@ static int os_mbuf_copydata(struct fake_mbuf *m,int offset,int len,void *out){me
 static int64_t clock_us=1000000;
 static int64_t esp_timer_get_time(void){return clock_us;}
 static int ble_gap_update_params(int conn,struct ble_gap_upd_params *p){(void)conn;assert(p->itvl_min==6&&p->itvl_max==12&&p->latency==0);return 0;}
+static bool mpd_client_coloplay_accepts(uint32_t session){return session!=0;}
 static int native_steps=64;
 static int player_volume_steps(void){return native_steps;}
 typedef struct {bool connected;float volume,volume_grid_target;uint8_t volume_grid_steps;uint16_t volume_request;int play_status;uint32_t elapsed_ms,duration_ms,revision;uint64_t track_key;char title[128],artist[128];} mpd_state_t;

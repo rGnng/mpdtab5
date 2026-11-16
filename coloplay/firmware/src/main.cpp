@@ -22,6 +22,8 @@
 #include "playback_service.h"
 #include "lighting_settings.h"
 #include "bluetooth_service.h"
+#include "controller_service.h"
+#include "controller_io.h"
 #include "usb_network.h"
 #include "usb_console.h"
 #include "web_ui.h"
@@ -30,7 +32,7 @@
 namespace {
 
 constexpr const char *kHostname = "coloplay";
-constexpr const char *kFirmwareVersion = "0.6.33-navigation-nvs";
+constexpr const char *kFirmwareVersion = "0.7.2-usb-lease";
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
 
@@ -191,6 +193,7 @@ String statusJson() {
   json += "\"clock\":" + ClockService::statusJson() + ",";
   json += "\"usb\":" + UsbNetwork::statusJson() + ",";
   json += "\"general\":" + GeneralService::statusJson() + ",";
+  json += "\"controller\":" + ControllerService::statusJson() + ",";
   json += "\"bluetooth\":" + BluetoothService::statusJson() + ",";
   json += "\"scene\":" + SceneService::statusJson() + ",";
   json += "\"hardware\":" + HardwareDemo::statusJson();
@@ -237,13 +240,16 @@ void handleSerialCommand(const String &line) {
 }
 
 void pollSerial() {
-  while (UsbConsole::stream().available() > 0) {
-    char c = static_cast<char>(UsbConsole::stream().read());
+  for (unsigned n=0;n<512;++n) {
+    const int value=ControllerIo::consoleRead();if(value<0)break;
+    char c=static_cast<char>(value);
     if (c == '\n' || c == '\r') {
       if (!gSerialLine.isEmpty()) {
         handleSerialCommand(gSerialLine);
         gSerialLine = "";
       }
+    } else if (static_cast<uint8_t>(c)<32||static_cast<uint8_t>(c)>126) {
+      gSerialLine="";
     } else if (gSerialLine.length() < 128) {
       gSerialLine += c;
     }
@@ -503,7 +509,7 @@ void setup() {
 
   setupHttp();
   ClockService::tick();
-  if (gRecoveryMode) UsbNetwork::begin(true);
+  if (gRecoveryMode) { UsbNetwork::begin(true); ControllerIo::begin(); }
   // Give both update methods a recovery window before touching peripherals.
   gHardwareStartAt = millis() + 5000;
 }
@@ -529,7 +535,6 @@ void loop() {
   HttpOta::tick();
   ClockService::tick();
   if(!gArduinoOtaBusy&&!HttpOta::busy())SceneService::tick();
-  UsbConsole::tick();
   pollSerial();
   if (!gArduinoOtaBusy && !HttpOta::busy()) {
     if (!gHardwareStarted && !gRecoveryMode &&
@@ -539,6 +544,7 @@ void loop() {
       if (gDemoPrefsOpen) demoPrefs.putUChar("attempts", gBootAttempts);
       HardwareDemo::begin();
       UsbNetwork::begin(false);
+      ControllerIo::begin();
       gHardwareStartedAt = millis();
     }
     HardwareDemo::tick();
@@ -550,5 +556,6 @@ void loop() {
       if (gDemoPrefsOpen) demoPrefs.putUChar("attempts", 0);
     }
   }
+  ControllerIo::tick(HardwareDemo::ready()&&!gRecoveryMode);
   delay(2);
 }

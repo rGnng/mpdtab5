@@ -5,7 +5,7 @@ import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = '#include "coloplay_ble_protocol.h"\n#include "volume_grid.h"\n'
+SOURCE = '#include "coloplay_ble_protocol.h"\n#include "volume_grid.h"\n#include "coloplay_usb_frame.h"\n'
 
 
 class SharedControllerTests(unittest.TestCase):
@@ -22,7 +22,7 @@ class SharedControllerTests(unittest.TestCase):
                                                   text=True, capture_output=True, check=True).stdout)
                     dependencies = subprocess.run(command + ['-M', '-'], input=SOURCE,
                                                   text=True, capture_output=True, check=True).stdout
-                    for name in ('coloplay_ble_protocol.h', 'volume_grid.h', 'volume_scale_tables.h'):
+                    for name in ('coloplay_ble_protocol.h', 'volume_grid.h', 'volume_scale_tables.h', 'coloplay_usb_frame.h'):
                         self.assertIn('shared/' + name, dependencies)
                 self.assertEqual(outputs[0], outputs[1])
 

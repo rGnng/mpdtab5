@@ -9,7 +9,7 @@
 #include "scene_order.h"
 #include "general_service.h"
 #include "audio_demo.h"
-#include "bluetooth_service.h"
+#include "controller_service.h"
 #include "tab5_navigation_profile.h"
 #include "scene_record_codec.h"
 #include <esp_heap_caps.h>
@@ -135,7 +135,7 @@ bool commit(String &error,int direction=0,bool sceneSound=true) {
   }
   const int previous=gSettings.active;
   const int previousPosition=SceneOrder::position(gOrder,gSettings,previous);
-  BluetoothService::cancel();
+  ControllerService::cancel();
   gSettings=gCandidate; gStored=true;gLevelDirty=false;++gRevision; ++gEpoch; gFeedback.clear();
   const unsigned cue=SceneCue::frequency(previous!=gSettings.active&&sceneSound&&GeneralService::sceneChangeSound(),
     previousPosition,SceneOrder::position(gOrder,gSettings,gSettings.active),direction);
@@ -322,7 +322,7 @@ bool configure(WebServer &server,String &error) {
     }
     if(!saveOrder(order,error))return false;
     if(std::memcmp(&gOrder,&order,sizeof(order))){
-      gOrder=order;++gRevision;++gEpoch;gFeedback.clear();BluetoothService::cancel();
+      gOrder=order;++gRevision;++gEpoch;gFeedback.clear();ControllerService::cancel();
     }
     return true;
   }

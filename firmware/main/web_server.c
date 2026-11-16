@@ -34,6 +34,7 @@
 #include "driver/i2c_master.h"
 #include "serial_input.h"
 #include "usb_hid_input.h"
+#include "coloplay_usb.h"
 #include "usb_network.h"
 #include "usb_boot_guard.h"
 #include "usbmux_host.h"
@@ -1408,6 +1409,7 @@ static esp_err_t status_get(httpd_req_t * req)
     }
     cJSON_AddNumberToObject(root, "usb_mode", g_app_config.usb_mode);
     usb_boot_guard_json(root);
+    coloplay_usb_json(root);
     usb_network_status_t usb_network; usb_network_status(&usb_network);
     cJSON *usb_json=cJSON_AddObjectToObject(root,"usb_network");
     cJSON_AddBoolToObject(usb_json,"ready",usb_network.ready);
