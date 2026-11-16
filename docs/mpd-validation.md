@@ -1,5 +1,31 @@
 # MPD controller validation
 
+## ColoPlay Global and star-feedback OTA — 2026-11-16
+
+The current paired release uses source **`5aeb1c3`**, ColoPlay
+**0.8.0-global-bindings** in `ota_app0`, and Tab5 ELF SHA-256
+`102fbf7bb669c06dca09d461f56eeb56d3cd51cad252a4cb984bdaf4380ffa3d`.
+Both application identities were verified after OTA. MPD, SD and USB-C CDC-NCM
+remained online while USB-A carried ColoPlay CDC-ACM controls.
+
+The schema-9 migration retained the active Navigation scene and all 14 saved
+bindings. Global became a protected shared-binding scope; it could not be
+activated, targeted or reached by Next/Previous scene cycling. Other saved
+settings matched the pre-OTA snapshots.
+
+The existing Button 4 Hold binding starred/unstarred the current song through
+the saved-binding Run path. Both USB and Bluetooth standby feedback matched
+Tab5's confirmed state; the initial unstarred state was restored. BLE sent no
+duplicate commands while USB owned input. View switching returned to Now
+Playing. Device-served web pages passed responsive layout/connection checks;
+18 samples over 43 seconds showed no resets, invalid/stale frames, drops or
+lease timeouts. Physical gesture timing and wireless-only command routing were
+not retested for this release.
+
+Exact image hashes, recovery compatibility and evidence scope are maintained
+in the [ColoPlay release record](../coloplay/docs/development.md#current-verified-release).
+Earlier dated checks below retain their original image identities.
+
 ## ColoPlay navigation OTA verification — 2026-11-16
 
 Application-only OTA verified Tab5 ELF SHA-256

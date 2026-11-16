@@ -37,6 +37,10 @@ commands below are unchanged. For ColoPlay, follow its
 ColoPlay supports [USB CDC-ACM controls and feedback](docs/coloplay-usb.md)
 through Tab5's USB-A port, with BLE for wireless use. USB has priority after
 its handshake; both web interfaces show the active ColoPlay connection.
+ColoPlay's **Global** view holds shared bindings and cannot be activated as a
+scene. Playback shows Tab5's confirmed star state beside the play/pause icon.
+The [verified 0.8.0 release](coloplay/docs/development.md#current-verified-release)
+records the paired OTA images, preserved settings and live checks.
 See the [migration record](docs/coloplay-migration.md) for history and validation.
 
 ## First use

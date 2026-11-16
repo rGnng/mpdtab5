@@ -9,6 +9,12 @@ Bluetooth controls, pairing and the bidirectional media-state contract are in th
 `coloplay/` in MPD Tab5; see the [migration record](../../docs/coloplay-migration.md).
 A direct [USB CDC-ACM transport](../../docs/coloplay-usb.md) is implemented. A PC companion is outside the current scope.
 
+Current implementation uses Global plus eight selectable scenes, schema 9
+(3364 raw bytes / CSR1), a version-2 16-byte order, and USB-first/BLE-fallback
+controller I/O. The [verified release](#current-verified-release) records exact
+images and live checks. Version-labelled sections retain historical behavior
+and sizes; use the current architecture and persistence table for new work.
+
 ## Compact scene persistence (0.6.33)
 
 The first live navigation-scene creation exposed an NVS save failure with the
@@ -704,6 +710,8 @@ MD5 `e9a9c17bf4b88ed4e3adfe53a58f1d71`; its evidence remains under
 | File / area | Responsibility |
 |---|---|
 | `firmware/src/bluetooth_service.cpp` | Bonded HID/custom GATT transport, bounded queues and returned remote state |
+| `firmware/src/controller_service.cpp`, `controller_io.cpp` | USB challenge/session, fixed USB priority, BLE fallback and serial worker independent of HTTP |
+| `firmware/include/remote_feedback.h` | Shared playback, navigation, star and volume-feedback decoding/freshness for either transport |
 | `firmware/include/coloplay_ble_protocol.h`, `volume_grid.h`, `volume_prediction.h`, `volume_display.h` | Shared wire/grid contract, bounded synchronized prediction and display rendering |
 | `firmware/src/panic_capture.cpp` | Retained bounded panic diagnosis and crashing ELF identity across reset |
 | `firmware/src/main.cpp` | Startup, WiFi/NVS, shared HTTP routes, serial commands, OTA and recovery orchestration |
@@ -766,7 +774,9 @@ recovery guard described in [Flashing](flash.md#recovery).
 | `lighting` | Versioned `settings` blob, 44 bytes | Manual levels and mode/color; retired fields reserved; web saves before apply; knob writes debounced 1.5 s |
 | `usbnet` | Versioned `settings` blob, 12 bytes | Mode, prefix, device/host addresses saved together; restart to apply |
 | `general` | Version-3 `settings` blob, 16 bytes | Scene-change sound, sound gain and sleep timeout in minutes (default 60); save before apply |
-| `scenes` | Version-7 `settings` blob, 3304 bytes; version-1 `order`, 12 bytes | 8 scenes, 64 gesture bindings, 3 actions each; active selection and stable IDs preserved; display/navigation order saved independently |
+| `scenes` | Schema-9 `settings`, 3364 logical bytes, normally CSR1; version-2 `order`, 16 bytes | Protected Global plus 8 selectable scenes, 64 bindings across all scopes, 3 actions each; active selection and stable IDs preserved |
+| `bt-playback` | Version-3 `settings`, 208 bytes | Separate Playing/Paused/Stopped lighting plans and screen preferences, shared by USB and Bluetooth |
+| `bluetooth` | Version-1 `settings`, 16 bytes; stack bond storage | Enable state, saved peer and encrypted reconnect |
 | `demo` | Image MD5 and failed-start attempts | Recovery state, not user configuration |
 
 Invalid/missing settings blobs use their declared defaults. Normal OTA preserves
@@ -881,21 +891,27 @@ the current face draws only the 64 px hours/minutes and sync-dependent colon.
 
 InputWorker owns GPIO/PCNT sampling and binding-aware gesture recognition.
 Generation-tagged events cross its bounded queue to the main loop, where
-SceneService resolves the active scene's binding or a matching Global Default
-binding. Up to three actions execute in order through the hardware/Bluetooth
+SceneService resolves the active scene's binding or a matching shared Global
+binding. Up to three actions execute in order through the hardware/controller
 handlers. Scene switching ends the list, advances the epoch and cancels pending
 gestures. Held combination modifiers can anchor repeated trigger presses.
 
 Each key and the knob ring have independent feedback deadlines and brightness
 selection. Combinations target every member key. Percentage feedback scales a
-button's own LED or fills the knob ring using the scene's clockwise/symmetric
-style. Screen overrides have a separate lifetime. BluetoothService supplies
-fresh returned MPD volume, playback state, metadata and position; the shared
-playback clock drives both display and ring. Serial companion work is deferred.
+button's own LED or fills the knob ring using the configured volume-feedback
+style. Screen overrides have a separate lifetime. ControllerService selects the
+USB snapshot after its handshake, otherwise BluetoothService's secure snapshot.
+Both use RemoteFeedback for MPD volume, playback, confirmed current-track star,
+metadata, position and focus. The playback clock drives both display and ring;
+Playback settings own progress/volume fill styles. Serial companion work is deferred.
 
-Scene definitions/actions stay in the fixed 3304-byte settings record; a separate
-12-byte permutation controls display/Next/Previous order without changing IDs.
-New scenes append, Default stays protected and explicit targets remain IDs.
+Schema 9 stores Global and eight selectable scene slots in 3364 logical bytes,
+compressed with CSR1 under the existing key. A separate 16-byte version-2
+permutation controls actual-scene order without changing IDs. Global is pinned
+first in the editor, contains bindings only and cannot be activated, reordered
+or targeted by scene actions. All its bindings are shared automatically; a
+local key/event match wins. New scenes append, explicit targets remain IDs,
+and deletion must leave at least one actual scene.
 Configuration saves before application; rapid brightness adjustments debounce
 writes for 1.5 seconds. Scene selection and reordered tabs save immediately.
 The USB exact-old-default migration changes .21/24 + .30 to

@@ -59,24 +59,26 @@ Standard HID alone supplies neither exact fractional steps nor volume feedback.
 
 ## Actions and screens
 
-The offline command selector groups existing Device actions by purpose and adds
-Bluetooth actions. Serial is deferred; unavailable actions are not selectable.
+The offline command selector groups local actions by purpose and remote actions
+under **MPD Tab5**. The same remote commands use USB CDC-ACM or Bluetooth, with
+USB taking priority after its handshake. PC-companion serial actions remain
+deferred. Legacy `bluetooth_*` API identifiers are retained for saved bindings.
 
 | Group | Controls |
 |---|---|
 | Device Scenes | Next Scene, Previous Scene, Switch to Scene |
 | Device Display / Lighting | Screen/ring/button brightness, rainbow, static color |
 | Device Speaker / System | Local speaker volume, tone, sleep/wake, time sync |
-| Bluetooth Volume | Volume Up/Down; Tab5 selects its configured grid |
-| Bluetooth Playback | Play/Pause, Play, Pause, Stop, Previous Track, Next Track, Fast Forward, Rewind, Mute |
-| Bluetooth Keyboard | Keyboard HID usage and modifier mask |
+| MPD Tab5: MPD volume | Volume Up/Down; Tab5 selects its configured grid |
+| MPD Tab5: MPD playback control | Play/Pause, Play, Pause, Stop, Previous Track, Next Track, Fast Forward, Rewind, Mute |
+| MPD Tab5: Tab5 key | Keyboard HID usage and modifier mask |
 
 Play/Pause, Previous Track and Next Track follow
 [Apple remote-command naming](https://developer.apple.com/documentation/mediaplayer/mpremotecommandcenter).
 HID identifiers use Consumer page `0x0C` and Keyboard page `0x07`, rather than
 platform virtual-key codes. See the shared protocol header for exact values.
 
-**Bluetooth volume** and **Bluetooth playback** are available as both idle
+**MPD volume** and **Playback** are available as both idle
 screens and action screen effects; Clock and Blank remain available. Volume
 shows a speaker icon and horizontal bar, independently of the
 ColoPlay speaker. The screen and LEDs predict immediately using Tab5's
@@ -260,7 +262,7 @@ The same Button 2/4 pair therefore has two actions depending on which is held
 first. Keep the modifier down and tap targets repeatedly. Simultaneous presses
 have no modifier order; they only match an explicit Any order binding, if one
 exists. Ordered bindings take priority over unordered bindings for matching
-orders. Existing Global Default scene-switch bindings remain available.
+orders. Shared Global scene-switch bindings remain available.
 
 Tab5 handles Enter through the current page/menu handler, falling back to
 `focus_activate(true)`; edit mode confirms/exits instead. Back uses the existing
@@ -268,22 +270,22 @@ page/back behavior. `[` on Now Playing opens its queue; elsewhere it selects
 the previous enabled screen. `]` selects the next enabled screen. Bluetooth
 settings are skipped by screen navigation, as in the existing Tab5 UI.
 
-Idle **Bluetooth playback** uses a small drawn playback-state icon at the
+Idle **Playback** uses a small drawn playback-state icon at the
 top, without Playing/Paused/Stopped labels, with 16 px title/artist lines surrounding the vertical center. Long text is
 measured and ellipsized at UTF-8 boundaries, or scrolls when enabled on the
-[Bluetooth playback page](firmware.md#playback). A slim LCD progress bar/time sits
+[Playback page](firmware.md#playback). A slim LCD progress bar/time sits
 below; the configured LED-ring progress remains independent. There are no emoji
-or decorative boxes. By default, when feedback is unavailable, both Bluetooth screens show
+or decorative boxes. By default, when feedback is unavailable, both remote playback/volume screens show
 only the locally bundled `andrsrxn:bluetooth-connecting` icon, without connection
 text. Glyph data stays in flash; no whole font is loaded into RAM.
 
-Scene **Ring display → Bluetooth playback progress** fills the
+Scene **Ring display → Playback progress** fills the
 physical LED ring from elapsed/duration using scene colors and brightness.
 Playing uses a shared smoothed local clock between position packets; repeated
 heartbeats/ACKs do not reset it. Pause freezes, Stop clears,
 and unknown/stale state clears the progress fill. Partial pixels smooth the nine
 LED segments. The progress indicator is independent of the LCD idle screen.
-**Bluetooth playback → Lights** offers independent state/channel plans and
+**Playback → Lights** offers independent state/channel plans and
 **Progress fill** / **Volume feedback fill** choices: Clockwise or Bottom to top. Symmetric fill lights both
 lower sides together, rising to the top at 100%, using the same partial-pixel
 renderer. The scene-level fill menu is removed; first initialization copies the

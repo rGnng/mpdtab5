@@ -46,13 +46,16 @@ The current panels include:
   editors. Beneath it, Lighting/Sound/Sleep and Bluetooth/Time use independent
   desktop columns and stack on narrow screens. Manual brightness, scene-change
   sound, inactivity timeout, sound gain and Bluetooth enable/pair/forget remain.
-- Controls: Clock/Blank/MPD volume/playback idle screen, icon-only selector with named tooltips,
-  saved tab order with left/right move controls, scene colors/brightness overrides,
-  clockwise/symmetric playback-progress and volume ring styles, ordered modifier
-  combinations, Global bindings and ordered
-  grouped Device/MPD Tab5 commands with screen/light effects and per-action sound.
+- Controls: a protected bindings-only Global view, plus editable scenes with
+  Clock/Blank/MPD volume/Playback/Tab5 navigation idle screens, icon-only picker,
+  saved order, colors and brightness overrides. Ordered modifier combinations
+  and grouped Device/MPD Tab5 commands have screen/light effects and sound.
   Keyboard modifiers use a local multi-select dropdown with removable
   tags for all eight modifier bits; the existing numeric API/NVS value is retained.
+- Playback: independent Playing/Paused/Stopped light plans for ring and buttons,
+  clockwise/symmetric progress and volume-feedback fills, colors, brightness,
+  and screen elements/fallbacks. The Status icon switch includes the confirmed
+  star indicator beside play/pause on the device screen.
 - Device: diagnostics, runtime sleep/wake control, incremental logs, telemetry
   and the authenticated firmware updater link.
 

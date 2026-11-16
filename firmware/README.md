@@ -8,6 +8,18 @@ on the configured server. See the [main README](../README.md) for first use,
 Apple-specific bring-up records retained below describe the inherited hardware
 support, not the MPD setup requirements.
 
+## ColoPlay controller
+
+ColoPlay's ESP32-S3 firmware lives in [coloplay/](../coloplay/README.md) and builds
+as a separate application. Connect its USB-C port to Tab5's USB-A host port for
+[CDC-ACM controls and feedback](../docs/coloplay-usb.md), or pair it over
+[Bluetooth](../docs/coloplay-ble.md). A completed USB handshake has priority;
+Tab5's USB-C CDC-NCM computer/MPD connection remains available. Both web pages
+report the active connection. Playback, volume scale, navigation focus and
+confirmed current-track star state return over either link. See the
+[verified paired release](../coloplay/docs/development.md#current-verified-release)
+for OTA identities and validation scope.
+
 ## Toolchain
 
 - ESP-IDF **v5.5.6** (tested)
@@ -60,7 +72,7 @@ source ~/esp/esp-idf-5.5.6/export.sh
 
 | Port | P4 connection | Role |
 | --- | --- | --- |
-| USB-A (J10) | `USB2_OTG` high-speed pins 49/50; VBUS switched by the BSP | USB host (iPod, HID keyboard) |
+| USB-A (J10) | `USB2_OTG` high-speed pins 49/50; VBUS switched by the BSP | USB host (ColoPlay CDC-ACM, HID keyboard, inherited iPod support) |
 | USB-C (J8) | FSLS PHY0 (GPIO24/25); CC1/CC2 5.1k to GND; VBUS is `USB_5VIN` input | CDC-NCM network device in mode 0; FS host in mode 2 |
 
 The USB-C data lines are wired to **FSLS PHY0**, not the PHY that ESP-IDF

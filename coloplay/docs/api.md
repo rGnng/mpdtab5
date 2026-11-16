@@ -374,8 +374,9 @@ persistent lighting settings must be saved successfully first.
 The retired `auto_screen`, `auto_ring`, `auto_keys`, `auto_dark_raw` and
 `auto_bright_raw` parameters return HTTP 400 before any lighting changes.
 Scene create/update likewise reject the three retired `auto_<channel>` flags.
-Old on-flash fields are reserved/ignored; lighting stays version 1 / 44 bytes,
-scene version 8 / 3304 bytes, preserving manual levels and all other settings.
+Old on-flash fields are reserved/ignored; lighting stays version 1 / 44 bytes.
+Current scenes use schema 9 / 3364 logical bytes, preserving manual levels
+through the Global migration described above.
 
 Legacy `leds` values are converted by `(value * 100 + 127) / 255` using integer
 arithmetic; `leds=64` is approximately 25%, not 100%. Prefer the independent

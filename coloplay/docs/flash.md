@@ -130,7 +130,9 @@ and [verified image fingerprints](development.md#current-verified-release).
 
 Settings share a separate **16 KiB NVS partition**. OTA-slot headroom does not
 increase that pool. From 0.6.33, scene records use the compact `CSR1` encoding
-under the existing NVS key; the logical record remains 3304 bytes.
+under the existing NVS key. Schema 9 has 3364 logical bytes; the verified
+14-binding profile occupies 327 encoded bytes. Encoded size depends on the
+saved profile. The separate version-2 scene-order record is 16 bytes.
 
 The area from `0x920000` contains preserved factory `user_bin`, `lfs` and
 `littlefs` data, as recorded in the [factory partition table](factory-firmware.md).
@@ -275,17 +277,18 @@ finding does not generalize to other checksum failures.
 
 ## Bluetooth test recovery
 
-Current builds (0.6.32 and later) write scene version 8 and General version 3
-records. Use a version-7-capable image to preserve saved scenes during recovery.
-Versions 0.6.7–0.6.14 used scene version 6; earlier images cannot read the new
-per-action brightness byte.
-The 0.6.1–0.6.6 builds used scene version 5 and cannot read the new action sound
-flags. Prefer disabling Bluetooth over downgrading firmware.
-Scene order is a separate version-1, 12-byte `scenes/order` record introduced
-in 0.6.19. Use 0.6.19 or later for saved ordering in the UI and Next/Previous
-navigation. Earlier schema-7 builds can read the scene definitions but ignore
-this order record. Lighting remains version 1 / 44 bytes; obsolete Auto and
-calibration words are reserved and ignored by 0.6.17 and later.
+Current 0.8.0 builds write scene schema 9 (3364 logical bytes, normally CSR1),
+a version-2 16-byte scene-order record, and General version 3. Use a recovery
+application that supports schema 9 and CSR1; the local default recovery bundle
+contains the exact boot-verified 0.8.0 image. Earlier recovery firmware cannot
+use the Global profile, even if it supports the CSR1 envelope. Prefer disabling
+Bluetooth over downgrading the application.
+
+For historical compatibility: 0.6.32/0.7.x used scene schema 8; the old order
+record was version 1 / 12 bytes. The current loader migrates older scene/order
+records before applying them. Lighting remains version 1 / 44 bytes, with old
+Auto/calibration words reserved. General remains version 3 / 16 bytes; Playback
+uses its separate version-3 208-byte record.
 
 The existing two-failed-start guard keeps WiFi/HTTP OTA available in recovery.
 Send `POST /api/bluetooth` with form `op=disable`, then use the authenticated

@@ -108,8 +108,8 @@ The new scene uses knob turn/press for item selection, Button 1 for Back,
 Buttons 2/3 for previous/next view (hold to page repeatedly), and Button 4 for
 the context menu. Its idle screen shows Tab5's current view and focused item
 over USB or Bluetooth, returning to playback on Now Playing. Existing scenes remain intact.
-Both updated applications are required for navigation feedback; the last
-verified OTA is still recorded separately above.
+Both applications must support the navigation extension; paired image hashes
+and verified test scope are recorded in the release record linked above.
 
 The earlier **Tab5 BLE** scene supplies knob item navigation/Enter, Back and
 modifier-first Page Up/Down and previous/next-menu combinations. The same two

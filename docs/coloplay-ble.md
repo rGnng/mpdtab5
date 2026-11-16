@@ -1,9 +1,12 @@
 # ColoPlay BLE controller
 
 The separate ColoPlay peer driver adds bidirectional controls to the existing
-Bluetooth controller selection. It builds on `a34fa8a` and uses its existing
+Bluetooth controller selection. The current paired release is ColoPlay
+**0.8.0-global-bindings**, verified with Tab5 source **`5aeb1c3`**; image hashes
+and live checks are in the [release record](../coloplay/docs/development.md#current-verified-release).
+The driver originally built on `a34fa8a` and retains the existing
 `volume_grid_step` helper and MPD command worker. D100H discovery/heartbeat and
-its input mappings remain in place. One controller can be connected at a time;
+its input mappings remain in place. One Bluetooth controller can be connected at a time;
 connecting ColoPlay retains other saved controllers.
 
 ## Navigation feedback and direct-control scene
@@ -55,6 +58,22 @@ USB CDC-ACM is also available through Tab5's USB-A port; see the
 [wired controller guide](coloplay-usb.md). Both transports use the same controls
 and feedback; USB owns input after its handshake.
 
+## Current-track star feedback
+
+ColoPlay draws a small star beside the playback-state icon: gold fill when
+starred, muted outline when unstarred. It also appears in Navigation's Now
+Playing view and follows the playback Status icon switch. This describes the
+current track, independently of the item selected in a library/context menu.
+No current track, stale/disconnected feedback or an older peer hides the icon.
+
+Optional feature byte 17 advertises `CP_FEATURE_STAR` in ColoPlay capabilities
+and the returning Tab5 HELLO. Negotiated `CP_STATE` flags use bit 2 for known
+and bit 3 for starred; seek bits 0/1 and backend bit 7 retain their meanings.
+Legacy peers receive the original flags. USB negotiates the same feature via
+OFFER/HELLO. This adds no packets and makes no prediction of a star change.
+The live saved-binding check confirmed both star states over USB and Bluetooth
+standby, restored the original state and retained USB command ownership.
+
 ## Pairing and existing transport
 
 On ColoPlay, enable Connection → Bluetooth and Start pairing. Scan/select ColoPlay
@@ -73,7 +92,7 @@ track identity and bounded title/artist are sent back. No mixer is reported as
 -1. ColoPlay step fields from older firmware are ignored. Existing local speaker
 volume is independent. Keyboard support is unmodified arrows, Return/Escape,
 Page Up/Down, brackets, C and digits 1–7. `*` toggles the currently playing song's
-server star from any playback/library screen. Bind **Bluetooth HID key** to
+server star from any playback/library screen. Bind **MPD Tab5 → Tab5 key** to
 **usage 85 (`0x55`, keypad multiply), modifiers 0** in ColoPlay's scene editor.
 Shift+8 is also accepted: usage 37 (`0x25`), modifier 2 (left Shift) or 32 (right
 Shift). These are HID usages, not ASCII codes. C is usage 6, modifiers 0, and
@@ -96,8 +115,9 @@ one rounded retry and selects integer commands until reconnect. Permission and
 network errors are not retried; unrelated external mixer changes remain authoritative.
 
 Commands enter the existing MPD worker queue. Results follow backend processing
-and polling; initial Accepted means queued. State publishes approximately every
-500 ms and results also wake a NimBLE event. The GATT driver keeps bounded queues,
+and polling; initial Accepted means queued. The BLE driver targets a 400 ms
+state interval when its queue has room; supervisor scheduling and GATT writes
+affect the observed cadence. Results also wake a NimBLE event. The GATT driver keeps bounded queues,
 session nonces and recent IDs, and rejects stale callbacks/results after reset.
 Custom seek flags are separate from USB/D100H holds; release/disconnect and a
 10-second lease stop custom seeking. The existing MPD/backend timing is retained.

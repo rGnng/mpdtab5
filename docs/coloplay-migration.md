@@ -34,7 +34,7 @@ Credentials, compiled firmware, raw backups and build caches are not imported
 into Git. The existing local provisioning and current recovery bundle were
 copied to the new ignored `coloplay/` paths for this workstation. Historical
 private backups remain in the original checkout. Use a recovery image that
-supports the `CSR1` compact scene record introduced in 0.6.33; do not erase
+supports current scene schema 9 and the `CSR1` compact encoding; do not erase
 NVS or replace factory bootloaders/partition tables for this migration.
 
 ## Validation on 2026-11-16
@@ -58,14 +58,16 @@ images and live navigation checks remain recorded in the
 [Tab5 validation](mpd-validation.md#coloplay-navigation-ota-verification--2026-11-16)
 and [ColoPlay release record](../coloplay/docs/development.md#current-verified-release).
 
-## Next transport
+## Work after the import
 
-BLE remains the working link. A direct USB CDC-ACM connection from Tab5's
-USB-A host port to ColoPlay is planned, preserving Tab5's USB-C CDC-NCM network
-connection. It needs framing, session ownership and duplicate suppression
-before it can share controls/state with BLE. No USB transport or PC companion
-is implemented by this merge; see the
-[USB transport guide](coloplay-usb.md).
+The import itself did not add a new transport. USB CDC-ACM controls and feedback
+were subsequently implemented on Tab5's USB-A port, preserving its USB-C
+CDC-NCM computer/MPD link. A handshake gives USB priority; BLE remains available
+for wireless use. Framing, ownership and duplicate suppression are documented
+in the [wired controller guide](coloplay-usb.md).
 
-USB transport was subsequently implemented after this migration; see the
-[wired controller guide](coloplay-usb.md) for the current behavior and validation.
+The verified 0.8.0 release also separates shared Global bindings from selectable
+scenes and adds confirmed playback star feedback over both transports. The
+[release record](../coloplay/docs/development.md#current-verified-release) is the
+current source of image hashes, storage compatibility and live test scope.
+A PC companion remains outside the current project scope.

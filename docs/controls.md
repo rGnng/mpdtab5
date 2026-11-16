@@ -112,8 +112,19 @@ ColoPlay accepts these unmodified keyboard HID usages:
 
 For ColoPlay Star/Unstar, use keypad multiply `0x55` (85), modifiers zero, or
 Shift+8 (`0x25`, left Shift `0x02` or right Shift `0x20`). This shortcut toggles
-the **currently playing song**. To star a different song, select it and choose
+the **currently playing song**. ColoPlay's Playback screen and Navigation's
+Now Playing view show the confirmed state beside the play/pause icon: gold fill
+for starred, muted outline for unstarred. Unknown, stale or disconnected state
+hides it. The playback **Status icon** switch controls both icons. To star a
+different song, select it and choose
 Star/Unstar in its context menu. Other modified navigation keys are rejected.
+
+These ColoPlay bindings use USB CDC-ACM when its handshake is active and
+Bluetooth otherwise. **Global** contains shared bindings for every scene;
+local bindings override matching Global key/event pairs. Global cannot be
+activated or used as a scene-switch target. The navigation preset is editable:
+the verified device adds Button 4 Hold for Star, but a newly created preset
+retains Button 4 Single for Context and does not install that extra binding.
 
 USB keyboard Page Up/Down, brackets, and C enter the same UI actions. The
 asterisk bindings above are ColoPlay bindings; the USB keyboard mapper does
