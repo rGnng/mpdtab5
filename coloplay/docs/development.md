@@ -203,7 +203,19 @@ brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
 
-**0.8.2-sleep-sync** is the current paired release, OTA-verified on 2026-11-16.
+**0.8.3-sleep-key** is the current ColoPlay release, OTA-verified in `ota_app1`.
+Its application is **3,267,424 bytes** (MD5 `90a6cc61316fe838898552ded8723d76`, SHA-256
+`085c66d392340e32cbd6d5eaf8687c9766a57c7ad1c852f56880dbaa48f364c0`); ELF SHA-256 is
+`726fc9fc493588af74d4314b2ba2fc45e9d102a5211e4f37c4161a7572d7d5a5`. Tab5 remains on the 0.8.2 paired image recorded below.
+The Sleep key adapter uses the existing sleep wire command, adds a qualified
+key-picker value and requires a 0.8.3-capable recovery image for profiles that
+save that value. The default recovery bundle now contains this boot-verified
+image; its previous image is archived. Saved Button 1 Hold/Back behavior and
+reboot persistence are recorded in the [Sleep key validation](../../docs/mpd-validation.md#sleep-key-ota--2026-11-16).
+Private images, previous firmware and settings evidence are in
+`backups/sleep-key-release/`.
+
+**0.8.2-sleep-sync** is the preceding paired release, OTA-verified on 2026-11-16.
 ColoPlay is **3,267,072 bytes** in `ota_app0` (MD5
 `a3befdb762e0e7378c1aa65c3d374e7e`, SHA-256
 `5fdca670a8525a755327fc1966c2073aed86cdd38528111d1534c341467dbdb8`), leaving **1,451,520 bytes**

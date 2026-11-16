@@ -179,6 +179,7 @@ void tick(bool hardwareReady){
   gReleasing=!(kind==CP_MEDIA&&(usage==0xb3||usage==0xb4)&&cp_u16(out.bytes+12)==1);gReleaseAt=millis()+((usage==0xb3||usage==0xb4)?(cp_u16(out.bytes+14)<30?30:cp_u16(out.bytes+14)):20);++gSent;
 }
 bool send(uint8_t kind,uint16_t usage,int count,uint16_t parameter,uint16_t duration){
+  if(kind==CP_KEY&&usage==CP_KEY_SCREEN_OFF){if(parameter)return false;kind=CP_SLEEP;usage=CP_SLEEP_OFF;count=1;duration=0;}
   if(kind==CP_VOLUME){parameter=1;duration=0;}
   auto s=snapshot();if(kind==CP_SLEEP&&(!s.extension||!s.sleep.fresh))return false;
   if(!gQueue||!s.connected||!s.secured||count<1||count>(kind==CP_VOLUME?32767:127)||(!s.extension&&kind==CP_VOLUME&&parameter!=1)){portENTER_CRITICAL(&gMux);gFeedback.state.result=CP_UNSUPPORTED;gFeedback.state.pending=false;portEXIT_CRITICAL(&gMux);return false;}

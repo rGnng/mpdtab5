@@ -191,3 +191,10 @@ consumed through release so it cannot also select, change volume or navigate.
 Manual sleep/wake from either side follows the same state. ColoPlay's existing
 NVS sleep timer is retained for disconnected or older peers; its Device → Sleep
 panel shows the Tab5 setting and countdown read-only while synchronized.
+
+The HID key picker includes **Sleep (Screen off)**. The deployed ColoPlay
+Navigation scene binds it to **Button 1 Hold**, once after **600 ms**; a short
+press remains Back. New Navigation presets include the same mapping. Sleep
+leaves playback running and turns off the screens plus ColoPlay LEDs; continuing
+to hold or releasing that button does not wake it or execute Back. While linked,
+a new input wakes both and is consumed before ordinary actions resume.

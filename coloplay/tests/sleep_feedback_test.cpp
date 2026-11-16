@@ -39,5 +39,14 @@ int main(){
   r=knob.update(remote,false,true,false,0xFFFFFF00u);assert(r.awake&&r.notify&&r.consume&&r.reset);
   r=knob.update(remote,true,false,false,0x100u);assert(r.awake&&!r.consume);
   r=knob.update(remote,true,false,false,0x600u);assert(!r.awake);
+  // Issuing sleep from a held button must suppress periodic activity even
+  // before the host's first blank-state reply, and stay asleep through release.
+  SleepFollower sleeper;remote.fresh=true;remote.awake=true;
+  r=sleeper.update(remote,true,true,true,1000);assert(r.notify);
+  sleeper.sleepIssued();r=sleeper.update(remote,true,false,true,1500);assert(!r.notify);
+  remote.awake=false;r=sleeper.update(remote,true,false,true,1800);assert(!r.awake&&!r.notify&&!r.consume);
+  r=sleeper.update(remote,false,false,true,5000);assert(!r.awake&&!r.notify);
+  r=sleeper.update(remote,false,false,false,5010);assert(!r.notify&&!r.awake);
+  r=sleeper.update(remote,false,true,true,5100);assert(r.notify&&r.consume&&r.awake);
   std::cout<<"PASS negotiated sleep bounds, countdown/wrap, stale fallback, shared wake, gesture consumption and bounded activity\n";
 }

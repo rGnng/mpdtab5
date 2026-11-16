@@ -25,17 +25,19 @@ class SleepFeedback {
  * events. A short local preview bridges the host's next state update. */
 class SleepFollower {
  public:
+  void sleepIssued(){suppressHeld_=true;pending_=false;}
   struct Result {bool linked=false,awake=true,notify=false,consume=false,reset=false,becameLocal=false;};
   Result update(const SleepFeedback::State &remote,bool awake,bool activity,bool held,uint32_t now){
     Result out;out.linked=remote.fresh;out.becameLocal=linked_&&!out.linked;linked_=out.linked;
     if(!out.linked)pending_=false;
     if(pending_&&(remote.awake||uint32_t(now-wakeAt_)>=1500))pending_=false;
     out.awake=out.linked?(pending_||remote.awake):awake;
-    if(out.linked&&(activity||held)&&(!notified_||!out.awake||uint32_t(now-notifyAt_)>=250)){out.notify=true;notifyAt_=now;notified_=true;}
+    if(!held)suppressHeld_=false;
+    if(out.linked&&(activity||(held&&out.awake&&!suppressHeld_))&&(!notified_||!out.awake||uint32_t(now-notifyAt_)>=250)){out.notify=true;notifyAt_=now;notified_=true;}
     if(out.linked&&activity&&!out.awake){pending_=true;wakeAt_=now;out.awake=true;block_=true;}
     if(block_){out.consume=true;if(!held){block_=false;out.reset=true;}}
     return out;
   }
  private:
-  bool linked_=false,pending_=false,block_=false,notified_=false;uint32_t wakeAt_=0,notifyAt_=0;
+  bool linked_=false,pending_=false,block_=false,notified_=false,suppressHeld_=false;uint32_t wakeAt_=0,notifyAt_=0;
 };

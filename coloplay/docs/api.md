@@ -8,7 +8,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.8.2-sleep-sync** (OTA-tested on 2026-11-16), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.8.3-sleep-key** (OTA-tested on 2026-11-16), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
@@ -182,7 +182,7 @@ feedback overlays scene lighting, then expires back to it. Legacy v1 scenes migr
 | `op` | Fields | Result |
 |---|---|---|
 | `create` | `name` | Create an empty scene in a free slot |
-| `tab5_navigation` | None | Append an editable Tab5 Navigation scene and 11 bindings; retain active selection and all existing scenes |
+| `tab5_navigation` | None | Append an editable Tab5 Navigation scene and 12 bindings; retain active selection and all existing scenes |
 | `update` | `scene_id`, `name`, optional screen/color, `icon` and brightness fields below | Save scene settings atomically |
 | `delete` | `scene_id` | Delete; active/scene-switch targets fall back to the next actual scene; the last scene is protected |
 | `reorder` | `scene_id`, `position` (zero-based) | Move an existing scene in the saved display/navigation order |
@@ -490,6 +490,16 @@ stored value, so this endpoint cannot clear an existing password. Saving
 restarts the device. `GET /api/wifi` returns the stored SSID and source.
 Use the [serial recovery commands](flash.md#recovery) if the device becomes
 unreachable with incorrect credentials.
+
+### Sleep HID key adapter
+
+A `bluetooth_key` action may use `value=386` (`0x0182`, qualified Generic Desktop
+System Sleep) with `target=0`. This entry routes through `CP_SLEEP_OFF`, so the
+Tab5 screen turns off without suspending playback or powering down the host.
+Other keyboard values retain their 1–231 range. The saved action requires
+ColoPlay **0.8.3 or newer** to validate it; use a matching recovery image even
+though the schema-9 record size and CSR1 envelope are unchanged. The current
+recovery bundle includes this support.
 
 ## Recovery and reboot
 

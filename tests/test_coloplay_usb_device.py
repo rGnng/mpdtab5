@@ -75,6 +75,10 @@ int main(){
  deliver(CP_USB_HELLO,data);assert(!send(CP_SLEEP,CP_SLEEP_OFF,1,0,0)); // Wait for initial sleep snapshot.
  cp_sleep_t sleep={CP_SLEEP_ON|CP_SLEEP_COUNTDOWN,30,5000};cp_sleep_packet(data,session,&sleep);deliver(CP_USB_DATA,data);
  assert(snapshot().sleep.fresh&&snapshot().sleep.minutes==30&&statusJson().find("remaining_ms")!=std::string::npos);
+ assert(send(CP_KEY,CP_KEY_SCREEN_OFF,7,0,0));
+ parser={};for(auto b:frames.back())cp_usb_feed(&parser,b,&kind,offer);
+ assert(kind==CP_USB_DATA&&offer[1]==CP_SLEEP&&cp_u16(offer+8)==CP_SLEEP_OFF&&cp_u16(offer+10)==1&&cp_command_valid(offer,20));
+ assert(!send(CP_KEY,CP_KEY_SCREEN_OFF,1,1,0));
  assert(send(CP_SLEEP,CP_SLEEP_OFF,1,0,0));
  cp_sleep_packet(data,session+1,&sleep);deliver(CP_USB_DATA,data);assert(snapshot().sleep.fresh);
  // A new host challenge discards prediction and creates a new nonce, even if DTR stays asserted.

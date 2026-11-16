@@ -119,7 +119,8 @@ template<class Settings> inline bool validAction(const Settings &s, const Action
   if (a.type>=kScreenChange&&a.type<=kVolumeSet && (a.value > 100 || a.value < (changeType(a.type) ? -100 : 0))) return false;
   if(a.type==kBluetoothVolume&&a.value!=1&&a.value!=-1&&a.value!=16&&a.value!=-16&&a.value!=64&&a.value!=-64)return false;
   if(a.type==kBluetoothMedia&&(!cp_media_usage(a.value)||a.target>2||(a.target&&a.value!=0xb3&&a.value!=0xb4)))return false;
-  if(a.type==kBluetoothKey&&(a.value<1||a.value>0xe7))return false;
+  if(a.type==kBluetoothKey&&((a.value<1||a.value>0xe7)&&a.value!=CP_KEY_SCREEN_OFF))return false;
+  if(a.type==kBluetoothKey&&a.value==CP_KEY_SCREEN_OFF&&a.target)return false;
   if (a.type == kTone && (a.value < 100 || a.value > 4000)) return false;
   return true;
 }

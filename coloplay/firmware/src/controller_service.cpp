@@ -91,6 +91,7 @@ void tick(bool hardwareReady){
   }
 }
 bool send(uint8_t kind,uint16_t usage,int count,uint16_t parameter,uint16_t duration){
+  if(kind==CP_KEY&&usage==CP_KEY_SCREEN_OFF){if(parameter)return false;kind=CP_SLEEP;usage=CP_SLEEP_OFF;count=1;duration=0;}
   portENTER_CRITICAL(&gMux);
   if(!gConnected){portEXIT_CRITICAL(&gMux);return BluetoothService::send(kind,usage,count,parameter,duration);}
   if(kind==CP_SLEEP&&!gFeedback.snapshot(millis()).sleep.fresh){portEXIT_CRITICAL(&gMux);return false;}

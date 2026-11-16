@@ -484,7 +484,7 @@ int applyAction(const SceneSettings::Action &a, int repetitions) {
     case kRainbow: gLighting.mode=LightingSettings::kRainbow; lightingChanged=true; break;
     case kStatic: gLighting.mode=LightingSettings::kStatic; gLighting.color=a.colorRgb(); lightingChanged=true; break;
     case kToggleAwake:
-      if(ControllerService::snapshot().sleep.fresh)ControllerService::send(CP_SLEEP,gAwake?CP_SLEEP_OFF:CP_SLEEP_WAKE,1);
+      if(ControllerService::snapshot().sleep.fresh){if(ControllerService::send(CP_SLEEP,gAwake?CP_SLEEP_OFF:CP_SLEEP_WAKE,1)&&gAwake)gSleepFollow.sleepIssued();}
       else gAwake=!gAwake;
       gIdle.activity(millis());break;
     case kSync: ClockService::requestSync(); break;
@@ -499,7 +499,15 @@ int applyAction(const SceneSettings::Action &a, int repetitions) {
       if(a.target==2)ControllerService::send(CP_RELEASE,a.value,1);
       else {const auto s=ControllerService::snapshot();if(s.extension&&(a.value==0xb5||a.value==0xb6))ControllerService::send(CP_MEDIA,a.value,repetitions,a.target,a.target?0:200);else for(int n=0;n<repetitions;++n)if(!ControllerService::send(CP_MEDIA,a.value,1,a.target,a.target?0:200))break;}
       break;
-    case kBluetoothKey: {const auto s=ControllerService::snapshot();if(s.extension)ControllerService::send(CP_KEY,a.value,repetitions,a.target);else for(int n=0;n<repetitions;++n)if(!ControllerService::send(CP_KEY,a.value,1,a.target))break;break;}
+    case kBluetoothKey: {
+      const auto s=ControllerService::snapshot();
+      if(a.value==CP_KEY_SCREEN_OFF){
+        if(s.sleep.fresh){if(ControllerService::send(CP_KEY,a.value,1))gSleepFollow.sleepIssued();}
+        else{gAwake=false;gIdle.activity(millis());}
+      }else if(s.extension)ControllerService::send(CP_KEY,a.value,repetitions,a.target);
+      else for(int n=0;n<repetitions;++n)if(!ControllerService::send(CP_KEY,a.value,1,a.target))break;
+      break;
+    }
     default: break;
   }
   if (lightingChanged) { gLightingDirty=true; gLightingChangedAt=millis(); }
@@ -764,6 +772,7 @@ bool configure(WebServer &server, String &error) {
   }
   if(server.hasArg("awake")&&ControllerService::snapshot().sleep.fresh){
     if(!ControllerService::send(CP_SLEEP,awake?CP_SLEEP_WAKE:CP_SLEEP_OFF,1)){error="Tab5 sleep command unavailable";return false;}
+    if(!awake)gSleepFollow.sleepIssued();
   }else gAwake = awake;
   if(server.hasArg("awake"))gIdle.activity(millis());
   updateBrightness();

@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current verified release: **0.8.2-sleep-sync**, OTA-tested on 2026-11-16.
+Current verified release: **0.8.3-sleep-key**, OTA-tested on 2026-11-16.
 The gadget is configured
 through the **Connection**, **Controls**, **Playback**, **Lighting** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
@@ -227,15 +227,15 @@ must support scene schema 9 and the CSR1 envelope.
 ### Tab5 navigation scene
 
 Choose **Controls → + Tab5 navigation**, then **Activate scene**. This appends a
-new, fully editable **Tab5 Navigation** scene with 11 bindings, leaving existing
-scenes and Global bindings intact. A free scene and 11 free binding slots are
+new, fully editable **Tab5 Navigation** scene with 12 bindings, leaving existing
+scenes and Global bindings intact. A free scene and 12 free binding slots are
 required; an existing scene with that name is never overwritten.
 
 | Control | Tap / turn | Hold |
 |---|---|---|
 | Knob | Previous/next item | Press and turn for volume |
 | Knob press | Select / Enter | — |
-| Button 1 | Back | — |
+| Button 1 | Back | Sleep (Screen off), once after 600 ms |
 | Button 2 | Previous view; Queue on Now Playing | Repeated Page Up |
 | Button 3 | Next view | Repeated Page Down |
 | Button 4 | Open/close context menu | — |
@@ -555,12 +555,21 @@ uses checkboxes and removable tags. Saved values are unchanged.
 ### Keyboard HID keys
 
 Tab5 key actions have a searchable **Keyboard HID key** dropdown with
-141 named keys: letters, digits, navigation/editing, punctuation, F1–F24,
+142 named keys: letters, digits, navigation/editing, punctuation, F1–F24,
 numpad, system and international keys. Search by name, decimal/hex usage or
 aliases such as PgUp and star. Names show their HID usage in parentheses.
 **Custom HID code** accepts 1–231 for unlisted keys and automatically displays
 an existing uncommon code. Keyboard modifiers remain separate and are retained
 when choosing another key. Selection does not change which keys the host accepts.
+
+**Sleep (Screen off)** is a special System Sleep entry under System keys. It
+uses the qualified picker value **386** (`0x0182`) and the existing Tab5
+screen-off command over USB serial or BLE. It blanks the screens and ColoPlay
+LEDs while keeping playback and the connection running. With no linked sleep
+support, it blanks ColoPlay locally. Modifiers are unavailable for this entry.
+It never emits a native computer power/suspend report. In the navigation preset,
+Button 1 Hold fires it once at 600 ms; release does not also execute Back. A new
+input wakes normally, with the first wake gesture consumed while linked.
 
 ### Keyboard modifiers
 

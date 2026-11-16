@@ -146,6 +146,9 @@ song context menus. It removes that occurrence without changing playback or
 the queue; Stared continues to use **Unstar**. This update is OTA-verified,
 including a user-confirmed removal of the final entry from a regular playlist.
 
+ColoPlay's HID key picker includes **Sleep (Screen off)**. Its Button 1 Hold
+binding fires once at 600 ms, while a short press remains Back.
+
 ColoPlay follows Tab5's sleep/wake state and 0/30/60-minute timer over USB
 serial or BLE. Activity resets the shared countdown, and the first wake gesture
 is consumed. ColoPlay retains its local timer for disconnected use. See the

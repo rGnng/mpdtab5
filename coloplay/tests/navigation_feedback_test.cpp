@@ -67,6 +67,20 @@ int main(){
   const auto *hold=effectiveBinding(settings,3,key,kHold);assert(hold&&hold->repeatHold()&&hold->holdMs()==350);
   assert(effectiveBinding(settings,3,key,kSingle));
  }
+ const auto *sleep=effectiveBinding(settings,3,kKey1,kHold);
+ assert(sleep&&sleep->holdMs()==600&&!sleep->repeatHold()&&sleep->actions[0].type==kBluetoothKey&&sleep->actions[0].value==CP_KEY_SCREEN_OFF);
+ assert(effectiveBinding(settings,3,kKey1,kSingle)->actions[0].value==0x29);
+ {
+  ChordEngine engine;GestureBindings bindings;bool raw[kInputCount]={};int singles=0,holds=0;
+  bindings.physical[kKey1]=(1u<<kSingle)|(1u<<kHold);bindings.setHold(kKey1,600,false);
+  bindings.combos[7]=bindings.combos[11]=1u<<kSingle;
+  engine.seed(raw,1000);engine.configure((1u<<7)|(1u<<11),bindings);
+  auto tick=[&](uint32_t now){engine.tick(raw,0,now,[&](int input,int gesture,int){assert(input==kKey1);if(gesture==kSingle)++singles;else if(gesture==kHold)++holds;});};
+  raw[kKey1]=true;tick(1000);tick(1025);tick(1624);assert(!holds&&!singles);
+  tick(1625);tick(4000);assert(holds==1&&!singles);
+  raw[kKey1]=false;tick(4100);tick(4125);assert(holds==1&&!singles);
+  raw[kKey1]=true;tick(4200);tick(4225);raw[kKey1]=false;tick(4300);tick(4325);assert(holds==1&&singles==1);
+ }
  assert(!Tab5NavigationProfile::install(settings,3)&&!Tab5NavigationProfile::install(settings,4));
  for(int i=0;i<kBindingCount;i++)if(before.bindings[i].count)assert(!std::memcmp(&before.bindings[i],&settings.bindings[i],sizeof(Binding)));
  auto invalid=before;invalid.version=7;invalid.scenes[0].screen=kBluetoothNavigationScreen;const auto copy=invalid;assert(!migrateV7(invalid)&&!std::memcmp(&invalid,&copy,sizeof(copy)));

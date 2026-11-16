@@ -40,6 +40,7 @@ int main(){
  auto bad=settings;bad.bindings[0].actions[0].value=5;const auto unchanged=bad;
  assert(!normalizeBluetoothVolumes(bad)&&!std::memcmp(&bad,&unchanged,sizeof(bad)));
  a.led=kInherit;a.type=kBluetoothMedia;a.value=0xcd;assert(valid(settings));a.value=0x52;assert(!valid(settings));a.type=kBluetoothKey;a.value=75;a.target=255;assert(valid(settings));a.value=256;assert(!valid(settings));
+ a.value=CP_KEY_SCREEN_OFF;a.target=0;assert(valid(settings));a.target=1;assert(!valid(settings));a.target=0;
  settings=defaults();settings.version=4;previous=settings;for(auto &b:settings.bindings)for(auto &a:b.actions){a.setSound(false);a.setLedBrightness(0);}assert(migrateV4(settings)&&valid(settings));previous.version=8;assert(!std::memcmp(&previous,&settings,sizeof(settings)));
  for(int mask=1;mask<16;++mask)for(int modifier=-1;modifier<4;++modifier){const int input=comboInput(mask,modifier);assert(bool(comboMask(input))==bool((mask&(mask-1))&&(modifier<0||(mask&(1<<modifier)))));}
  settings.scenes[0].ringDisplay=kRingBluetoothProgress;assert(valid(settings));settings.scenes[0].ringDisplay=kRingDisplayCount;assert(!valid(settings));

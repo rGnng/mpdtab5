@@ -115,9 +115,13 @@ The scene icon is in the scene heading. Idle screen, ring display and fill style
 share the desktop behavior row. Ring/button colors use equal columns below it,
 with room for static-color swatches; narrow layouts wrap or stack. Keyboard
 HID key actions use a grouped, searchable
-picker with 141 named keys. Search includes names, decimal/hex codes and aliases;
+picker with 142 named keys. Search includes names, decimal/hex codes and aliases;
 Custom HID code retains the original 1–231 input for unlisted usages. Modifier
-masks are independent and retained when changing keys.
+masks are independent and retained when changing keyboard keys. Sleep (Screen
+off), value 386, is a qualified System Sleep adapter entry; it clears/hides
+modifiers and sends the negotiated Tab5 screen-off command. The navigation
+preset requires 12 free binding slots and includes a non-repeating 600 ms
+Button 1 Hold.
 
 Action lighting is scoped to the binding's physical input: individual key,
 combination members, or knob ring. The editor exposes on/off/color/brightness

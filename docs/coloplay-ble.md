@@ -2,7 +2,7 @@
 
 The separate ColoPlay peer driver adds bidirectional controls to the existing
 Bluetooth controller selection. The current paired release is ColoPlay
-**0.8.2-sleep-sync**, built from the working tree based on **`1f24f5d`**; image hashes
+**0.8.3-sleep-key**, built from the working tree based on **`0ce3d93`**; image hashes
 and live checks are in the [release record](../coloplay/docs/development.md#current-verified-release).
 The driver originally built on `a34fa8a` and retains the existing
 `volume_grid_step` helper and MPD command worker. D100H discovery/heartbeat and
@@ -264,3 +264,8 @@ feedback is unsupported or stale. USB keeps ownership when connected; the same
 sleep messages continue over BLE when it takes over. The [shared contract](../shared/README.md#shared-sleep-and-wake)
 defines bounds, freshness and byte layout. Physical versus host-fixture test
 scope is recorded in the [OTA validation](mpd-validation.md#shared-sleep-and-wake-ota--2026-11-16).
+
+The 0.8.3 key picker adds **Sleep (Screen off)**. Its qualified System Sleep
+identifier is translated to the existing negotiated screen-off request; no
+native computer sleep/power report is emitted. Button 1 Hold in new Navigation
+presets sends it once at 600 ms, and the deployed scene was configured to match.

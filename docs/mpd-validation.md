@@ -1,5 +1,32 @@
 # MPD controller validation
 
+## Sleep key OTA — 2026-11-16
+
+ColoPlay **0.8.3-sleep-key** was OTA-verified in `ota_app1`, MD5
+`90a6cc61316fe838898552ded8723d76` (application **3,267,424 bytes**).
+Tab5 stayed on ELF SHA-256
+`a3e0946d7af9ebe14ad4ff68ab5b1869bee6d809e27f250ba18c0b1f2bfebe48`.
+The matching ColoPlay recovery image was prepared before saving the new key
+value. Button 1 Hold was added to the active Tab5 Navigation scene at **600 ms**,
+repeat off, Sleep key value **386**, no modifiers or sound, inherited light and
+unchanged action screen. Every pre-existing binding, Global binding, appearance
+setting and active scene was preserved. The new action survived a reboot.
+
+The saved-binding API invoked Hold and both screens plus ColoPlay LEDs turned
+off and remained off. Waking preserved the selected playlist detail; a following
+Button 1 short press still went Back. Now Playing was restored awake, with
+playback, volume, modes, playlists and other saved settings unchanged.
+Physical 600 ms recognition, no repeat/release Back and continued-hold wake
+suppression are covered by the production recognizer/follower fixtures; the
+live action was invoked through its saved-binding API.
+
+The full ColoPlay regression suite, production USB router and BLE send-adapter
+fixtures pass. Browser fixtures at 375/1280 pixels cover Sleep search/selection,
+modifier removal and non-repeating 600 ms configuration without writes. The
+production build passes. Exact images, source patch, previous firmware,
+settings and test evidence are retained privately in
+`coloplay/backups/sleep-key-release/`.
+
 ## Shared sleep and wake OTA — 2026-11-16
 
 ColoPlay **0.8.2-sleep-sync** and Tab5 were application-only OTA-updated. Running

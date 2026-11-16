@@ -18,6 +18,9 @@ enum {CP_CAP_MEDIA=1,CP_CAP_VOLUME=2,CP_CAP_KEY=4,CP_CAP_STATE=8,CP_CAP_VOLUME_F
 /* Optional feature byte 17 in capabilities, USB OFFER and host HELLO. */
 enum {CP_FEATURE_STAR=1,CP_FEATURE_NAV_HEADING=2,CP_FEATURE_SLEEP=4};
 enum {CP_SLEEP_ACTIVITY=1,CP_SLEEP_OFF=2,CP_SLEEP_WAKE=3};
+/* Key-picker identifier: Generic Desktop (0x01), System Sleep (0x82).
+ * The ColoPlay adapter sends CP_SLEEP_OFF so Tab5 blanks its screen only. */
+enum {CP_KEY_SCREEN_OFF=0x0182};
 enum {CP_SLEEP_ON=1,CP_SLEEP_COUNTDOWN=2,CP_SLEEP_PLAYING=4,CP_SLEEP_MANUAL=8};
 typedef struct {uint8_t flags;uint16_t minutes;uint32_t remaining_ms;} cp_sleep_t;
 enum {CP_STATE_STAR_KNOWN=4,CP_STATE_STARRED=8,CP_STATE_CONNECTED=128};

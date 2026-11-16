@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay source: **0.8.2-sleep-sync**; the verified OTA
+Current ColoPlay source: **0.8.3-sleep-key**; the verified OTA
 is in the [release record](development.md#current-verified-release).
 Both applications now live in the [MPD Tab5 repository](../../README.md), using
 the common definitions in [shared/](../../shared/README.md).
@@ -436,3 +436,14 @@ retained, and playing holds the automatic countdown. Disconnected or legacy
 peers retain ColoPlay's saved local timer without an NVS migration. See the
 [wire contract](../../shared/README.md#shared-sleep-and-wake) and
 [validation record](../../docs/mpd-validation.md#shared-sleep-and-wake-ota--2026-11-16).
+
+## Sleep key (0.8.3)
+
+The HID key picker includes **Sleep (Screen off)**, stored as the qualified
+System Sleep identifier `0x0182` (386), without keyboard modifiers. The adapter
+sends the existing `CP_SLEEP_OFF` request over the active USB/BLE link; Tab5's
+0.8.2 sleep support already handles it, so no Tab5 update is needed. Button 1
+Hold in new Navigation presets fires once at 600 ms, while tap remains Back.
+On the deployed Navigation scene this binding was explicitly saved and
+verified across reboot. Holding the sleep button does not emit periodic
+activity that would immediately wake the screen; a new input wakes both.

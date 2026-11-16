@@ -67,3 +67,10 @@ extrapolates the displayed remaining time without independently deciding when
 to blank. Sleep freshness expires after two seconds; missing support or lost
 feedback restores the unchanged local fallback timer. Neither remaining time
 nor negotiated settings are written to ColoPlay NVS.
+
+The ColoPlay key picker also defines `CP_KEY_SCREEN_OFF=0x0182`: a qualified
+Generic Desktop/System Sleep identifier, distinct from keyboard-page usage
+`0x82`. It is stored in a `bluetooth_key` action without modifiers. Both ColoPlay
+send adapters translate it to `CP_SLEEP_OFF` before wire validation/encoding,
+so no raw extended keyboard code or native computer power report is emitted.
+The existing negotiated sleep protocol and Tab5 firmware remain unchanged.

@@ -22,7 +22,10 @@ or a direct [USB CDC-ACM link](../docs/coloplay-usb.md). See the
 
 ## Current baseline
 
-Current verified release: **`0.8.2-sleep-sync`**, OTA-tested on 2026-11-16.
+Current verified release: **`0.8.3-sleep-key`**, OTA-tested on 2026-11-16.
+**Sleep (Screen off)** is available in the HID key picker. Button 1 Hold is
+configured on the device at 600 ms, without repeat; a short press remains Back.
+New Tab5 Navigation presets include this binding.
 Connected sleep/wake and the countdown follow Tab5 over USB serial or BLE.
 Input on either device wakes both; the first wake gesture is consumed. The
 local timer remains a disconnected fallback, and the web Sleep panel shows

@@ -97,11 +97,14 @@ new application's runtime later crashes.
 
 ## Global profile compatibility
 
-The verified **0.8.2-sleep-sync** release writes scene schema 9 (3364 raw
+The verified **0.8.3-sleep-key** release writes scene schema 9 (3364 raw
 bytes) and a version-2 order record. The local default recovery bundle now
 contains this matching, boot-verified application and understands schema 9 and
 CSR1. The previous 0.7.2 image is archived separately; its schema-8 loader cannot
 use a new Global profile.
+Profiles containing the qualified Sleep key (value 386) additionally require
+a **0.8.3 or newer** scene validator; schema/size alone do not guarantee that
+an older image accepts this action value. The default recovery includes it.
 Reverting only the application does not roll back NVS settings. Do not erase NVS
 as part of an application update.
 
@@ -113,14 +116,14 @@ OTA writes a complete application to the inactive slot, so either slot must fit
 the full firmware. The inactive slot retains its previous application until the
 next update writes it; it is not a dedicated minimal recovery image.
 
-The verified **0.8.2-sleep-sync** production image has this budget:
+The verified **0.8.3-sleep-key** production image has this budget:
 
 | Item | Bytes | MiB |
 |---|---:|---:|
 | Application slot capacity | 4,718,592 | 4.50 |
-| Complete production application | 3,267,072 | 3.12 |
+| Complete production application | 3,267,424 | 3.12 |
 | Embedded playback font, included in the application above | 1,477,697 | 1.41 |
-| Remaining capacity for an application of this size | 1,451,520 | 1.38 |
+| Remaining capacity for an application of this size | 1,451,168 | 1.38 |
 
 These are flash/image sizes, not free heap or PSRAM. The font stays in mapped
 flash and is not copied wholesale to RAM. Its current subset saves **875,913
