@@ -93,6 +93,13 @@ See the [icon sources and licenses](../assets/icons/README.md).
 
 ## ColoPlay and USB input
 
+With both applications updated, ColoPlay offers an opt-in **Tab5 Navigation**
+scene: knob turn/press selects, Button 1 goes Back, Buttons 2/3 switch views
+(hold to page), and Button 4 opens/closes the context menu. Tab5 returns its
+current view and focused item for ColoPlay's display. The [navigation extension
+guide](coloplay-ble.md#navigation-feedback-and-direct-control-scene) records the
+setup and feedback contract. This profile does not alter the key semantics above.
+
 ColoPlay accepts these unmodified keyboard HID usages:
 
 | Action | HID usage |

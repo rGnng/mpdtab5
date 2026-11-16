@@ -15,6 +15,7 @@
 #include "os/os_mbuf.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdatomic.h>
 
 static const char *TAG="coloplay_ble";
 static const ble_uuid128_t s_service=BLE_UUID128_INIT(0xb5,0x17,0x1d,0x62,0x1d,0x12,0x5d,0x9f,0xcb,0x4a,0x69,0xc1,0x01,0,0x1c,0xa9);
@@ -32,17 +33,40 @@ static QueueHandle_t s_results;
 static uint8_t s_out[32][CP_BLE_BYTES];static unsigned s_read,s_count;
 static uint64_t s_track=UINT64_MAX;static unsigned s_text_field,s_text_offset;
 static char s_title[64],s_artist[64];
+static _Atomic(QueueHandle_t) s_navigation_mailbox;
+static atomic_bool s_navigation_active;
+static struct ble_npl_event s_navigation_event;
+static ui_navigation_t s_ui_navigation;
+static bool s_ui_navigation_have;
+static ui_navigation_t s_navigation;
+static bool s_navigation_supported,s_navigation_have,s_navigation_sending;
+static uint16_t s_navigation_revision;
+static unsigned s_navigation_offset;
+static int64_t s_next_navigation;
 
-static void fail(const char *reason){s_ready=false;if(s_on_failed)s_on_failed(reason);}
+void coloplay_ble_publish_navigation(const ui_navigation_t *state){
+    if(s_ui_navigation_have&&!memcmp(state,&s_ui_navigation,sizeof(*state)))return;
+    /* Created on the UI thread before BLE input starts; thereafter only copies. */
+    QueueHandle_t mailbox=atomic_load(&s_navigation_mailbox);
+    if(!mailbox){mailbox=xQueueCreate(1,sizeof(*state));atomic_store(&s_navigation_mailbox,mailbox);}
+    if(mailbox){
+        xQueueOverwrite(mailbox,state);s_ui_navigation=*state;s_ui_navigation_have=true;
+        if(atomic_load(&s_navigation_active))ble_npl_eventq_put(nimble_port_get_dflt_eventq(),&s_navigation_event);
+    }
+}
+
+static void fail(const char *reason){s_ready=false;atomic_store(&s_navigation_active,false);if(s_on_failed)s_on_failed(reason);}
 static bool current(uint16_t conn,void *arg){return conn==s_conn&&(uint32_t)(uintptr_t)arg==s_generation;}
 static void *generation(void){return (void*)(uintptr_t)s_generation;}
 static bool matches(const ble_uuid_t *uuid,unsigned number){
     ble_uuid128_t value=s_service;value.value[12]=number;return ble_uuid_cmp(uuid,&value.u)==0;
 }
 static void pump(void);
+void coloplay_ble_tick(int64_t now);
 static int wrote(uint16_t conn,const struct ble_gatt_error *error,struct ble_gatt_attr *attr,void *arg){
     (void)attr;if(!current(conn,arg)){return 0;}s_writing=false;
-    if(error&&error->status){fail("ColoPlay state write failed");return 0;}pump();return 0;
+    if(error&&error->status){fail("ColoPlay state write failed");return 0;}
+    if(s_navigation_supported)coloplay_ble_tick(esp_timer_get_time());else pump();return 0;
 }
 static void pump(void){
     if(!s_ready||s_writing||!s_count)return;
@@ -79,10 +103,13 @@ static bool queue_state(uint16_t request,uint8_t result){
 static void hello_packet(uint8_t *data){
     cp_header(data,CP_HELLO,0,s_session);data[8]=player_volume_steps();
     if(s_float_volume){data[16]=CP_CAP_VOLUME_FLOAT|(s_prediction?CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE:0);cp_put_float(data+12,1.0f/volume_grid_count(player_volume_steps()));}
+    if(s_navigation_supported)data[16]|=CP_CAP_NAVIGATION;
 }
 void coloplay_ble_reset(void){
+    atomic_store(&s_navigation_active,false);
     ++s_generation;s_start=s_end=s_caps=s_command=s_command_end=s_state=s_cccd=0;s_conn=0xffff;s_session=0;s_ready=s_writing=s_float_volume=s_prediction=false;s_read=s_count=0;s_track=UINT64_MAX;
     memset(s_recent,0,sizeof(s_recent));s_recent_next=0;s_native_steps=0;
+    s_navigation_supported=s_navigation_have=s_navigation_sending=false;s_navigation_revision=0;s_next_navigation=0;
     if(s_results){xQueueReset(s_results);}mpd_client_coloplay_release();
 }
 bool coloplay_ble_connected(void){return s_ready;}
@@ -94,6 +121,8 @@ static int hello_written(uint16_t conn,const struct ble_gatt_error *error,struct
     (void)attr;if(!current(conn,arg)){return 0;}
     if(error&&error->status){fail("ColoPlay handshake rejected");return 0;}
     s_ready=true;s_next_state=0;s_last_id=0;s_last_result=0;mpd_client_coloplay_begin(s_session);if(s_on_ready)s_on_ready();
+    atomic_store(&s_navigation_active,s_navigation_supported);
+    if(s_navigation_supported)ble_npl_eventq_put(nimble_port_get_dflt_eventq(),&s_navigation_event);
     struct ble_gap_upd_params params={.itvl_min=6,.itvl_max=12,.latency=0,.supervision_timeout=500};ble_gap_update_params(s_conn,&params);
     ESP_LOGI(TAG,"ColoPlay command/state extension connected");return 0;
 }
@@ -116,6 +145,7 @@ static int caps_read(uint16_t conn,const struct ble_gatt_error *error,struct ble
         fail("ColoPlay protocol capabilities invalid");return 0;
     }
     s_float_volume=(bytes[8]&CP_CAP_VOLUME_FLOAT)!=0;
+    s_navigation_supported=(bytes[8]&CP_CAP_NAVIGATION)!=0;
     s_prediction=s_float_volume&&(bytes[8]&CP_CAP_VOLUME_PREDICT)&&(bytes[8]&CP_CAP_VOLUME_SCALE);
     s_session=cp_u32(bytes+4);
     if(ble_gattc_disc_all_dscs(conn,s_command,s_command_end?s_command_end:s_end,descriptor,generation())){fail("ColoPlay descriptor discovery failed");}return 0;
@@ -133,7 +163,7 @@ static int characteristic(uint16_t conn,const struct ble_gatt_error *error,const
 }
 bool coloplay_ble_discover(uint16_t conn,void (*ready)(void),void (*failed)(const char*)){
     if(!s_start){return false;}
-    if(!s_results){s_results=xQueueCreate(24,sizeof(result_t));ble_npl_event_init(&s_result_event,result_event,NULL);}s_on_ready=ready;s_on_failed=failed;s_conn=conn;
+    if(!s_results){s_results=xQueueCreate(24,sizeof(result_t));ble_npl_event_init(&s_result_event,result_event,NULL);ble_npl_event_init(&s_navigation_event,result_event,NULL);}s_on_ready=ready;s_on_failed=failed;s_conn=conn;
     if(!s_results||ble_gattc_disc_all_chrs(conn,s_start,s_end,characteristic,generation())){fail("ColoPlay discovery failed");}return true;
 }
 void coloplay_ble_result(const uint8_t *command,uint8_t result){
@@ -184,6 +214,33 @@ void coloplay_ble_tick(int64_t now){
         const char *text=s_text_field==1?s_title:s_artist;unsigned len=strlen(text);if(s_text_offset>len){++s_text_field;s_text_offset=0;continue;}
         unsigned bytes=len-s_text_offset;if(bytes>11)bytes=11;uint8_t data[CP_BLE_BYTES];cp_header(data,CP_TEXT,0,s_session);data[2]=s_text_field|(s_text_offset+bytes>=len?0x80:0);data[3]=s_text_offset;data[8]=bytes;memcpy(data+9,text+s_text_offset,bytes);queue(data);s_text_offset+=bytes;
         if(s_text_offset>=len){++s_text_field;s_text_offset=0;}
+    }
+    QueueHandle_t mailbox=atomic_load(&s_navigation_mailbox);
+    if(s_navigation_supported&&mailbox&&s_count<4){
+        ui_navigation_t latest;
+        if(xQueuePeek(mailbox,&latest,0)==pdTRUE){
+            uint8_t data[CP_BLE_BYTES];
+            if(!s_navigation_have||memcmp(&latest,&s_navigation,sizeof(latest))){
+                s_navigation=latest;s_navigation_have=true;s_navigation_sending=true;s_navigation_offset=0;
+                if(!++s_navigation_revision)++s_navigation_revision;
+                s_next_navigation=0;
+            }
+            if(!s_next_navigation||now>=s_next_navigation){
+                cp_header(data,CP_NAVIGATION,s_navigation_revision,s_session);
+                data[8]=s_navigation.view;data[9]=s_navigation.flags;
+                cp_put32(data+10,s_navigation.index);cp_put32(data+14,s_navigation.count);
+                cp_put16(data+18,strlen(s_navigation.focus));
+                if(queue(data))s_next_navigation=now+1000000;
+            }
+            for(int n=0;n<3&&s_navigation_sending&&s_count<4;n++){
+                unsigned length=strlen(s_navigation.focus),bytes=length-s_navigation_offset;
+                if(!bytes){s_navigation_sending=false;break;}if(bytes>10)bytes=10;
+                cp_header(data,CP_NAV_TEXT,s_navigation_revision,s_session);
+                data[8]=s_navigation_offset;data[9]=bytes;memcpy(data+10,s_navigation.focus+s_navigation_offset,bytes);
+                if(!queue(data))break;
+                s_navigation_offset+=bytes;if(s_navigation_offset==length)s_navigation_sending=false;
+            }
+        }
     }
     pump();
 }

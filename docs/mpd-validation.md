@@ -1,5 +1,51 @@
 # MPD controller validation
 
+## ColoPlay navigation OTA verification — 2026-11-16
+
+Application-only OTA verified Tab5 ELF SHA-256
+`dce72107fb57e5c062ce7cb493f7961f0a88e533c7ee3d48b1e5430bcc8ab0f8` with the ColoPlay navigation extension. WiFi, SD and MPD
+are healthy, and the saved system/MPD configuration matches its pre-update
+snapshot. No C6 firmware, bootloader or partition table was flashed.
+
+The matching ColoPlay **0.6.33-navigation-nvs** has the new direct-navigation
+scene active. Saved bindings were exercised through BLE: previous/next view,
+knob focus, both page directions, context menu movement and Back, and the Queue
+shortcut. Labels and positions were checked in the returned navigation stream.
+An isolated navigation test retained playback state and raw volume. ColoPlay's
+scene persistence fix was verified separately by a reboot that restored all
+settings and fresh BLE. Its retired USB experiment was removed.
+
+Device-served ColoPlay browser checks at 375/1280 pixels passed without writes
+or JavaScript errors. Exact paired-image fingerprints, configuration snapshots
+and round-trip evidence are in the ColoPlay workspace's ignored
+`backups/navigation/ota/` directory. Tab5 source is based on `d854616` plus the
+navigation working-tree changes.
+
+## ColoPlay focus feedback source validation — 2026-11-16
+
+The optional navigation stream is a read-only UI snapshot copied every 60 ms,
+then transmitted by the existing ColoPlay BLE worker. No MPD commands or
+existing USB/D100H input handlers are changed. The matching ColoPlay application
+adds the direct-control scene and hold-to-repeat paging.
+
+- The production GATT fixture passes legacy negotiation, navigation capability,
+  fragmented UTF-8 labels, revisions/positions, updates and unchanged-focus
+  heartbeats alongside existing media/volume assertions. A changed focus wakes
+  the BLE event immediately and drains through write acknowledgements with no
+  housekeeping-clock advance; identical snapshots do not enqueue extra events.
+- All 21 native UI CTests pass, including focus reads for virtual lists,
+  album-detail track names rather than row numbers, context commands, playlist
+  and Settings labels, UTF-8 truncation, and no selection changes from reads.
+- ESP-IDF 5.5.6 builds the Tab5 application. ColoPlay production and optional USB
+  experiment builds pass, with its full host suite and 320/375/1280 browser checks.
+- The broad Tab5 Python run has 8 failures and 5 setup errors; the identical 13
+  failing cases reproduce on untouched `d854616` in a separate checkout. They
+  concern existing Wi-Fi credential fixtures and source-extraction harnesses;
+  this work leaves those unrelated sources unchanged.
+
+These are build/host results, not a new hardware OTA verification. Current
+controls and the preceding deployed image are recorded below.
+
 ## Context menus and queue actions — 2026-11-16
 
 Implementation: `b7709fb`, following the Page Up/Down correction in `fb0a595`.

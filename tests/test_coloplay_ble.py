@@ -10,6 +10,7 @@ PREFIX=r'''
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <stdatomic.h>
 #include "coloplay_ble_protocol.h"
 #include "volume_grid.h"
 #define ESP_LOGI(...) ((void)0)
@@ -40,7 +41,7 @@ static int ble_gap_update_params(int conn,struct ble_gap_upd_params *p){(void)co
 static int native_steps=64;
 static int player_volume_steps(void){return native_steps;}
 typedef struct {bool connected;float volume,volume_grid_target;uint8_t volume_grid_steps;uint16_t volume_request;int play_status;uint32_t elapsed_ms,duration_ms,revision;uint64_t track_key;char title[128],artist[128];} mpd_state_t;
-static float remote_volume=.67f;static bool float_peer,predict_peer,scale_peer;
+static float remote_volume=.67f;static bool float_peer,predict_peer,scale_peer,navigation_peer;
 static float remote_target=.25f;static uint16_t remote_completed=7;
 static uint32_t backend_session;static unsigned commands,releases,key_events;static int backend_error;
 static bool mpd_client_get_remote_state(mpd_state_t *s){memset(s,0,sizeof(*s));s->connected=true;s->volume=remote_volume;s->volume_grid_target=remote_target;s->volume_grid_steps=native_steps;s->volume_request=remote_completed;s->play_status=1;s->track_key=123;s->elapsed_ms=1000;s->duration_ms=100000;strcpy(s->title,"A real title");strcpy(s->artist,"Artist");return true;}
@@ -54,16 +55,23 @@ static void usb_hid_input_post_key(ui_key_t k){last_key=k;key_events++;}
 struct ble_npl_event {void(*callback)(struct ble_npl_event*);};
 static void ble_npl_event_init(struct ble_npl_event *e,void(*callback)(struct ble_npl_event*),void *arg){(void)arg;e->callback=callback;}
 static void *nimble_port_get_dflt_eventq(void){return NULL;}
-static void ble_npl_eventq_put(void *queue,struct ble_npl_event *event){(void)queue;assert(event->callback);}
+static struct ble_npl_event *last_event;static unsigned event_wakes;
+static void ble_npl_eventq_put(void *queue,struct ble_npl_event *event){(void)queue;assert(event->callback);last_event=event;event_wakes++;}
 #define pdTRUE 1
-typedef struct {unsigned cap,size,read,count;uint8_t bytes[32][32];} *QueueHandle_t;
-static QueueHandle_t xQueueCreate(unsigned cap,unsigned size){assert(cap<=32&&size<=32);QueueHandle_t q=calloc(1,sizeof(*q));q->cap=cap;q->size=size;return q;}
+typedef cp_navigation_t ui_navigation_t;
+typedef struct {unsigned cap,size,read,count;uint8_t bytes[32][128];} *QueueHandle_t;
+static QueueHandle_t xQueueCreate(unsigned cap,unsigned size){assert(cap<=32&&size<=128);QueueHandle_t q=calloc(1,sizeof(*q));q->cap=cap;q->size=size;return q;}
 static void xQueueReset(QueueHandle_t q){q->read=q->count=0;}
 static int xQueueSend(QueueHandle_t q,const void *data,int wait){(void)wait;if(q->count==q->cap)return 0;memcpy(q->bytes[(q->read+q->count)%q->cap],data,q->size);q->count++;return 1;}
+static int xQueueOverwrite(QueueHandle_t q,const void *data){assert(q->cap==1);memcpy(q->bytes[0],data,q->size);q->read=0;q->count=1;return 1;}
+static int xQueuePeek(QueueHandle_t q,void *data,int wait){(void)wait;if(!q->count)return 0;memcpy(data,q->bytes[q->read],q->size);return 1;}
 static int xQueueReceive(QueueHandle_t q,void *data,int wait){(void)wait;if(!q->count)return 0;memcpy(data,q->bytes[q->read],q->size);q->read=(q->read+1)%q->cap;q->count--;return 1;}
+static unsigned navigation_frames,navigation_used;static uint16_t navigation_revision;static char navigation_text[96];static uint8_t navigation_header[20];
 static int writes;static uint8_t last_write[20],last_volume[20],last_hello[20];
 static int (*write_cb)(uint16_t,const struct ble_gatt_error*,struct ble_gatt_attr*,void*);static void *write_arg;
-static int ble_gattc_write_flat(uint16_t c,uint16_t h,const void *data,unsigned len,int(*cb)(uint16_t,const struct ble_gatt_error*,struct ble_gatt_attr*,void*),void *arg){(void)c;(void)h;assert(len==2||len==20);memcpy(last_write,data,len);if(len==20&&((const uint8_t*)data)[1]==CP_VOLUME_STATE)memcpy(last_volume,data,20);if(len==20&&((const uint8_t*)data)[1]==CP_HELLO)memcpy(last_hello,data,20);writes++;write_cb=cb;write_arg=arg;return 0;}
+static int ble_gattc_write_flat(uint16_t c,uint16_t h,const void *data,unsigned len,int(*cb)(uint16_t,const struct ble_gatt_error*,struct ble_gatt_attr*,void*),void *arg){(void)c;(void)h;assert(len==2||len==20);memcpy(last_write,data,len);if(len==20&&((const uint8_t*)data)[1]==CP_VOLUME_STATE)memcpy(last_volume,data,20);if(len==20&&((const uint8_t*)data)[1]==CP_HELLO)memcpy(last_hello,data,20);if(len==20&&((const uint8_t*)data)[1]==CP_NAVIGATION){const uint8_t *p=data;navigation_frames++;if(cp_u16(p+2)!=navigation_revision){navigation_revision=cp_u16(p+2);navigation_used=0;memset(navigation_text,0,sizeof(navigation_text));}memcpy(navigation_header,p,20);}
+if(len==20&&((const uint8_t*)data)[1]==CP_NAV_TEXT){const uint8_t *p=data;assert(cp_u16(p+2)==navigation_revision&&p[8]==navigation_used&&p[9]<=10);memcpy(navigation_text+p[8],p+10,p[9]);navigation_used+=p[9];}
+writes++;write_cb=cb;write_arg=arg;return 0;}
 #define ble_gattc_read(...) 0
 #define ble_gattc_disc_all_dscs(...) 0
 #define ble_gattc_disc_all_chrs(...) 0
@@ -80,9 +88,9 @@ static void connect_peer(uint32_t session,bool reordered){
  chr.uuid.u128=s_service;chr.uuid.u128.value[12]=reordered?4:2;chr.val_handle=11;chr.def_handle=10;characteristic(7,&ok,&chr,generation());
  chr.uuid.u128.value[12]=reordered?2:3;chr.val_handle=14;chr.def_handle=13;characteristic(7,&ok,&chr,generation());
  chr.uuid.u128.value[12]=reordered?3:4;chr.val_handle=18;chr.def_handle=17;characteristic(7,&ok,&chr,generation());characteristic(7,&done,NULL,generation());
- struct fake_mbuf mb={.len=20};cp_header(mb.bytes,CP_HELLO,0,session);mb.bytes[8]=(float_peer?CP_CAP_VOLUME_FLOAT:0)|(predict_peer?CP_CAP_VOLUME_PREDICT:0)|(scale_peer?CP_CAP_VOLUME_SCALE:0);struct ble_gatt_attr attr={&mb};caps_read(7,&ok,&attr,generation());
+ struct fake_mbuf mb={.len=20};cp_header(mb.bytes,CP_HELLO,0,session);mb.bytes[8]=(float_peer?CP_CAP_VOLUME_FLOAT:0)|(predict_peer?CP_CAP_VOLUME_PREDICT:0)|(scale_peer?CP_CAP_VOLUME_SCALE:0)|(navigation_peer?CP_CAP_NAVIGATION:0);struct ble_gatt_attr attr={&mb};caps_read(7,&ok,&attr,generation());
  struct ble_gatt_dsc d={.uuid.u16={{BLE_UUID_TYPE_16},0x2902},.handle=(uint16_t)(s_command+1)};descriptor(7,&ok,12,&d,generation());descriptor(7,&done,12,NULL,generation());ack();
- assert(last_write[1]==CP_HELLO&&last_write[8]==64&&cp_u32(last_write+4)==session);assert((last_write[16]&CP_CAP_VOLUME_FLOAT)==(float_peer?CP_CAP_VOLUME_FLOAT:0));ack();assert(coloplay_ble_connected()&&backend_session==session);
+ assert(last_write[1]==CP_HELLO&&last_write[8]==native_steps&&cp_u32(last_write+4)==session);assert((last_write[16]&CP_CAP_VOLUME_FLOAT)==(float_peer?CP_CAP_VOLUME_FLOAT:0));ack();assert(coloplay_ble_connected()&&backend_session==session);
  coloplay_ble_tick(clock_us);drain();
 }
 int main(void){
@@ -139,6 +147,27 @@ int main(void){
    assert(last_volume[13]==mode&&last_hello[8]==mode&&(last_hello[16]&CP_CAP_VOLUME_SCALE));
    assert(cp_float(last_hello+12)==1.0f/volume_grid_count(mode));
  }
+ coloplay_ble_reset();
+ // Old peers receive no navigation frames. A negotiated peer gets coherent bounded UTF-8 snapshots.
+ ui_navigation_t nav={.view=1,.flags=CP_NAV_FOCUS|CP_NAV_SCREEN_ON,.index=7,.count=200};
+ strcpy(nav.focus,"日本語のアルバム 한글 노래");coloplay_ble_publish_navigation(&nav);
+ connect_peer(1110,false);for(int n=0;n<15;n++){clock_us+=20000;coloplay_ble_tick(clock_us);drain();}assert(!navigation_frames);coloplay_ble_reset();
+ navigation_peer=true;connect_peer(1111,false);
+ for(int n=0;n<15;n++){clock_us+=20000;coloplay_ble_tick(clock_us);drain();}
+ assert(navigation_frames&&navigation_used==strlen(nav.focus)&&!strcmp(navigation_text,nav.focus));
+ assert(navigation_header[8]==1&&cp_u32(navigation_header+10)==7&&cp_u32(navigation_header+14)==200);
+ assert(last_hello[16]&CP_CAP_NAVIGATION);
+ nav.view=3;nav.index=21;strcpy(nav.focus,"Newest focus");unsigned wakes=event_wakes;coloplay_ble_publish_navigation(&nav);
+ assert(event_wakes==wakes+1&&last_event==&s_navigation_event);last_event->callback(last_event);drain();
+ coloplay_ble_publish_navigation(&nav);assert(event_wakes==wakes+1);
+ assert(navigation_header[8]==3&&cp_u32(navigation_header+10)==21&&!strcmp(navigation_text,"Newest focus"));
+ // Backpressure cannot strand a changed focus until the housekeeping timer.
+ queue_state(0,0);for(int n=0;n<6;n++)assert(queue_state(0,0));assert(s_count>=4);
+ strcpy(nav.focus,"Superseded");coloplay_ble_publish_navigation(&nav);
+ memset(nav.focus,'x',95);nav.focus[95]=0;coloplay_ble_publish_navigation(&nav);
+ last_event->callback(last_event);drain();assert(navigation_used==95&&!strcmp(navigation_text,nav.focus));
+ unsigned frames=navigation_frames;clock_us+=1100000;coloplay_ble_tick(clock_us);drain();assert(navigation_frames==frames+1&&!strcmp(navigation_text,nav.focus));
+ nav.flags=CP_NAV_LOADING;nav.index=nav.count=0;nav.focus[0]=0;coloplay_ble_publish_navigation(&nav);clock_us+=20000;coloplay_ble_tick(clock_us);drain();assert(navigation_header[9]==CP_NAV_LOADING&&!navigation_used);
  coloplay_ble_reset();
  puts("ColoPlay GATT discovery/handshake, raw state, duplicates, key mapping, queue errors and stale-session isolation passed");return 0;
 }

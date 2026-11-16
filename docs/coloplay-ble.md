@@ -6,6 +6,53 @@ Bluetooth controller selection. It builds on `a34fa8a` and uses its existing
 its input mappings remain in place. One controller can be connected at a time;
 connecting ColoPlay retains other saved controllers.
 
+## Navigation feedback and direct-control scene
+
+The optional navigation extension adds current view and focused-item feedback
+without changing Tab5's existing key actions. On updated ColoPlay firmware,
+choose **Scenes → + Tab5 navigation**, then **Activate scene**. Its new scene
+uses knob turn/press for navigation/select, Button 1 for Back, Buttons 2/3 for
+previous/next view, and Button 4 for context. Holding Buttons 2/3 starts repeated
+Page Up/Down after 350 ms; repeat/release timing belongs to ColoPlay. Press-and-
+turn keeps volume control. Previous view on Now Playing retains the Queue
+shortcut. Existing controller profiles and USB/D100H handling remain intact.
+
+ColoPlay's navigation screen shows the focused item, or the focused command in
+a context menu. On Now Playing it uses the playback screen. Both applications
+must support `CP_CAP_NAVIGATION=128`; old peers continue their existing protocol.
+No pairing reset or configuration migration is required on Tab5.
+
+A UI-thread timer copies a read-only snapshot every 60 ms, using selected
+library metadata for virtual rows and detail/queue tracks, and readable labels
+for ordinary controls. It sends no LVGL pointers to the BLE task. A one-entry
+mailbox coalesces changes. A changed snapshot wakes the BLE event loop
+immediately; write completions advance the bounded stream alongside media/volume
+traffic. It does not wait for the 250 ms supervisor timer. Unchanged snapshots
+refresh every second.
+
+All frames remain 20 bytes, with protocol version and session unchanged:
+
+| Kind | Bytes 2–3 | Payload |
+|---|---|---|
+| 21 `CP_NAVIGATION` | Nonzero revision, wrapping 65535 → 1 | View in 8, flags in 9, zero-based index in 10–13, count in 14–17, UTF-8 focus length 0–95 in 18–19 |
+| 22 `CP_NAV_TEXT` | Matching revision | Byte offset in 8, length 1–10 in 9, text in 10–19 |
+
+Fields are little-endian. View IDs 0–6 are Now Playing, Albums, Artists, Songs,
+Playlists, Bluetooth and Settings. Flags are 1 Context, 2 Editing, 4 Loading,
+8 Focus available, 16 Queue and 32 Screen on. Counts are current list/focus-group
+positions, not always the total number of library tracks. The receiver commits
+only complete matching revisions and expires navigation separately after five
+seconds. Rapid changes replace unsent text, preventing a long focus backlog.
+
+The producer/legacy-peer fixture, complete UTF-8 fragmentation and all 21 native
+UI tests pass. Native tests read real album/artist/song selection, detail-track
+metadata, context commands, Settings and playlist labels, and confirm snapshot
+reads do not move selection. Application-only OTA is also verified with ColoPlay 0.6.33. The current Tab5
+ELF SHA-256 and live round-trip checks are recorded in
+[navigation OTA validation](mpd-validation.md#coloplay-navigation-ota-verification--2026-11-16).
+
+## Pairing and existing transport
+
 On ColoPlay, enable General → Bluetooth and Start pairing. Scan/select ColoPlay
 in Tab5's existing Bluetooth page. Encrypted bonding and reconnect reuse the
 current supervisor and saved-controller list. The private UUID service is

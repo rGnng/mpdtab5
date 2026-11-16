@@ -25,6 +25,7 @@
 #include "player.h"
 #include "rtc_time.h"
 #include "usb_hid_input.h"
+#include "coloplay_ble.h"
 #include "usbmux_host.h"
 #include "lockdown_client.h"
 #include "afc_client.h"
@@ -359,6 +360,12 @@ static void c6_watchdog_start(void)
     }
 }
 
+static void coloplay_navigation_timer(lv_timer_t *timer)
+{
+    (void)timer;ui_navigation_t state;ui_navigation_snapshot(&state);
+    coloplay_ble_publish_navigation(&state);
+}
+
 void app_main(void)
 {
     /* Install the in-memory log mirror before anything else so boot and
@@ -477,6 +484,8 @@ void app_main(void)
     /* Fail closed from the first frame, before USB identification finishes. */
     ui_set_device_state(g_app_config.iap2_mode, false, app_config_sd_ready());
     ui_init();
+    coloplay_navigation_timer(NULL);
+    lv_timer_create(coloplay_navigation_timer,60,NULL);
     if(app_config_sd_ready()) {
         jpeg_thumbnail_cleanup();
         thumb_cache_open((uint32_t)player_library_album_count());

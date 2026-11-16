@@ -11669,6 +11669,88 @@ static void ui_library_tick_cb(lv_timer_t *timer)
     }
 }
 
+static const char *navigation_label(lv_obj_t *obj)
+{
+    if(!obj || lv_obj_is_hidden(obj)) return NULL;
+    if(lv_obj_check_type(obj,&lv_label_class)) {
+        const char *text=lv_label_get_text(obj);const unsigned char *p=(const unsigned char *)text;
+        /* Bootstrap icon labels use private-use scalars, not item names. */
+        if(*p && !(p[0]==0xee || (p[0]==0xef && p[1]<0xa4))) return text;
+    }
+    for(uint32_t i=0;i<lv_obj_get_child_count(obj);i++) {
+        const char *text=navigation_label(lv_obj_get_child(obj,i));if(text) return text;
+    }
+    return NULL;
+}
+
+static void navigation_copy(char *out,size_t capacity,const char *text)
+{
+    size_t used=0;
+    while(text && *text && used+1<capacity) {
+        unsigned char first=(unsigned char)*text;
+        unsigned bytes=first<0x80?1:first>=0xc2&&first<0xe0?2:first>=0xe0&&first<0xf0?3:first>=0xf0&&first<0xf5?4:0;
+        if(!bytes){out[used++]='?';text++;continue;}
+        bool valid=true;for(unsigned i=1;i<bytes;i++)if(!text[i] || ((unsigned char)text[i]&0xc0)!=0x80){valid=false;break;}
+        if(!valid){out[used++]='?';text++;continue;}
+        if(used+bytes>=capacity)break;
+        memcpy(out+used,text,bytes);used+=bytes;text+=bytes;
+    }
+    out[used]=0;
+}
+
+void ui_navigation_snapshot(ui_navigation_t *out)
+{
+    memset(out,0,sizeof(*out));out->view=(uint8_t)g_current_screen;
+    /* Flags match the optional ColoPlay navigation contract. */
+    if(ui_screen_is_on())out->flags|=32;
+    if(g_edit_mode)out->flags|=2;
+    if(g_page_loading || g_afc_sync_mode){out->flags|=4;return;}
+    const char *text=NULL;
+    if(g_ctx_menu_open) {
+        out->flags|=1;out->index=g_ctx_menu_focus;out->count=g_ctx_menu_item_count;
+        if(g_ctx_menu_focus>=0 && g_ctx_menu_focus<g_ctx_menu_item_count)
+            text=lv_label_get_text(g_ctx_menu_items[g_ctx_menu_focus].label);
+    }
+    else if(g_current_screen==SCR_ALBUMS && !albums_detail_open) {
+        player_album_t album;out->index=albums_selected;out->count=player_album_count();
+        if(player_album_get(albums_selected,&album))navigation_copy(out->focus,sizeof(out->focus),album.title);
+    }
+    else if(g_current_screen==SCR_ARTISTS && !artists_detail_open) {
+        player_artist_t artist;out->index=artists_selected;out->count=player_artist_count();
+        if(player_artist_get(artists_selected,&artist))navigation_copy(out->focus,sizeof(out->focus),artist.name);
+    }
+    else if(g_current_screen==SCR_SONGS) {
+        player_track_t track;out->index=songs_selected;out->count=player_song_count();
+        if(player_song_get(songs_selected,&track))navigation_copy(out->focus,sizeof(out->focus),track.title);
+    }
+    else {
+        if(g_current_screen==SCR_NOW_PLAYING && np_queue_visible)out->flags|=16;
+        if(g_focus_index>=0 && g_focus_index<g_focus_count) {
+            out->index=g_focus_index;out->count=g_focus_count;
+            focus_item_t *focus=&g_focus[g_focus_index];
+            if(focus->activate==albums_track_action || focus->activate==artists_track_action ||
+               focus->activate==artists_album_action || focus->activate==np_queue_action) {
+                context_target_t target;
+                if(context_capture(&target))navigation_copy(out->focus,sizeof(out->focus),target.title);
+            }
+            else if(focus->activate==playlists_track_action) {
+                player_track_t track;
+                if(player_playlist_track_get(playlists_selected,(int)(intptr_t)focus->user,&track))
+                    navigation_copy(out->focus,sizeof(out->focus),track.title);
+            }
+            else if(focus->activate==playlists_open) {
+                player_playlist_t playlist;
+                if(player_playlist_get((int)(intptr_t)focus->user,&playlist))
+                    navigation_copy(out->focus,sizeof(out->focus),playlist.name);
+            }
+            else text=navigation_label(focus->obj);
+        }
+    }
+    if(text)navigation_copy(out->focus,sizeof(out->focus),text);
+    if(out->focus[0])out->flags|=8;
+    else {out->index=0;out->count=0;}
+}
+
 void ui_init(void)
 {
     albums_visited=false;

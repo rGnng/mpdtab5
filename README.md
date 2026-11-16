@@ -9,6 +9,11 @@ artist, song and playlist browsers, Up Next, USB input, Ulanzi Bluetooth knob,
 screen/power settings, Wi-Fi configuration, web diagnostics and OTA. Playback
 runs on **your MPD server's audio output**. The Tab5 is a remote control.
 
+The optional [ColoPlay navigation extension](docs/coloplay-ble.md#navigation-feedback-and-direct-control-scene)
+returns the current view and focused item over BLE, alongside existing playback
+and volume feedback. ColoPlay's direct-navigation scene uses single buttons and
+hold-to-page controls; existing Tab5 touch, USB and Ulanzi actions remain intact.
+
 Current [controls and context menus](docs/controls.md), [validation results](docs/mpd-validation.md),
 and [firmware build/hardware notes](firmware/README.md) are documented separately.
 

@@ -1104,6 +1104,46 @@ static void playlist_updates_retain_album_covers(void)
     check(playlist_view_deleted,"The visible Playlists page refreshes when server membership changes");
 }
 
+static void remote_navigation_snapshot(void)
+{
+    ui_navigation_t nav;
+    ui_select_screen(SCR_ALBUMS);pump(600);albums_select(1);pump(60);
+    player_album_t album;check(player_album_get(albums_selected,&album),"Album fixture exists");
+    int focus=g_focus_index;ui_navigation_snapshot(&nav);
+    check(nav.view==SCR_ALBUMS && (nav.flags&8) && !strcmp(nav.focus,album.title),"Remote focus reads virtual album selection");
+    check(nav.index==(uint32_t)albums_selected && nav.count==(uint32_t)player_album_count(),"Remote album position uses library indices");
+    check(focus==g_focus_index,"Reading remote focus never moves selection");
+    ui_handle_key(UI_KEY_ENTER);pump(600);
+    for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==albums_track_action){
+        focus_select(i);ui_navigation_snapshot(&nav);player_track_t selected;
+        check(player_album_track_get(album.id,(int)(intptr_t)g_focus[i].user,&selected) && !strcmp(nav.focus,selected.title),"Album track focus reports its title, not the leading track number");
+        break;
+    }
+    ui_handle_key(UI_KEY_BACK);pump(100);
+    ui_handle_key(UI_KEY_CONTEXT);pump(100);ui_navigation_snapshot(&nav);
+    check((nav.flags&1) && !strcmp(nav.focus,lv_label_get_text(g_ctx_menu_items[g_ctx_menu_focus].label)),"Context menu reports its focused command");
+    ui_handle_key(UI_KEY_DOWN);ui_navigation_snapshot(&nav);
+    check(nav.index==(uint32_t)g_ctx_menu_focus,"Context menu movement reaches the snapshot");
+    ui_handle_key(UI_KEY_BACK);
+    ui_select_screen(SCR_SONGS);pump(600);songs_select(2);pump(60);
+    player_track_t track;check(player_song_get(songs_selected,&track),"Song fixture exists");ui_navigation_snapshot(&nav);
+    check(nav.view==SCR_SONGS && !strcmp(nav.focus,track.title),"Virtual song focus reports its metadata");
+    ui_select_screen(SCR_ARTISTS);pump(600);artists_select(1);pump(60);
+    player_artist_t artist;check(player_artist_get(artists_selected,&artist),"Artist fixture exists");ui_navigation_snapshot(&nav);
+    check(!strcmp(nav.focus,artist.name),"Virtual artist focus reports its metadata");
+    ui_select_screen(SCR_PLAYLISTS);pump(600);ui_navigation_snapshot(&nav);
+    check(nav.view==SCR_PLAYLISTS && (nav.flags&8) && nav.focus[0],"Playlist focus extracts readable row text");
+    if(g_focus_index>=0 && g_focus[g_focus_index].activate==playlists_open){
+        player_playlist_t playlist;check(player_playlist_get((int)(intptr_t)g_focus[g_focus_index].user,&playlist) && !strcmp(nav.focus,playlist.name),"Playlist focus reports the metadata name");
+    }
+    ui_select_screen(SCR_SETTINGS);pump(600);ui_navigation_snapshot(&nav);
+    check(nav.view==SCR_SETTINGS && (nav.flags&8) && nav.focus[0],"Settings focus excludes icon-only labels");
+    g_page_loading=true;ui_navigation_snapshot(&nav);g_page_loading=false;
+    check((nav.flags&4) && !(nav.flags&8) && !nav.focus[0],"Page loading clears old remote focus");
+    char clipped[6];navigation_copy(clipped,sizeof(clipped),"日本語");
+    check(!strcmp(clipped,"日"),"Navigation truncation preserves UTF-8 boundaries");
+}
+
 int main(int argc,char **argv)
 {
     lv_init();lv_display_t *display=lv_display_create(1280,720);
@@ -1123,6 +1163,7 @@ int main(int argc,char **argv)
     live_song_focus();
     playlist_updates_retain_album_covers();
     volume_step_settings();
+    remote_navigation_snapshot();
     puts("PASS: transparent text fade, Artists viewport restoration, column scrollbar geometry, page scrolling and theme cursor feedback");
     return 0;
 }
