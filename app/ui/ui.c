@@ -7274,6 +7274,14 @@ static void context_menu_remove_queue(void *user)
     LV_UNUSED(user);uint64_t entry=g_ctx_target.entry;context_menu_close();
     ui_set_hint(player_queue_edit(entry,true) ? "Remove from Queue requested" : "Queue entry changed");
 }
+static void context_menu_remove_playlist(void *user)
+{
+    LV_UNUSED(user);context_target_t target=g_ctx_target;context_menu_close();
+    player_playlist_t playlist;
+    bool ok=player_playlist_get(playlists_selected,&playlist)&&playlist.id==target.parent_id&&
+        player_playlist_remove(playlists_selected,target.position,target.id,target.source_revision);
+    ui_set_hint(ok ? "Remove from Playlist requested" : "Playlist changed; reopen the menu");
+}
 
 static void context_menu_shuffle(void * user)
 {
@@ -7438,6 +7446,8 @@ static void context_menu_open_target_mode(const context_target_t *target,bool pi
         }
         if(target->kind==CTX_TRACK || target->kind==CTX_QUEUE)
             context_menu_item(panel,ICON_MUSIC_LIST,"Add to Playlist",NULL,false,context_menu_add_playlist);
+        if(target->kind==CTX_TRACK && target->source==SCR_PLAYLISTS && target->parent_id)
+            context_menu_item(panel,ICON_CLOSE,"Remove from Playlist",NULL,false,context_menu_remove_playlist);
         if((target->kind==CTX_TRACK || target->kind==CTX_QUEUE) && target->album_id)
             context_menu_item(panel,ICON_DISC,"Go to album",NULL,false,context_menu_go_album);
         if(target->kind!=CTX_ARTIST && target->artist_id)

@@ -221,6 +221,8 @@ bool player_queue_add(player_selection_t type, uint64_t id, bool next);
 typedef struct {char name[256];uint32_t generation;} player_playlist_destination_t;
 int player_playlist_destinations(player_playlist_destination_t *out,int capacity);
 bool player_playlist_add(const player_playlist_destination_t *destination,uint64_t track_id);
+/* Remove one occurrence from an unchanged regular playlist; Stared uses Unstar. */
+bool player_playlist_remove(int index,int position,uint64_t track_id,uint32_t revision);
 uint64_t player_queue_entry(int index);
 bool player_queue_edit(uint64_t entry, bool remove);
 bool player_track_starred(uint64_t id);

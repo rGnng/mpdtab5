@@ -1,5 +1,41 @@
 # MPD controller validation
 
+## Remove from Playlist OTA — 2026-11-16
+
+Regular playlist-detail song menus now include Remove from Playlist, while
+Stared retains Unstar. Native UI checks cover keyboard and touch menus, a
+selected duplicate, stale selections, playback/queue preservation, full names
+and removal of the final entry. Production socket tests verify quoted full
+names, zero-based occurrence positions, visible-order revalidation, list-size
+changes, the 1024-entry display limit, stale connections and server errors.
+Request tests cover copied snapshots, bounds, offline/full queues and allocation
+failures. The worker rereads the stored list before `playlistdelete`; MPD offers
+no atomic compare-and-delete, so another client can still edit between those
+two commands. The existing on-disk cache format and NVS settings are unchanged.
+
+The 73-case MPD client suite, request ownership fixture and all 21 native UI
+CTests pass. Tab5 accepted OTA and rebooted into the **2,930,784-byte**
+application with ELF SHA-256
+`6fff2a4c16c35b082ea0de3496683c673b92e3ce56eb27a191a71ecb73385e7e`.
+ColoPlay stayed on **0.8.1-navigation-details**, MD5
+`16786370425fc7188f3416d290527a2f`. Saved Tab5 settings, ColoPlay scenes, Global
+bindings and active scene matched their pre-OTA snapshots.
+
+The user tested Remove from Playlist after reboot and confirmed removing the
+sole song from playlist **1**. The playlist remained present with zero entries.
+This concurrent physical test explains the initial automated before/after
+playlist-count mismatch; that check stopped before sending input. A subsequent
+automated check confirmed Stared exposes Unstar without Remove from Playlist,
+cancelled its context menu and restored Now Playing. It made no playlist
+writes, and playlist contents, playback, volume and modes matched its own
+post-user-test baseline.
+
+Ten stability samples kept the USB controller session healthy, with fresh
+secure BLE standby, MPD, SD and USB-C CDC-NCM networking online, and no new
+dropped, invalid or stale frames or lease timeouts. Exact images, previous
+known-good Tab5 firmware, snapshots and test evidence are retained privately in
+the ignored `coloplay/backups/remove-from-playlist-release/` bundle.
+
 ## Add to Playlist OTA — 2026-11-16
 
 Tab5 adds a song-context destination picker, including song

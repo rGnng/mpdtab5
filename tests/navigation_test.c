@@ -1265,6 +1265,56 @@ static void playlist_context_picker(void)
     ui_attach_touch(NULL);lv_indev_delete(touch);touch=NULL;
 }
 
+static void playlist_context_remove(void)
+{
+    player_track_t a,b,c,track;player_playlist_t list;player_snapshot_t before,after;
+    check(player_song_get(0,&a)&&player_song_get(1,&b)&&player_song_get(2,&c),"Removal fixture has distinct songs");
+    player_library_playlists_reset();player_library_playlist_item(0,"Remove mix",0);
+    for(int i=0;i<4;i++)player_library_playlist_item(0,NULL,(uint64_t[]){a.id,b.id,a.id,c.id}[i]);
+    player_library_playlist_item(1,"Other mix",0);player_library_playlist_item(1,NULL,c.id);pump(300);
+    ui_select_screen(SCR_PLAYLISTS);pump(300);playlists_open((void*)(intptr_t)1);pump(300);
+    int row=-1;for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==playlists_track_action&&(int)(intptr_t)g_focus[i].user==2){row=i;break;}
+    check(row>=0,"Second duplicate is selectable");focus_select(row);menu_open_key(CTX_TRACK,a.id);
+    check(menu_item_named("Remove from Playlist")>=0,"Regular playlist songs expose Remove from Playlist");
+    context_menu_focus_set(menu_item_named("Remove from Playlist"));ui_navigation_t nav;ui_navigation_snapshot(&nav);
+    check(!strcmp(nav.focus,"Remove from Playlist")&&(nav.flags&1),"Removal action is readable in ColoPlay navigation");
+    player_get_snapshot(&before);int queue_count_before=player_queue_count();
+    menu_choose("Remove from Playlist");check(!g_ctx_menu_open,"Removing closes the context menu");
+    check(player_playlist_get(1,&list)&&list.track_count==3,"Removal deletes one occurrence");
+    check(player_playlist_track_get(1,0,&track)&&track.id==a.id&&player_playlist_track_get(1,1,&track)&&track.id==b.id&&player_playlist_track_get(1,2,&track)&&track.id==c.id,"Deleting the second duplicate preserves its first occurrence and neighbors");
+    check(player_playlist_get(2,&list)&&list.track_count==1,"Other playlists are unchanged");
+    player_get_snapshot(&after);check(before.track.id==after.track.id&&before.status==after.status&&before.volume==after.volume&&player_queue_count()==queue_count_before,"Removal preserves playback, volume and queue");pump(300);
+    // A changed source invalidates the captured position before dispatch.
+    row=-1;for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==playlists_track_action){row=i;break;}
+    check(row>=0,"Refreshed detail remains usable");focus_select(row);menu_open_key(CTX_TRACK,a.id);
+    player_playlist_destination_t destination={0};snprintf(destination.name,sizeof(destination.name),"Remove mix");
+    check(player_playlist_add(&destination,b.id),"Simulate playlist mutation while menu is open");
+    menu_choose("Remove from Playlist");check(player_playlist_get(1,&list)&&list.track_count==4,"Stale menu does not delete after a playlist edit");pump(300);
+    // Touch hold exposes the same action and does not play on release.
+    row=-1;for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==playlists_track_action){row=i;break;}
+    touch=lv_indev_create();lv_indev_set_type(touch,LV_INDEV_TYPE_POINTER);lv_indev_set_display(touch,lv_display_get_default());lv_indev_set_read_cb(touch,read_touch);ui_set_touch_enabled(true);ui_attach_touch(touch);
+    hold_row_for_menu(g_focus[row].obj,CTX_TRACK,a.id);check(menu_item_named("Remove from Playlist")>=0,"Touch hold includes removal");
+    ui_handle_key(UI_KEY_BACK);ui_attach_touch(NULL);lv_indev_delete(touch);touch=NULL;
+    // Stared retains Unstar; the action does not appear outside playlist details.
+    if(!player_track_starred(a.id))check(player_toggle_track_star(a.id),"Star fixture song");pump(300);
+    playlists_open((void*)(intptr_t)0);pump(300);
+    row=-1;for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==playlists_track_action){row=i;break;}
+    check(row>=0,"Starred detail has a song");focus_select(row);ui_handle_key(UI_KEY_CONTEXT);
+    check(g_ctx_menu_open&&menu_item_named("Unstar")>=0&&menu_item_named("Remove from Playlist")==-1,"Stared uses Unstar without a duplicate removal action");ui_handle_key(UI_KEY_BACK);
+    ui_select_screen(SCR_SONGS);pump(300);songs_select(0);menu_open_key(CTX_TRACK,a.id);
+    check(menu_item_named("Remove from Playlist")==-1,"Song library has no playlist-specific removal");ui_handle_key(UI_KEY_BACK);
+    uint32_t rev=player_playlist_revision();check(!player_playlist_remove(0,0,a.id,rev)&&!player_playlist_remove(1,0,b.id,rev)&&!player_playlist_remove(1,0,a.id,rev-1),"Invalid source, key and revision do not remove anything");
+    // Full server names survive UI events; deleting the sole entry leaves an empty playlist.
+    char name[256];memset(name,'n',255);name[255]=0;
+    player_library_playlists_reset();player_library_playlist_item(0,name,0);player_library_playlist_item(0,NULL,c.id);pump(300);
+    player_playlist_destination_t full;check(player_playlist_destinations(&full,1)==1&&!strcmp(full.name,name),"Live model retains full playlist identity despite shortened UI labels");
+    ui_select_screen(SCR_PLAYLISTS);pump(300);playlists_open((void*)(intptr_t)1);pump(300);
+    row=-1;for(int i=0;i<g_focus_count;i++)if(g_focus[i].activate==playlists_track_action){row=i;break;}
+    check(row>=0,"Final song is selectable");focus_select(row);menu_open_key(CTX_TRACK,c.id);menu_choose("Remove from Playlist");pump(300);
+    check(player_playlist_get(1,&list)&&!list.track_count&&player_playlist_count()==2,"Empty playlist is retained after its final entry is removed");
+    for(int i=0;i<g_focus_count;i++)check(g_focus[i].activate!=playlists_track_action,"Empty detail has no stale song controls");
+}
+
 int main(int argc,char **argv)
 {
     lv_init();lv_display_t *display=lv_display_create(1280,720);
@@ -1286,6 +1336,7 @@ int main(int argc,char **argv)
     volume_step_settings();
     remote_navigation_snapshot();
     playlist_context_picker();
+    playlist_context_remove();
     puts("PASS: transparent text fade, Artists viewport restoration, column scrollbar geometry, page scrolling and theme cursor feedback");
     return 0;
 }

@@ -141,6 +141,11 @@ queue. The reserved Stared list remains managed through Star/Unstar. This
 addition is OTA-verified on Tab5. The live picker/cancel check preserved playlists
 and playback; append behavior is covered by native UI and production socket tests.
 
+In playlist details, **Remove from Playlist** is available in
+song context menus. It removes that occurrence without changing playback or
+the queue; Stared continues to use **Unstar**. This update is OTA-verified,
+including a user-confirmed removal of the final entry from a regular playlist.
+
 Tap or drag the Now Playing progress bar to seek, including with Up Next open.
 The position previews while dragging and sends one seek on release. Paused
 playback stays paused; changing track or leaving the view cancels an unfinished drag.

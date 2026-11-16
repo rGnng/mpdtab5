@@ -74,7 +74,7 @@ typedef struct
     live_kind_t kind;
     union
     {
-        struct { int index; uint64_t key; char name[64]; } playlist;
+        struct { int index; uint64_t key; char name[256]; } playlist;
         player_media_item_t item;
         uint64_t pid;
         char library[128];

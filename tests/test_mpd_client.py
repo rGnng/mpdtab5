@@ -135,6 +135,10 @@ int test_playlist_add(const char *name,uint64_t key,unsigned captured,unsigned q
     command_t c={.kind=CMD_PLAYLIST_ADD,.keys=&key,.playlist=(char*)name,.playlist_generation=captured,.generation=queued};
     return run_command(&c);
 }
+int test_playlist_remove(const char *name,uint64_t *keys,int count,int position,unsigned captured,unsigned queued){
+    command_t c={.kind=CMD_PLAYLIST_REMOVE,.keys=keys,.count=count,.start=position,.playlist=(char*)name,.playlist_generation=captured,.generation=queued};
+    return run_command(&c);
+}
 int test_playlists_pending(void){return playlists_refresh_pending;}
 int test_destination_count(unsigned revision,int connected){config_revision=revision;state.connected=connected;return mpd_client_playlist_destination_count();}
 const char *test_destination_name(int index){static char name[256];uint32_t generation=0;return mpd_client_playlist_destination(index,name,sizeof(name),&generation)?name:NULL;}
@@ -231,6 +235,7 @@ static playlists_t *playlist_destinations;
 static uint32_t playlist_destination_generation,playlist_connection_generation=1,config_revision=1;
 static bool playlists_refresh_pending;static void *mutex=(void*)1;
 typedef struct {const char *name;bool found;} playlist_search_t;
+typedef struct {const uint64_t *keys;int count,seen;bool changed;} playlist_check_t;
 static uri_entry_t uris[TRACK_LIMIT];
 static uint16_t uri_slots[URI_SLOTS];
 static char uri_pool[URI_BYTES];
@@ -244,13 +249,14 @@ static unsigned uri_count,uri_used;
         functions='\n'.join(production(name) for name in [
             'publish','uri_lookup','uri_insert','song_reset','song_finish','song_field',
             'status_field','stat_field','simple','sync_library','sync_queue','star_position',
-            'sync_stars','change_star','playlist_field','sync_playlists','mpd_client_playlist_destination_count','mpd_client_playlist_destination','playlist_search_field','playlist_add_track','play_selection','poll_state','set_volume','queue_next_queue_changed','queue_priority_field','queue_priority_capability','queue_next_tick','queue_next_install','queue_added_field','queue_entry_field','queue_add_selection','queue_edit_entry','run_command','coloplay_volume_complete'])
+            'sync_stars','change_star','playlist_field','sync_playlists','mpd_client_playlist_destination_count','mpd_client_playlist_destination','playlist_search_field','playlist_add_track','playlist_check_field','playlist_remove_track','play_selection','poll_state','set_volume','queue_next_queue_changed','queue_priority_field','queue_priority_capability','queue_next_tick','queue_next_install','queue_added_field','queue_entry_field','queue_add_selection','queue_edit_entry','run_command','coloplay_volume_complete'])
         (directory/'client.c').write_text(PREFIX+globals_+command_type+song_type+queue_types+functions+SUFFIX)
         subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Wno-unused-function','-shared','-fPIC',
                         '-I'+str(directory),'-I'+str(ROOT/'app/mpd'),'-I'+str(ROOT/'app/backend'),
                         '-I'+str(ROOT/'firmware/main'),str(directory/'client.c'),
                         str(ROOT/'app/mpd/mpd_wire.c'),'-o',str(directory/'client.so')],check=True)
         cls.lib=C.CDLL(str(directory/'client.so'))
+        cls.lib.test_playlist_remove.argtypes=[C.c_char_p,C.POINTER(C.c_uint64),C.c_int,C.c_int,C.c_uint,C.c_uint]
         cls.lib.test_playlist_add.argtypes=[C.c_char_p,C.c_uint64,C.c_uint,C.c_uint]
         cls.lib.test_destination_name.argtypes=[C.c_int];cls.lib.test_destination_name.restype=C.c_char_p
         cls.lib.test_fraction.restype=C.c_float
@@ -347,6 +353,56 @@ static unsigned uri_count,uri_used;
         self.assertEqual(self.lib.test_destination_count(2,1),0)
         self.assertIsNone(self.lib.test_destination_name(0))
         self.assertEqual(self.lib.test_destination_count(1,0),0)
+
+    def test_remove_playlist_targets_one_duplicate_position_with_quoted_full_name(self):
+        name=b'A'*180+b' "mix" \\ night';uris=[b'a.flac',b'b.flac',b'a.flac']
+        keys=(C.c_uint64*3)(*[self.lib.test_insert(uri) for uri in uris])
+        quoted=b'"'+name.replace(b'\\',b'\\\\').replace(b'"',b'\\"')+b'"'
+        self.server([(b'listplaylistinfo '+quoted+b'\n',self.star_reply(*uris)),
+                     (b'playlistdelete '+quoted+b' 2\n',b'OK\n')])
+        self.assertEqual(self.lib.test_playlist_remove(name,keys,3,2,1,1),1)
+        self.assertEqual(self.lib.test_playlists_pending(),1)
+        self.assertEqual(self.lib.test_queue_pending(),0)
+
+    def test_remove_playlist_rechecks_entire_visible_order_even_if_selected_key_matches(self):
+        a=self.lib.test_insert(b'a.flac');b=self.lib.test_insert(b'b.flac')
+        keys=(C.c_uint64*3)(a,b,a)
+        self.server([(b'listplaylistinfo "Mix"\n',self.star_reply(b'b.flac',b'a.flac',b'a.flac'))])
+        self.assertEqual(self.lib.test_playlist_remove(b'Mix',keys,3,2,1,1),1)
+        self.assertIn(b'Playlist changed',self.lib.test_message())
+        self.assertEqual(self.lib.test_playlists_pending(),1)
+
+    def test_remove_playlist_rejects_shortened_or_extended_complete_snapshot(self):
+        key=self.lib.test_insert(b'a.flac');keys=(C.c_uint64*2)(key,key)
+        self.server([(b'listplaylistinfo "Mix"\n',self.star_reply(b'a.flac')),
+                     (b'listplaylistinfo "Mix"\n',self.star_reply(b'a.flac',b'a.flac',b'a.flac'))])
+        self.assertEqual(self.lib.test_playlist_remove(b'Mix',keys,2,0,1,1),1)
+        self.assertEqual(self.lib.test_playlist_remove(b'Mix',keys,2,0,1,1),1)
+        self.assertIn(b'Playlist changed',self.lib.test_message())
+
+    def test_remove_playlist_supports_visible_prefix_of_large_playlist(self):
+        key=self.lib.test_insert(b'a.flac');keys=(C.c_uint64*1024)(*([key]*1024))
+        self.server([(b'listplaylistinfo "Mix"\n',self.star_reply(*([b'a.flac']*1025))),
+                     (b'playlistdelete "Mix" 1023\n',b'OK\n')])
+        self.assertEqual(self.lib.test_playlist_remove(b'Mix',keys,1024,1023,1,1),1)
+
+    def test_remove_playlist_stale_connection_is_rejected_without_io(self):
+        key=self.lib.test_insert(b'a.flac');keys=(C.c_uint64*1)(key)
+        self.assertEqual(self.lib.test_playlist_remove(b'Mix',keys,1,0,1,2),1)
+        self.assertIn(b'connection changed',self.lib.test_message())
+        self.peer.settimeout(.05)
+        with self.assertRaises(socket.timeout):self.peer.recv(1)
+
+    def test_remove_playlist_server_errors_do_not_report_success_or_touch_queue(self):
+        key=self.lib.test_insert(b'a.flac');keys=(C.c_uint64*1)(key)
+        self.server([(b'listplaylistinfo "Deleted"\n',b'ACK [50@0] {listplaylistinfo} missing\n'),
+                     (b'listplaylistinfo "Mix"\n',self.star_reply(b'a.flac')),
+                     (b'playlistdelete "Mix" 0\n',b'ACK [4@0] {playlistdelete} permission denied\n')])
+        self.assertEqual(self.lib.test_playlist_remove(b'Deleted',keys,1,0,1,1),0)
+        self.assertEqual(self.lib.test_playlist_remove(b'Mix',keys,1,0,1,1),0)
+        self.assertEqual(self.lib.test_playlists_pending(),0)
+        self.assertEqual(self.lib.test_queue_pending(),0)
+        self.assertIn(b'permission denied',self.lib.test_wire_error())
 
     def test_elapsed_polls_preserve_revision_but_publish_real_changes(self):
         revision=self.lib.test_publish(1000,50,0,b"Song")

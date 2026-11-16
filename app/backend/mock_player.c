@@ -77,7 +77,7 @@ static int artist_count;
 
 typedef struct {
     uint64_t id;
-    char name[64];
+    char name[256];
     uint64_t track_ids[MAX_PLAYLIST_TRACKS];
     int track_count;
 } device_playlist_t;
@@ -2174,6 +2174,26 @@ bool player_playlist_add(const player_playlist_destination_t *destination,uint64
         playlists[i].track_ids[playlists[i].track_count++]=id;live_playlist_revision++;return true;
     }
     return false;
+#endif
+}
+
+bool player_playlist_remove(int index,int position,uint64_t id,uint32_t snapshot_revision)
+{
+    if(index<=0||index>playlist_count||position<0||snapshot_revision!=player_playlist_revision())return false;
+    device_playlist_t *list=&playlists[index-1];
+    if(!strcasecmp(list->name,"Stared"))return false;
+    int raw=-1,seen=0;
+    for(int i=0;i<list->track_count;i++)if(track_by_id(list->track_ids[i])){
+        if(seen++==position){raw=i;break;}
+    }
+    if(raw<0||list->track_ids[raw]!=id)return false;
+#if defined(ESP_PLATFORM)
+    player_playlist_destination_t source;
+    if(!mpd_client_is_enabled()||!mpd_client_playlist_destination(index-1,source.name,sizeof(source.name),&source.generation)||strcmp(source.name,list->name))return false;
+    return mpd_client_playlist_remove(source.name,source.generation,list->track_ids,list->track_count,raw)==ESP_OK;
+#else
+    memmove(list->track_ids+raw,list->track_ids+raw+1,(size_t)(list->track_count-raw-1)*sizeof(*list->track_ids));
+    --list->track_count;++live_playlist_revision;return true;
 #endif
 }
 

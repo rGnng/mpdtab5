@@ -99,6 +99,8 @@ bool mpd_client_track_starred(uint64_t key);
 int mpd_client_playlist_destination_count(void);
 bool mpd_client_playlist_destination(int index,char *name,size_t size,uint32_t *generation);
 esp_err_t mpd_client_playlist_add(const char *name,uint32_t generation,uint64_t key);
+/* Copies the visible stored-list snapshot (up to 1024 keys); position is zero-based. */
+esp_err_t mpd_client_playlist_remove(const char *name,uint32_t generation,const uint64_t *keys,int count,int position);
 
 #define MPD_ARTWORK_SIZE 360
 uint32_t mpd_client_artwork_revision(void);

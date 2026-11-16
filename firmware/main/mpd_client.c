@@ -86,7 +86,7 @@ static void artwork_reset(void);
 static void artwork_step(uint32_t generation);
 
 typedef enum { CMD_TEXT, CMD_PLAY, CMD_ALL, CMD_JUMP, CMD_STAR, CMD_CLEAR_STARS, CMD_COLOPLAY,
-    CMD_QUEUE_ADD, CMD_QUEUE_NEXT, CMD_QUEUE_MOVE, CMD_QUEUE_REMOVE, CMD_PLAYLIST_ADD } command_kind_t;
+    CMD_QUEUE_ADD, CMD_QUEUE_NEXT, CMD_QUEUE_MOVE, CMD_QUEUE_REMOVE, CMD_PLAYLIST_ADD, CMD_PLAYLIST_REMOVE } command_kind_t;
 typedef struct {
     command_kind_t kind;
     uint32_t generation;
@@ -656,6 +656,15 @@ esp_err_t mpd_client_playlist_add(const char *name,uint32_t generation,uint64_t 
     if(!c.playlist||!c.keys){free(c.playlist);free(c.keys);return ESP_ERR_NO_MEM;}
     c.keys[0]=key;return enqueue(&c);
 }
+esp_err_t mpd_client_playlist_remove(const char *name,uint32_t generation,const uint64_t *keys,int count,int position){
+    char quoted[520];
+    if(!name||!*name||strlen(name)>255||!strcasecmp(name,"Stared")||!generation||!keys||count<=0||count>1024||position<0||position>=count||!mpd_quote(quoted,sizeof(quoted),name))return ESP_ERR_INVALID_ARG;
+    for(int i=0;i<count;i++)if(!keys[i])return ESP_ERR_INVALID_ARG;
+    command_t c={.kind=CMD_PLAYLIST_REMOVE,.count=count,.start=position,.playlist_generation=generation};
+    c.playlist=strdup(name);c.keys=malloc((size_t)count*sizeof(*c.keys));
+    if(!c.playlist||!c.keys){free(c.playlist);free(c.keys);return ESP_ERR_NO_MEM;}
+    memcpy(c.keys,keys,(size_t)count*sizeof(*c.keys));return enqueue(&c);
+}
 
 static bool playlist_field(const char *key,const char *value,void *ctx) {
     playlists_t *p=ctx;
@@ -941,9 +950,34 @@ static bool playlist_add_track(const char *name,uint64_t key){
     playlists_refresh_pending=true;return true;
 }
 
+typedef struct {const uint64_t *keys;int count,seen;bool changed;} playlist_check_t;
+static bool playlist_check_field(const char *key,const char *value,void *context){
+    playlist_check_t *check=context;
+    if(!strcmp(key,"file")){
+        if(check->seen<check->count&&mpd_id(value)!=check->keys[check->seen])check->changed=true;
+        ++check->seen;
+    }
+    return true;
+}
+static bool playlist_remove_track(const command_t *c){
+    char quoted[520],command[580];
+    if(!c->playlist||!strcasecmp(c->playlist,"Stared")||!c->keys||c->count<=0||c->count>1024||c->start<0||c->start>=c->count||!mpd_quote(quoted,sizeof(quoted),c->playlist))return false;
+    playlist_check_t check={.keys=c->keys,.count=c->count};
+    snprintf(command,sizeof(command),"listplaylistinfo %s",quoted);
+    if(!mpd_wire_command(&wire,command,playlist_check_field,NULL,&check))return false;
+    /* The UI retains at most 1024 entries. A later tail cannot change a visible position. */
+    if(check.changed||check.seen<c->count||(c->count<1024&&check.seen!=c->count)){
+        message("Playlist changed; reopen the menu");playlists_refresh_pending=true;return true;
+    }
+    snprintf(command,sizeof(command),"playlistdelete %s %d",quoted,c->start);
+    if(!simple(command))return false;
+    playlists_refresh_pending=true;return true;
+}
+
 static bool run_command(command_t *c) {
-    if(c->kind==CMD_PLAYLIST_ADD){
+    if(c->kind==CMD_PLAYLIST_ADD||c->kind==CMD_PLAYLIST_REMOVE){
         if(c->playlist_generation!=c->generation){message("Playlist connection changed; reopen the menu");return true;}
+        if(c->kind==CMD_PLAYLIST_REMOVE)return playlist_remove_track(c);
         return c->keys&&playlist_add_track(c->playlist,c->keys[0]);
     }
     if(c->kind==CMD_COLOPLAY){

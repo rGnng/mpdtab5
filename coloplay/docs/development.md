@@ -203,7 +203,16 @@ brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
 
-The subsequent Tab5-only **Add to Playlist** OTA uses a **2,929,200-byte**
+The latest Tab5-only **Remove from Playlist** OTA is **2,930,784 bytes**, with
+verified ELF SHA-256
+`6fff2a4c16c35b082ea0de3496683c673b92e3ce56eb27a191a71ecb73385e7e`.
+ColoPlay remains on 0.8.1. The user confirmed deleting the last song from a
+regular playlist; automated checks verified Stared keeps Unstar, cancelled
+without further writes and restored Now Playing. Saved settings and controller
+connections were preserved. See the [removal validation record](../../docs/mpd-validation.md#remove-from-playlist-ota--2026-11-16);
+private evidence is retained in `backups/remove-from-playlist-release/`.
+
+The preceding Tab5-only **Add to Playlist** OTA uses a **2,929,200-byte**
 application with ELF SHA-256
 `7c6a1e56968040e6eecfb554c3c723a059586c35fa3aa5fa50fb29204f650a29`.
 ColoPlay remains on the 0.8.1 image below. The [Tab5 validation record](../../docs/mpd-validation.md#add-to-playlist-ota--2026-11-16)

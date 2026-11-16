@@ -66,6 +66,23 @@ int main(void){
  reset();for(const char **p=(const char*[]){"","Stared","sTaReD","Bad\nclear",NULL};*p;p++)assert(mpd_client_playlist_add(*p,7,123)==ESP_ERR_INVALID_ARG);
  assert(mpd_client_playlist_add("Mix",0,123)==ESP_ERR_INVALID_ARG&&mpd_client_playlist_add("Mix",7,0)==ESP_ERR_INVALID_ARG&&!live&&!allocations);
  reset();memset(name,'n',255);name[255]=0;assert(mpd_client_playlist_add(name,7,123)==ESP_OK&&strlen(captured.playlist)==255);release(captured.keys);release(captured.playlist);
+ reset();uint64_t keys[1024]={123,456,123};
+ assert(mpd_client_playlist_remove("Mix",7,keys,3,2)==ESP_OK&&live==2);
+ assert(captured.kind==CMD_PLAYLIST_REMOVE&&captured.generation==7&&captured.playlist_generation==7&&captured.count==3&&captured.start==2);
+ keys[2]=999;assert(captured.keys[2]==123);release(captured.keys);release(captured.playlist);
+ for(unsigned failed=1;failed<=2;failed++){reset();fail_at=failed;assert(mpd_client_playlist_remove("Mix",7,keys,3,2)==ESP_ERR_NO_MEM&&!live);}
+ reset();accept=0;assert(mpd_client_playlist_remove("Mix",7,keys,3,2)==ESP_ERR_NO_MEM&&!live);
+ reset();state.connected=0;assert(mpd_client_playlist_remove("Mix",7,keys,3,2)==ESP_ERR_INVALID_STATE&&!live);
+ reset();for(const char **p=(const char*[]){"","Stared","sTaReD","Bad\nclear",NULL};*p;p++)assert(mpd_client_playlist_remove(*p,7,keys,3,2)==ESP_ERR_INVALID_ARG);
+ assert(mpd_client_playlist_remove("Mix",0,keys,3,2)==ESP_ERR_INVALID_ARG);
+ assert(mpd_client_playlist_remove("Mix",7,NULL,3,2)==ESP_ERR_INVALID_ARG);
+ assert(mpd_client_playlist_remove("Mix",7,keys,0,0)==ESP_ERR_INVALID_ARG);
+ assert(mpd_client_playlist_remove("Mix",7,keys,1025,0)==ESP_ERR_INVALID_ARG);
+ assert(mpd_client_playlist_remove("Mix",7,keys,3,-1)==ESP_ERR_INVALID_ARG);
+ assert(mpd_client_playlist_remove("Mix",7,keys,3,3)==ESP_ERR_INVALID_ARG);
+ keys[0]=0;assert(mpd_client_playlist_remove("Mix",7,keys,3,2)==ESP_ERR_INVALID_ARG&&!live&&!allocations);
+ for(int i=0;i<1024;i++)keys[i]=123;
+ assert(mpd_client_playlist_remove(name,7,keys,1024,1023)==ESP_OK);release(captured.keys);release(captured.playlist);
  assert(!live);return 0;
 }
 '''
@@ -73,7 +90,8 @@ int main(void){
             path = Path(tmp)
             (path / 'request.c').write_text(prefix + types + boundary +
                 production(source, 'enqueue') + '\n' +
-                production(source, 'mpd_client_playlist_add') + main)
+                production(source, 'mpd_client_playlist_add') + '\n' +
+                production(source, 'mpd_client_playlist_remove') + main)
             subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
                             '-I' + str(ROOT / 'app/mpd'), '-I' + str(ROOT / 'shared'),
                             str(path / 'request.c'), str(ROOT / 'app/mpd/mpd_wire.c'),

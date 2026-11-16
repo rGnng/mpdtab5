@@ -48,7 +48,9 @@ physical Page Up/Down keys remain list-paging controls.
 | --- | --- |
 | Album in Albums, or album header in artist detail | Play, Shuffle Play, Add to Queue, Play Next, Go to artist |
 | Artist in Artists | Play, Shuffle Play, Add to Queue, Play Next |
-| Song in album detail, artist detail, Songs or playlist detail | Play, Add to Queue, Play Next, Star/Unstar, Add to Playlist, Go to album, Go to artist |
+| Song in album detail, artist detail or Songs | Play, Add to Queue, Play Next, Star/Unstar, Add to Playlist, Go to album, Go to artist |
+| Song in regular playlist detail | Play, Add to Queue, Play Next, Star/Unstar, Add to Playlist, Remove from Playlist, Go to album, Go to artist |
+| Song in Stared detail | Play, Add to Queue, Play Next, Unstar, Add to Playlist, Go to album, Go to artist |
 | Entry in Up Next | Play Next, Remove from Queue, Add to Playlist, Go to album, Go to artist |
 | Now Playing controls / queue closed | Go to album, Go to artist, Star/Unstar, Add to Playlist, Shuffle, Repeat |
 
@@ -79,6 +81,13 @@ an album/artist identity are omitted from library/queue menus.
   playback, queue order, volume or shuffle. Repeated additions append repeated
   entries, following MPD's normal playlist behavior. Stared is excluded; use
   Star/Unstar for that list. Empty destination lists show a message and Back.
+- **Remove from Playlist** removes the selected occurrence from its regular
+  playlist, preserving the song file, other copies, other playlists and the
+  current playback queue. Stared uses Unstar. The source name, connection,
+  position and visible contents are checked before deletion; a changed list
+  requires reopening the menu. The list refreshes after server confirmation,
+  including when its last entry was removed. This addition is host-tested and
+  OTA-verified, including a user-confirmed final-entry removal.
 - **Star/Unstar** targets the selected song, including when another song is
   playing. MPD writes Tracks' server-side **Stared** playlist. Its confirmed
   server state controls the label; a network round trip may be visible.

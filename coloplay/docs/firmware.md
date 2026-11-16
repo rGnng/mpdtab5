@@ -311,6 +311,13 @@ behavior is covered by native UI and production socket tests. See the
 [Tab5 validation record](../../docs/mpd-validation.md#add-to-playlist-ota--2026-11-16)
 for its image fingerprint and test scope.
 
+Tab5 also offers **Remove from Playlist** for songs in
+regular playlist details; Stared keeps Unstar. The existing Context/knob/select
+controls work with this action, and ColoPlay shows its label without a firmware
+change. The Tab5 update is OTA-verified, including a user-confirmed removal of
+the final song from a regular playlist. See the
+[removal validation record](../../docs/mpd-validation.md#remove-from-playlist-ota--2026-11-16).
+
 ### Global bindings
 
 Add shared bindings in the **Global** view. A scene's own binding wins for the
