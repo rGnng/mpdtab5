@@ -146,6 +146,10 @@ song context menus. It removes that occurrence without changing playback or
 the queue; Stared continues to use **Unstar**. This update is OTA-verified,
 including a user-confirmed removal of the final entry from a regular playlist.
 
+Fast Scroll preserves knob velocity across ColoPlay sleep-activity messages
+on USB and BLE. The configured entry threshold and idle/reversal behavior
+continue to apply to Up Next and the library/settings lists.
+
 **Shuffle All** queues and shuffles the library on the MPD server, without a
 full-library request allocation on Tab5. Queue rows load on demand in pages of
 64; startup and queue changes read the count and current song without fetching

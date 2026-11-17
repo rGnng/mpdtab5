@@ -158,7 +158,7 @@ class FastScrollConfigTests(unittest.TestCase):
         save_end = source.index('    cJSON_AddNumberToObject(root, "brightness",',save_start)
         web = (ROOT/'firmware/main/web_server.c').read_text()
         web_start = web.index('    const cJSON * enabled = cJSON_GetObjectItemCaseSensitive(root, "fast_scroll_enabled");')
-        web_end = web.index('    item = cJSON_GetObjectItemCaseSensitive(root, "screen_off_minutes");',web_start)
+        web_end = web.index('    if(pagination) g_app_config.pagination_size',web_start)
         (Path(cls.tmp.name)/'esp_err.h').write_text('typedef int esp_err_t;\n')
         harness = Path(cls.tmp.name)/'config.c'
         harness.write_text('''

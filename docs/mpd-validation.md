@@ -1,5 +1,40 @@
 # MPD controller validation
 
+## Fast Scroll sleep-activity correction — 2026-11-17
+
+ColoPlay reports sleep activity alongside input, throttled to one message per
+250 ms during a continuous gesture. Tab5 previously treated that activity as
+a separate key action and cleared Fast Scroll history, so acceleration could
+fail to enter or repeatedly drop out in Up Next and other lists. A production
+LVGL reproduction with activity interleaved between detents failed in all
+three themes before the correction.
+
+The activity key now only refreshes idle time while awake. An actual wake still
+clears velocity and consumes the wake input; normal actions, reversals and
+idle expiry retain their reset behavior. No threshold, timing or stored setting
+was changed. USB serial and BLE already deliver the same activity key, so no
+ColoPlay firmware or protocol change is needed.
+
+All **24 native UI CTests**, **22 Fast Scroll policy/config tests** and **8 idle
+policy tests** pass. Up Next coverage includes interleaved activity, entry and
+sustained acceleration across pending/recycled rows, its cursor color, idle
+expiry, precise movement afterward and a real wake. Albums, Artists, Songs,
+Playlists and Settings also retain acceleration under interleaved activity.
+The config fixture now extracts only Fast Scroll assignments instead of
+unrelated General settings with out-of-scope validation variables.
+
+The Tab5 ESP-IDF build passes. OTA application **2,935,984 bytes**, ELF
+SHA-256 `ded18373c1922bad4328d6a702abd6bec9859f60ba4a71e2fa9dd915a2e70e6c`, was boot-verified.
+Live checks confirmed MPD, SD, USB-C CDC-NCM networking, ColoPlay USB control
+transport and shared sleep feedback. The saved Fast Scroll settings remained
+**enabled, one-page threshold, 800 ms trigger and 500 ms hold**; all Tab5 settings
+and ColoPlay scenes/Global bindings matched the pre-OTA snapshots. ColoPlay
+remains on **0.8.3-sleep-key**. The user tested continuous knob turns in Up Next
+and a library list and confirmed: **“Works consistently now.”** Exact images,
+previous firmware, the failing
+reproduction and passing evidence are retained privately in
+`coloplay/backups/fast-scroll-release/`.
+
 ## Shuffle All and demand queue loading OTA — 2026-11-17
 
 The previous Shuffle All path copied every local song ID into an asynchronous

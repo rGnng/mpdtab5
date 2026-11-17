@@ -698,6 +698,13 @@ static void cursor_band_views(void)
         uint32_t now=lv_tick_get();
         ui_handle_key_repeat_timed(UI_KEY_DOWN,rows*2,now-500,now);pump(40);
         check(g_fast_scroll.active,"Every list must enter fast scrolling");check_cursor_band(true);
+        int physical=rows*2;ui_fast_scroll_reset();uint32_t tick=lv_tick_get();
+        for(int n=0;n<physical;n++){
+            ui_handle_key(UI_KEY_ACTIVITY);
+            ui_handle_key_repeat_timed(UI_KEY_DOWN,1,tick,tick);tick+=10;
+        }
+        check(g_fast_scroll.active,"Linked activity preserves acceleration on every list");
+        check_cursor_band(true);
         ui_fast_scroll_reset();check_cursor_band(false);
     }
     ui_select_screen(SCR_NOW_PLAYING);pump(200);

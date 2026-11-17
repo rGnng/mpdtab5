@@ -203,7 +203,17 @@ brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
 
-The latest Tab5-only **Shuffle All and demand queue loading** correction is
+The latest Tab5-only **Fast Scroll sleep-activity correction** is OTA-verified,
+application **2,935,984 bytes**, ELF SHA-256
+`ded18373c1922bad4328d6a702abd6bec9859f60ba4a71e2fa9dd915a2e70e6c`. Linked sleep activity now preserves
+rotary velocity while awake; an actual wake still resets it. Fast Scroll works
+across Up Next and the other lists without changing saved thresholds or timers;
+physical knob behavior was user-confirmed after OTA.
+ColoPlay remains **0.8.3-sleep-key**. See the
+[validation record](../../docs/mpd-validation.md#fast-scroll-sleep-activity-correction--2026-11-17).
+Private images, settings and evidence are in `backups/fast-scroll-release/`.
+
+The preceding Tab5-only **Shuffle All and demand queue loading** correction is
 OTA-verified, application **2,935,856 bytes**, ELF SHA-256
 `f20e0a5ae778f79e755fdffc3c4bb33c4552cf07067270577f67341c95762941`. ColoPlay remains on **0.8.3-sleep-key**.
 Shuffle All uses existing MPD root-add/shuffle commands. Queue count/current

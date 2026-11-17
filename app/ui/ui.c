@@ -11540,6 +11540,12 @@ void ui_handle_key_repeat(ui_key_t key, int count)
 
 void ui_handle_key(ui_key_t key)
 {
+    /* Linked controllers report sleep activity alongside real input. It is
+     * not a separate navigation action and must not erase rotary velocity. */
+    if(key==UI_KEY_ACTIVITY){
+        if(ui_user_activity())ui_fast_scroll_reset_reason("wake");
+        return;
+    }
     if(key == UI_KEY_UP || key == UI_KEY_DOWN) ui_handle_key_repeat(key, 1);
     else { ui_fast_scroll_reset_reason("key_action"); ui_handle_key_single(key); }
 }

@@ -39,6 +39,36 @@ int main(int argc,char **argv)
     check(lv_obj_get_height(np_queue_spacer)==(total-base)*NP_QUEUE_ROW_H,"Scrollbar reserves the full logical extent");
     ui_handle_key_repeat(UI_KEY_DOWN,260);pump(100);
     check(np_queue_selected==base+260,"Knob bursts cross the old 100-row limit while metadata is pending");
+    g_system_config.fast_scroll_enabled=true;g_system_config.fast_scroll_pages=1;
+    g_system_config.fast_scroll_trigger_window_ms=800;g_system_config.fast_scroll_hold_ms=500;
+    np_queue_select(base);ui_fast_scroll_reset();
+    lv_obj_t *scroll_context;int rows=ui_fast_scroll_rows(&scroll_context);
+    check(rows>=2&&scroll_context==np_queue_list,"Virtual queue has a stable Fast Scroll viewport");
+    for(int n=0;n<rows;n++){
+        ui_handle_key(UI_KEY_ACTIVITY); /* USB/BLE sleep activity accompanies knob input. */
+        ui_handle_key(UI_KEY_DOWN);pump(40);
+    }
+    check(g_fast_scroll.active,"Linked activity packets must preserve the physical scroll history");
+    np_queue_select(base);ui_fast_scroll_reset();
+    uint32_t now=lv_tick_get();
+    ui_handle_key_repeat_timed(UI_KEY_DOWN,rows,now-400,now);
+    check(g_fast_scroll.active,"Physical page of detents activates Fast Scroll in virtual Up Next");
+    check(np_queue_selected==base+rows*2-1,"Fast Scroll trigger notch advances a whole visible page");
+    for(int n=0;n<20;n++){
+        pump(40);int previous=np_queue_selected;ui_handle_key(UI_KEY_ACTIVITY);ui_handle_key(UI_KEY_DOWN);
+        check(g_fast_scroll.active&&np_queue_selected==previous+rows,"Fast Scroll remains active across recycled and pending queue rows");
+    }
+    int slot=g_focus_index-np_queue_focus_start;
+    check(slot>=0&&lv_color_eq(lv_obj_get_style_border_color(np_queue_rows[slot],0),lv_color_hex(g_theme->fast_scroll_band)),"Recycled queue cursor shows the active Fast Scroll color");
+    pump(600);check(!g_fast_scroll.active,"Configured idle timeout ends Fast Scroll");
+    int precise=np_queue_selected;ui_handle_key(UI_KEY_UP);
+    check(np_queue_selected==precise-1,"One notch after timeout remains precise");
+    ui_fast_scroll_reset();now=lv_tick_get();
+    ui_handle_key_repeat_timed(UI_KEY_DOWN,rows,now-400,now);
+    check(g_fast_scroll.active,"Wake fixture starts with active velocity");
+    int wake_position=np_queue_selected;ui_screen_off();ui_handle_key(UI_KEY_ACTIVITY);
+    check(ui_screen_is_on()&&!g_fast_scroll.active&&!g_fast_scroll.count&&np_queue_selected==wake_position,"Actual wake clears velocity without moving the queue selection");
+    g_system_config.fast_scroll_enabled=false;ui_fast_scroll_reset();
     context_target_t context;check(!context_capture(&context),"Loading rows cannot target a stale queue occurrence");
     ui_handle_key(UI_KEY_ENTER);player_snapshot_t after;player_get_snapshot(&after);
     check(after.track.id==before.track.id&&player_queue_index()==base-1,"Loading-row Enter does not jump playback");

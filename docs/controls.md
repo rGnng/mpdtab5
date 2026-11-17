@@ -29,6 +29,12 @@ A page rebuild dismisses its menu safely. Media keys remain available while a
 menu is open; navigation is modal. The first input after screen blanking wakes
 the screen and is consumed.
 
+Fast Scroll counts physical Up/Down detents within the configured trigger time.
+After activation, each detent moves one visible page. Reversal, idle timeout,
+another action or a real wake resets acceleration. Linked ColoPlay sleep-activity
+messages update the idle timer without clearing scroll history while awake;
+this applies to USB and BLE, including Up Next's recycled rows.
+
 ## Touch and pagination
 
 Tap a row for its normal action. Hold an album, artist, song, or Up Next row to
