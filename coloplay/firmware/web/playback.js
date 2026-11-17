@@ -10,7 +10,7 @@ const playbackFields={
   ['Playback state',[
    ['paused_screen','When paused',[['playback','Keep playback screen'],['clock','Clock'],['blank','Blank']]],
    ['stopped_screen','When stopped (nothing playing)',[['playback','Keep playback screen'],['clock','Clock'],['blank','Blank']]],
-   ['disconnected_screen','When disconnected',[['connecting','Connecting icon'],['clock','Clock'],['blank','Blank']]]]]]
+   ['disconnected_screen','When disconnected',[['connecting','Connection status'],['clock','Clock'],['blank','Blank']]]]]]
 };
 const playbackStates=['playing','paused','stopped'];
 const playbackStateNames={playing:'Playing',paused:'Paused',stopped:'Stopped'};

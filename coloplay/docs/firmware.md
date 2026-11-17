@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current verified release: **0.8.3-sleep-key**, OTA-tested on 2026-11-16.
+Current verified release: **0.8.4-connection-status**, OTA-tested on 2026-11-17.
 The gadget is configured
 through the **Connection**, **Controls**, **Playback**, **Lighting** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
@@ -201,7 +201,7 @@ Time can show Elapsed / Total, Remaining, or Off. Long titles/artists use
 Ellipsis or Scrolling (24 pixels/second, with a one-second pause at each end).
 Japanese, common Chinese and Korean text use the embedded 16 px font and stay
 centered; a single metadata line centers vertically. Paused/stopped screens can keep playback,
-show Clock or go Blank. Disconnected playback can show the connecting icon,
+show Clock or go Blank. Disconnected playback can show Connection status,
 Clock or Blank. Blank turns the backlight off. These state choices apply to the
 playback screen; a temporary volume screen keeps its icon-and-bar behavior.
 
@@ -251,7 +251,7 @@ Playing it uses the configured playback screen; Queue and editing retain the
 navigation display. Long text follows the playback Ellipsis/Scrolling setting.
 Volume action feedback temporarily shows the existing speaker/bar screen.
 Both ColoPlay and Tab5 need the navigation extension. Stale/disconnected feedback
-shows the existing connecting icon. The new stream does not wake a sleeping
+shows the waiting/disconnected connection indicators. The new stream does not wake a sleeping
 ColoPlay or change scene brightness, playback lighting or settings.
 
 ## Controls
@@ -598,8 +598,14 @@ The playback screen has a compact playback-state icon at the top and centered
 16 px title/artist lines, with no emoji/boxes. Japanese, common Chinese and Korean metadata use
 an embedded Noto Sans JP/CJK bitmap font. Shared Han characters use the Japanese
 glyph form; distinct simplified/traditional characters stay separate. A slim progress bar and time are below;
-the LED ring can also show progress. By default unavailable feedback uses the local
-`andrsrxn:bluetooth-connecting` icon, without connection text.
+the LED ring can also show progress. By default unavailable feedback uses three
+local icons, without connection text: USB serial (`andrsrxn:usb`), Bluetooth
+(`andrsrxn:bluetooth`) and MPD (`boxicons:monitor-wide`). Connected icons are white;
+disconnected icons are gray. USB reflects the validated controller serial
+session, Bluetooth reflects the secure BLE link even in standby, and MPD
+requires fresh connected backend feedback. They appear only in the original
+waiting/disconnected view; normal Clock, Now Playing, volume and navigation
+layouts have no added status strip. Clock/Blank fallback preferences still apply.
 
 **Device → Sound → Sound effects volume** controls generated tones, including
 scene-switch sounds. It defaults to 70%; zero mutes tones. Remote playback volume

@@ -155,6 +155,11 @@ full-library request allocation on Tab5. Queue rows load on demand in pages of
 64; startup and queue changes read the count and current song without fetching
 the whole queue.
 
+ColoPlay's waiting/disconnected view shows separate USB serial, Bluetooth and
+MPD icons, white when connected and gray otherwise. The normal screens keep
+their existing layout; the same independent states are available in its
+`controller.connections` diagnostics.
+
 ColoPlay's HID key picker includes **Sleep (Screen off)**. Its Button 1 Hold
 binding fires once at 600 ms, while a short press remains Back.
 

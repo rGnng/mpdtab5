@@ -72,6 +72,7 @@ Snapshot snapshot(){
   auto out=gFeedback.snapshot(millis());portEXIT_CRITICAL(&gMux);
   return wired?out:BluetoothService::snapshot();
 }
+ConnectionStatus::State connections(){return ConnectionStatus::from(snapshot(),BluetoothService::snapshot());}
 void tick(bool hardwareReady){
   const uint32_t now=millis();
   portENTER_CRITICAL(&gMux);gAllowed=hardwareReady;
@@ -116,6 +117,8 @@ String statusJson(){
   const auto s=snapshot();
   portENTER_CRITICAL(&gMux);const uint32_t session=gSession,sent=gSent,dropped=gDropped,invalid=gInvalid+gParser.invalid,stale=gStale,timeouts=gLeaseTimeouts,connections=gConnections;const bool wired=gConnected;portEXIT_CRITICAL(&gMux);
   String out="{\"transport\":\""+String(wired?"usb_cdc_acm":s.connected&&s.secured?"ble":"none")+"\",\"priority\":\"usb_cdc_acm\",\"usb_connected\":"+String(wired?"true":"false");
+  const auto links=ControllerService::connections();
+  out+=",\"connections\":{\"usb\":"+String(links.usb?"true":"false")+",\"bluetooth\":"+String(links.bluetooth?"true":"false")+",\"mpd\":"+String(links.mpd?"true":"false")+"}";
   out+=",\"session\":"+String(session)+",\"fresh\":"+String(s.fresh?"true":"false")+",\"available\":"+String(s.available?"true":"false");
   out+=",\"volume_scale\":\""+String(volume_scale_name(s.volumeSteps))+"\",\"volume_fraction\":"+String(s.volume,8)+",\"display_volume_fraction\":"+String(s.displayVolume,8);
   out+=",\"request\":"+String(s.request)+",\"result\":"+String(s.result)+",\"volume_pending\":"+String(s.volumePending)+",\"sent\":"+String(sent)+",\"dropped\":"+String(dropped)+",\"invalid\":"+String(invalid);

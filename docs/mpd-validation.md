@@ -1,5 +1,45 @@
 # MPD controller validation
 
+## ColoPlay connection-status OTA — 2026-11-17
+
+ColoPlay **0.8.4-connection-status** replaces the single waiting Bluetooth icon
+with three independent 32 px icons: `andrsrxn:usb`, `andrsrxn:bluetooth`, and
+`boxicons:monitor-wide` for MPD. Connected is white, disconnected gray. The
+indicators appear only in the original waiting/disconnected view; no footer is
+added to Clock, Now Playing, volume or navigation layouts. The legacy playback
+choice value `connecting` remains compatible and is labelled **Connection status**.
+
+USB reflects the validated controller serial session, surviving the known
+brief SOF/DTR flicker. Bluetooth requires an enabled, ready, secure BLE link and
+may stay connected in standby while USB owns input. MPD requires fresh available
+backend state from the selected transport. Stopped playback is still connected;
+serial heartbeats alone cannot keep stale MPD feedback marked connected.
+`controller.connections` reports the same independent booleans for diagnostics.
+Existing wire frames and every saved configuration format are unchanged.
+
+The full ColoPlay host regression script, the production USB host/router/I/O
+fixtures and the firmware build pass. The router fixture exercises handshake
+without MPD, MPD loss with both transports still connected, insecure Bluetooth,
+stopped playback, stale state with serial heartbeats, lease expiry and BLE
+fallback. Host builds of the actual draw helper render all eight status
+combinations using the bundled bitmaps. The three assets total **1,536 bytes** of
+packed 4-bit coverage and are generated offline from locally retained MIT SVGs.
+Sources, hashes and license notices are in `coloplay/assets/icons/`.
+
+Application-only OTA booted **3,269,072 bytes** in `ota_app1`, MD5
+`288031d7bd9fa4fcdd1d267fb21a6249`, ELF SHA-256
+`f00cc8c943c64531c1b115e0ddd150e546132daac278dfdbe2328287d29daae2`. Hardware readiness and the failed-start
+counter passed the 30-second confirmation. Live status reported USB serial,
+secure BLE standby and MPD connected, with shared sleep feedback current.
+Scene profiles, Playback/General/clock preferences and Tab5 settings matched
+pre-update snapshots. Two Global scene-switch bindings were changed to None
+with sound off during the check; the user confirmed those edits, and they were
+retained without replacement. Tab5 stayed on its previously verified Fast Scroll
+image. Outage/fallback status combinations are covered by fixtures; the live
+check kept the USB cable connected. The compatible local default recovery
+remains 0.8.3. Exact images, previous firmware and evidence are retained in
+`coloplay/backups/connection-status-release/`.
+
 ## Fast Scroll sleep-activity correction — 2026-11-17
 
 ColoPlay reports sleep activity alongside input, throttled to one message per

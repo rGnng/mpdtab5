@@ -4,6 +4,7 @@ import re,subprocess,tempfile,unittest
 ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r"""
 #include "remote_feedback.h"
+#include "connection_status.h"
 #include "coloplay_usb_frame.h"
 #include <string>
 #include <vector>
@@ -32,7 +33,8 @@ namespace UsbConsole {
 }
 namespace BluetoothService {
  using Snapshot=RemoteFeedback::Snapshot;
- Snapshot snapshot(){Snapshot s;s.connected=s.secured=true;return s;}
+ static Snapshot ble;
+ Snapshot snapshot(){return ble;}
  void tick(bool){}
  void resetInputs(){++ble_resets;}
  bool send(uint8_t,uint16_t,int,uint16_t=0,uint16_t=0){++ble_sent;return true;}
@@ -47,6 +49,8 @@ static void deliver(uint8_t kind,const uint8_t *payload){
 }
 int main(){
  using namespace ControllerService;
+ BluetoothService::ble.enabled=BluetoothService::ble.ready=BluetoothService::ble.connected=BluetoothService::ble.secured=true;
+ assert(!connections().usb&&connections().bluetooth&&!connections().mpd);
  tick(true);assert(send(CP_KEY,0x52,1,0,0)&&ble_sent==1);
  uint8_t data[20];cp_header(data,CP_HELLO,0,7);deliver(CP_USB_PROBE,data);
  assert(frames.size()==1&&!snapshot().wired);
@@ -56,9 +60,17 @@ int main(){
  const uint32_t session=cp_u32(offer+4);
  cp_header(data,CP_HELLO,0,session);data[8]=64;data[16]=CP_CAP_VOLUME_FLOAT|CP_CAP_VOLUME_PREDICT|CP_CAP_VOLUME_SCALE|CP_CAP_NAVIGATION;
  data[17]=CP_FEATURE_STAR;deliver(CP_USB_HELLO,data);tick(true);assert(snapshot().wired&&ble_resets==1);
+ assert(connections().usb&&connections().bluetooth&&!connections().mpd); // Handshake alone does not confirm MPD.
  cp_header(data,CP_STATE,0,session);data[9]=1;data[10]=128;cp_put32(data+12,1000);cp_put32(data+16,10000);deliver(CP_USB_DATA,data);
  cp_header(data,CP_VOLUME_STATE,0,session);cp_put_float(data+8,.25f);data[13]=64;cp_put_float(data+16,.25f);deliver(CP_USB_DATA,data);
  assert(snapshot().fresh&&snapshot().predictionReady&&snapshot().displayVolume==.5f);
+ assert(connections().usb&&connections().bluetooth&&connections().mpd);
+ uint8_t status[20];
+ cp_header(status,CP_STATE,0,session);status[9]=0;status[10]=0;deliver(CP_USB_DATA,status);
+ assert(connections().usb&&connections().bluetooth&&!connections().mpd); // MPD loss keeps the transports connected.
+ status[10]=128;deliver(CP_USB_DATA,status);
+ BluetoothService::ble.secured=false;assert(connections().usb&&!connections().bluetooth&&connections().mpd);
+ BluetoothService::ble.secured=true;
  // A brief raw CDC/SOF indication is not a protocol disconnect.
  cable=false;now+=10;tick(true);assert(snapshot().wired);cable=true;
  assert(send(CP_VOLUME,233,1,0,0)&&ble_sent==1&&snapshot().volumePending==1);
@@ -90,7 +102,13 @@ int main(){
  deliver(CP_USB_HELLO,data);assert(snapshot().wired&&!snapshot().volumePending);
  // Replayed state from the previous cable session must be ignored.
  cp_header(data,CP_STATE,0,session);data[9]=1;data[10]=128;deliver(CP_USB_DATA,data);assert(!snapshot().fresh);
- now+=1600;tick(true);assert(!snapshot().wired);assert(send(CP_KEY,0x52,1,0,0)&&ble_sent==2);
+ cp_header(data,CP_STATE,0,replacement);data[9]=0;data[10]=128;deliver(CP_USB_DATA,data);
+ assert(connections().usb&&connections().mpd); // Stopped playback is still an MPD connection.
+ now+=PlaybackClock::kFreshMs+1;deliver(CP_USB_PING,data);tick(true);
+ assert(connections().usb&&!connections().mpd); // Serial heartbeats do not make stale MPD state current.
+ BluetoothService::ble.fresh=BluetoothService::ble.available=true;
+ now+=1600;tick(true);assert(!snapshot().wired);
+ assert(!connections().usb&&connections().bluetooth&&connections().mpd);assert(send(CP_KEY,0x52,1,0,0)&&ble_sent==2);
  assert(statusJson().find("ble")!=std::string::npos);
  puts("PASS device USB handshake, fresh feedback, volume prediction, transport routing, challenge reset, stale frames and BLE fallback");
 }

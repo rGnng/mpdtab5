@@ -36,6 +36,14 @@ Bluetooth connection cannot override a working USB session. `coloplay_usb`
 reports serial-open/handshake state, session, frame counts, invalid/dropped
 frames and open attempts. Bluetooth diagnostics continue to describe BLE.
 
+ColoPlay's waiting/disconnected screen uses separate USB serial, Bluetooth and
+MPD icons, white when connected and gray otherwise. USB reflects the validated
+session/lease rather than the raw serial SOF/DTR flag; Bluetooth can be connected
+in secure standby while USB owns input. MPD requires fresh available feedback
+from the selected transport. The same booleans are exposed as
+`controller.connections.usb`, `.bluetooth` and `.mpd`. Normal Clock, playback,
+volume and navigation views do not gain a status strip.
+
 ## Framing and sessions
 
 The shared [stream envelope](../shared/coloplay_usb_frame.h) wraps the existing

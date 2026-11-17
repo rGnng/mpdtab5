@@ -116,14 +116,14 @@ OTA writes a complete application to the inactive slot, so either slot must fit
 the full firmware. The inactive slot retains its previous application until the
 next update writes it; it is not a dedicated minimal recovery image.
 
-The verified **0.8.3-sleep-key** production image has this budget:
+The verified **0.8.4-connection-status** production image has this budget:
 
 | Item | Bytes | MiB |
 |---|---:|---:|
 | Application slot capacity | 4,718,592 | 4.50 |
-| Complete production application | 3,267,424 | 3.12 |
+| Complete production application | 3,269,072 | 3.12 |
 | Embedded playback font, included in the application above | 1,477,697 | 1.41 |
-| Remaining capacity for an application of this size | 1,451,168 | 1.38 |
+| Remaining capacity for an application of this size | 1,449,520 | 1.38 |
 
 These are flash/image sizes, not free heap or PSRAM. The font stays in mapped
 flash and is not copied wholesale to RAM. Its current subset saves **875,913
@@ -283,8 +283,8 @@ finding does not generalize to other checksum failures.
 Current 0.8.x builds write scene schema 9 (3364 logical bytes, normally CSR1),
 a version-2 16-byte scene-order record, and General version 3. Use a recovery
 application that supports schema 9 and CSR1; the local default recovery bundle
-contains the exact boot-verified 0.8.1 image. Earlier recovery firmware cannot
-use the Global profile, even if it supports the CSR1 envelope. Prefer disabling
+retains the compatible boot-verified 0.8.3 image, including the qualified Sleep
+key. Earlier recovery firmware cannot use the Global profile, even if it supports the CSR1 envelope. Prefer disabling
 Bluetooth over downgrading the application.
 
 For historical compatibility: 0.6.32/0.7.x used scene schema 8; the old order

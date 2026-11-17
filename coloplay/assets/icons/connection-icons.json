@@ -1,0 +1,23 @@
+[
+  {
+    "icon": "andrsrxn:usb",
+    "file": "andrsrxn/usb.svg",
+    "sha256": "84b2947a8f8db26276007078aa8b74faf803033bc829803dfdbdebb4cf2905c9",
+    "license": "MIT",
+    "source": "https://raw.githubusercontent.com/iconify/icon-sets/master/json/andrsrxn.json"
+  },
+  {
+    "icon": "andrsrxn:bluetooth",
+    "file": "andrsrxn/bluetooth.svg",
+    "sha256": "cda57b4717dd855b2afcba4e8d04d2625d70d5d2218a349c603880a24c3675d3",
+    "license": "MIT",
+    "source": "https://raw.githubusercontent.com/iconify/icon-sets/master/json/andrsrxn.json"
+  },
+  {
+    "icon": "boxicons:monitor-wide",
+    "file": "boxicons/monitor-wide.svg",
+    "sha256": "fa0809575a61bbc40732a3cc4937531e29ab357ebffa4b4d96b441a21bdaab8a",
+    "license": "MIT",
+    "source": "https://raw.githubusercontent.com/iconify/icon-sets/master/json/boxicons.json"
+  }
+]

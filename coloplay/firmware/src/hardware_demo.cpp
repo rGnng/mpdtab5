@@ -20,6 +20,7 @@
 #include "playback_ring.h"
 #include "playback_service.h"
 #include "playback_assets.h"
+#include "connection_assets.h"
 #include "bitmap_font.h"
 
 #include <Adafruit_NeoPixel.h>
@@ -291,9 +292,19 @@ void playbackText(const char *text,int baseline,uint16_t color,int maxWidth=208,
   uint16_t palette[16];for(int a=0;a<16;++a)palette[a]=gCanvas.alphaBlend(a*17,color,kBackground);
   font.draw(text,x,baseline,[&](int px,int py,uint8_t alpha){if(px>=left&&px<left+maxWidth&&py>=0&&py<240)gCanvas.drawPixel(px,py,palette[alpha]);});
 }
-void bluetoothConnecting(){
-  uint16_t palette[16];for(int a=0;a<16;++a)palette[a]=gCanvas.alphaBlend(a*17,kMuted,kBackground);
-  for(int i=0;i<32*32;++i){const uint8_t packed=PlaybackAssets::kBluetoothConnecting32[i/2],alpha=i&1?packed&15:packed>>4;if(alpha)gCanvas.drawPixel(104+i%32,104+i/32,palette[alpha]);}
+void connectionIcons(){
+  const auto status=ControllerService::connections();
+  const bool connected[]={status.usb,status.bluetooth,status.mpd};
+  const uint8_t *icons[]={ConnectionAssets::kUsb32,ConnectionAssets::kBluetooth32,ConnectionAssets::kMpd32};
+  uint16_t palette[2][16];
+  for(int active=0;active<2;++active)for(int alpha=0;alpha<16;++alpha)
+    palette[active][alpha]=gCanvas.alphaBlend(alpha*17,active?TFT_WHITE:uint16_t(0x632c),kBackground);
+  for(int icon=0;icon<3;++icon){
+    for(int i=0;i<32*32;++i){
+      const uint8_t packed=icons[icon][i/2],alpha=i&1?packed&15:packed>>4;
+      if(alpha)gCanvas.drawPixel(60+icon*44+i%32,104+i/32,palette[connected[icon]][alpha]);
+    }
+  }
 }
 
 void render(uint32_t now) {
@@ -310,7 +321,7 @@ void render(uint32_t now) {
     case SceneSettings::kClock: drawClock(); break;
     case SceneSettings::kBluetoothVolumeScreen: {
       const auto s=ControllerService::snapshot();
-      if(!s.fresh||!s.available){bluetoothConnecting();break;}
+      if(!s.fresh||!s.available){connectionIcons();break;}
       const float value=VolumeDisplay::value(s.fresh,s.available,s.displayVolume);
       // Fixed geometry keeps command acknowledgements from shifting the layout.
       gCanvas.drawXBitmap(104,55,SceneIcons::kVolumeUp32,32,32,TFT_WHITE);
@@ -331,7 +342,7 @@ void render(uint32_t now) {
       const auto s=ControllerService::snapshot();const auto &prefs=PlaybackService::settings();
       if(SceneService::screen()==SceneSettings::kBluetoothNavigationScreen){
         const auto &nav=s.navigation;const auto &ui=nav.ui;
-        if(!nav.fresh){bluetoothConnecting();break;}
+        if(!nav.fresh){connectionIcons();break;}
         if(ui.view!=0||(ui.flags&(CP_NAV_CONTEXT|CP_NAV_QUEUE|CP_NAV_LOADING|CP_NAV_EDITING))){
           static uint16_t revision=0;static uint32_t since=0;
           if(revision!=nav.revision){revision=nav.revision;since=now;}
@@ -350,7 +361,7 @@ void render(uint32_t now) {
         }
       }
       const int mode=screen(prefs,playbackAvailable(s),s.playback);
-      if(mode==3){bluetoothConnecting();break;}
+      if(mode==3){connectionIcons();break;}
       if(mode==1){drawClock();break;}
       if(mode==2)break;
       static uint64_t lastTrack=0;static char lastTitle[64]={},lastArtist[64]={};static uint32_t textSince=0;

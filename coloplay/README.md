@@ -22,7 +22,10 @@ or a direct [USB CDC-ACM link](../docs/coloplay-usb.md). See the
 
 ## Current baseline
 
-Current verified release: **`0.8.3-sleep-key`**, OTA-tested on 2026-11-16.
+Current verified release: **`0.8.4-connection-status`**, OTA-tested on 2026-11-17.
+The waiting/disconnected screen shows separate USB serial, Bluetooth and MPD
+icons, white when connected and gray otherwise. Normal Clock, playback, volume
+and navigation layouts retain their existing appearance.
 **Sleep (Screen off)** is available in the HID key picker. Button 1 Hold is
 configured on the device at 600 ms, without repeat; a short press remains Back.
 New Tab5 Navigation presets include this binding.
@@ -128,8 +131,8 @@ playback-state icon and centered title/artist with an offline 16 px font coverin
 common Japanese, 1,500 frequency-ranked GB2312 Chinese characters and 2,350 common
 Korean syllables plus Jamo. Shared Han characters use the Japanese glyph;
 unsupported characters use `?`. The LED-ring progress fill can run clockwise or
-symmetrically from bottom to top. Connecting uses the
-locally bundled Iconify `andrsrxn:bluetooth-connecting` icon without text.
+symmetrically from bottom to top. Waiting/disconnected feedback uses the locally bundled `andrsrxn:usb`,
+`andrsrxn:bluetooth` and `boxicons:monitor-wide` icons without text.
 General includes saved sound-effects volume for local tones and scene cues. Existing scenes and General settings remain intact.
 A PC companion and general-purpose macro expansion are outside this project's
 current MPD/Tab5 focus and can be pursued separately.

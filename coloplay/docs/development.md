@@ -203,19 +203,42 @@ brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
 
+**0.8.4-connection-status** is the current ColoPlay release, application-only
+OTA-verified in `ota_app1`. The application is **3,269,072 bytes**
+(MD5 `288031d7bd9fa4fcdd1d267fb21a6249`, SHA-256
+`4e706338f20a9f0d5c894dbb34e90f5a418cbe6e6483c16992bc5a9404e3da75`); ELF SHA-256
+`f00cc8c943c64531c1b115e0ddd150e546132daac278dfdbe2328287d29daae2`. It leaves
+**1,449,520 bytes** in either application slot. The waiting/disconnected
+view replaces its single Bluetooth icon with independent USB serial, Bluetooth
+and MPD indicators, white when connected and gray otherwise. Normal screens
+retain their layout. The three local 32 px bitmaps use **1,536 bytes** of packed
+coverage, with no runtime SVG or remote resources. Their generator and notices
+are in `scripts/build_connection_icons.py` and `assets/icons/connection-icons.json`.
+
+USB uses the validated serial session/lease; BLE uses its secure connection,
+independent of USB priority; MPD requires fresh available feedback on the selected
+transport. The JSON exposes matching `controller.connections` booleans. The
+full ColoPlay regression script and three production USB/router/I/O fixtures
+pass, including stale MPD feedback, stopped playback and wireless fallback.
+Host renders cover all eight connection combinations. Boot confirmation,
+live USB/BLE/MPD status and preservation of saved settings passed. Tab5's image
+remains the Fast Scroll correction below. The compatible local recovery image
+remains 0.8.3. See the [validation record](../../docs/mpd-validation.md#coloplay-connection-status-ota--2026-11-17).
+Private images, snapshots and evidence are in `backups/connection-status-release/`.
+
 The latest Tab5-only **Fast Scroll sleep-activity correction** is OTA-verified,
 application **2,935,984 bytes**, ELF SHA-256
 `ded18373c1922bad4328d6a702abd6bec9859f60ba4a71e2fa9dd915a2e70e6c`. Linked sleep activity now preserves
 rotary velocity while awake; an actual wake still resets it. Fast Scroll works
 across Up Next and the other lists without changing saved thresholds or timers;
 physical knob behavior was user-confirmed after OTA.
-ColoPlay remains **0.8.3-sleep-key**. See the
+This Tab5 correction was verified with ColoPlay **0.8.3-sleep-key**. See the
 [validation record](../../docs/mpd-validation.md#fast-scroll-sleep-activity-correction--2026-11-17).
 Private images, settings and evidence are in `backups/fast-scroll-release/`.
 
 The preceding Tab5-only **Shuffle All and demand queue loading** correction is
 OTA-verified, application **2,935,856 bytes**, ELF SHA-256
-`f20e0a5ae778f79e755fdffc3c4bb33c4552cf07067270577f67341c95762941`. ColoPlay remains on **0.8.3-sleep-key**.
+`f20e0a5ae778f79e755fdffc3c4bb33c4552cf07067270577f67341c95762941`. ColoPlay was **0.8.3-sleep-key** at that verification.
 Shuffle All uses existing MPD root-add/shuffle commands. Queue count/current
 song are available without a full queue transfer; rows load in 64-entry pages
 when requested. Up Next reuses 15 widgets over the full remaining queue, with
@@ -226,7 +249,7 @@ passed in **6.14 / 5.93 seconds** with only 64 queue rows cached. See the
 Private firmware, previous images, settings and evidence are retained in
 `backups/shuffle-all-release/`.
 
-**0.8.3-sleep-key** is the current ColoPlay release, OTA-verified in `ota_app1`.
+**0.8.3-sleep-key** is the preceding ColoPlay release, OTA-verified in `ota_app1`.
 Its application is **3,267,424 bytes** (MD5 `90a6cc61316fe838898552ded8723d76`, SHA-256
 `085c66d392340e32cbd6d5eaf8687c9766a57c7ad1c852f56880dbaa48f364c0`); ELF SHA-256 is
 `726fc9fc493588af74d4314b2ba2fc45e9d102a5211e4f37c4161a7572d7d5a5`. Its original paired Tab5 image is recorded below;

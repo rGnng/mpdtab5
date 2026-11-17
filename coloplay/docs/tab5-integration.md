@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay source: **0.8.3-sleep-key**; the verified OTA
+Current ColoPlay source: **0.8.4-connection-status**; the verified OTA
 is in the [release record](development.md#current-verified-release).
 Both applications now live in the [MPD Tab5 repository](../../README.md), using
 the common definitions in [shared/](../../shared/README.md).
@@ -88,7 +88,7 @@ ColoPlay speaker. The screen and LEDs predict immediately using Tab5's
 synchronized grid. Actual mixer feedback remains separately available in
 diagnostics. Pending turns are reconciled by completed request ID.
 Proportional LED feedback fills the ring using that same remote source.
-A disconnected/stale source shows the connecting icon; an unavailable mixer
+A disconnected/stale source shows the connection-status indicators; an unavailable mixer
 shows an empty bar, never a fabricated zero. Request IDs, pending state
 and outcomes remain in Device diagnostics; volume command transitions also
 appear in the web log. Playback shows state, track text and seek direction, with position on the
@@ -279,8 +279,12 @@ measured and ellipsized at UTF-8 boundaries, or scrolls when enabled on the
 [Playback page](firmware.md#playback). A slim LCD progress bar/time sits
 below; the configured LED-ring progress remains independent. There are no emoji
 or decorative boxes. By default, when feedback is unavailable, both remote playback/volume screens show
-only the locally bundled `andrsrxn:bluetooth-connecting` icon, without connection
-text. Glyph data stays in flash; no whole font is loaded into RAM.
+the locally bundled `andrsrxn:usb`, `andrsrxn:bluetooth` and
+`boxicons:monitor-wide` icons, without connection text. Each icon is white for
+its connected state and gray otherwise. USB indicates the controller serial
+session; Bluetooth is independent, including secure standby; MPD requires fresh
+available backend feedback. These icons appear only in waiting/disconnected
+views, leaving normal Clock, playback, volume and navigation layouts intact. Glyph data stays in flash; no whole font is loaded into RAM.
 
 Scene **Ring display → Playback progress** fills the
 physical LED ring from elapsed/duration using scene colors and brightness.
@@ -295,7 +299,7 @@ renderer. The scene-level fill menu is removed; first initialization copies the
 active scene's legacy style into both shared settings without changing scenes.
 The page also controls ring/button colors and brightness, unfilled dimming and
 Playing, Paused and combined Stopped/Disconnected behavior. **Screen** controls visible elements,
-long-text handling and state-specific Clock/Blank/connecting fallbacks.
+long-text handling and state-specific Clock/Blank/connection-status fallbacks.
 Knob action light effects temporarily take priority over playback lighting.
 Button actions affect only their own LEDs; combinations affect all participating
 buttons. Each target returns to playback lighting after the configured duration.

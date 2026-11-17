@@ -8,7 +8,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.8.3-sleep-key** (OTA-tested on 2026-11-16), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.8.4-connection-status** (OTA-tested on 2026-11-17), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
@@ -70,6 +70,7 @@ curl http://coloplay.local/api/status
 | `buttons` | Debounced names, pins, pressed state and counters after hardware startup; early raw inputs during startup/recovery |
 | `clock` | Primary/fallback servers, valid local/Unix time, sync history and SNTP state |
 | `general` | Persistent `sound_volume`, `scene_change_sound`, `sleep_timeout_minutes` and `stored` |
+| `controller.connections` | Independent boolean `usb` (validated serial session), `bluetooth` (enabled, ready, secure BLE link), `mpd` (fresh feedback with MPD available) |
 | `controller` | Active `transport` (`usb_cdc_acm`, `ble`, `none`), fixed USB `priority`, USB session, fresh playback/navigation, confirmed `star_supported` / `star_known` / `starred`, volume scale/prediction results and frame counters |
 | `scene` | Active scene, standby/current screen, NVS state, last event/action/result and temporary feedback |
 | `usb` | Configured/active mode, stages, link, counters, DHCP and lease state |
@@ -720,9 +721,15 @@ L+V(+T) and LV+T, preserving complete display units when fitting a line. Other
 scripts are not generally normalized or shaped. Unsupported codepoints use `?`.
 See the [font coverage and source guide](../assets/fonts/noto-sans-jp/README.md).
 
-Unavailable Bluetooth feedback shows the locally bundled Iconify
-`andrsrxn:bluetooth-connecting` icon with no connection text on either remote
-screen. A compact playback status row sits above vertically centered metadata,
+Waiting/disconnected feedback shows three local 32 px icons: `andrsrxn:usb`,
+`andrsrxn:bluetooth` and `boxicons:monitor-wide`. Each is white when connected
+and gray otherwise. USB means the validated serial controller session, including
+its lease; Bluetooth remains independent and can be connected in standby while
+USB owns input. MPD is connected only with fresh available backend feedback.
+The icons replace the former single waiting icon and are not added to normal
+Clock, playback, volume or navigation views. The wire setting
+`disconnected_screen=connecting` is retained and labelled **Connection status**
+in the web editor. A compact playback status row sits above vertically centered metadata,
 with a slim LCD progress bar/time below. LED-ring progress behavior is unchanged.
 
 ## Shared progress clock (0.6.4)
