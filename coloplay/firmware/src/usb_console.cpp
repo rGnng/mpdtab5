@@ -33,9 +33,10 @@ class Console:public Stream {
 } gConsole;
 }
 Stream &stream(){return gConsole;}
+bool prepareSerial(){return Serial.setRxBufferSize(kRxBufferSize)==kRxBufferSize;}
 bool prepareNetwork(){
   gAcm.enableReboot(false);gAcm.setTxTimeoutMs(0);
-  if(gAcm.setRxBufferSize(512)!=512)return false;
+  if(gAcm.setRxBufferSize(kRxBufferSize)!=kRxBufferSize)return false;
   gAcm.begin(115200);
   return true;
 }

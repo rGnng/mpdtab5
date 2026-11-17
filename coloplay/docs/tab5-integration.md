@@ -1,6 +1,6 @@
 # Bluetooth controls and Tab5 feedback
 
-Current ColoPlay source: **0.8.4-connection-status**; the verified OTA
+Current ColoPlay source: **0.8.5-artist-feedback**; the verified OTA
 is in the [release record](development.md#current-verified-release).
 Both applications now live in the [MPD Tab5 repository](../../README.md), using
 the common definitions in [shared/](../../shared/README.md).
@@ -25,6 +25,15 @@ forget it on Tab5 before pairing again. Tab5 supports one connected controller:
 selecting ColoPlay replaces the active connection, retaining other saved peers.
 Screen/LED inactivity sleep leaves Bluetooth connected and receiving state.
 Bluetooth is initially disabled on a new installation.
+
+## Playback text
+
+Tab5 sends Artist when available, otherwise Album Artist, otherwise Unknown
+artist. Empty tags do not erase a previously supplied nonblank value. Playback
+text is clipped at a complete UTF-8 boundary within the 63-byte wire limit.
+USB and BLE resend title/artist about every five seconds, without resending the
+track-change marker, so incomplete transfers recover without resetting progress.
+ColoPlay publishes a field only after all its fragments arrive in order.
 
 ## Star feedback
 

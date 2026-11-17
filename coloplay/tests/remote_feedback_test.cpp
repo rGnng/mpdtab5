@@ -25,6 +25,20 @@ int main(){
   cp_header(data,CP_TEXT,0,7);data[2]=0x81;data[8]=5;memcpy(data+9,"Title",5);
   assert(peer.accept(data,20,7,240));assert(!strcmp(peer.snapshot(240).title,"Title"));
   data[3]=62;data[8]=2;assert(!peer.accept(data,20,7,240));
+  // A missing first/middle fragment cannot publish an empty or partial artist.
+  const char *artist="歌手の名前";const unsigned length=strlen(artist);
+  cp_header(data,CP_TEXT,0,7);data[2]=0x82;data[3]=11;data[8]=length-11;memcpy(data+9,artist+11,length-11);
+  assert(!peer.accept(data,20,7,241)&&!peer.snapshot(241).artist[0]);
+  cp_header(data,CP_TEXT,0,7);data[2]=2;data[8]=11;memcpy(data+9,artist,11);assert(peer.accept(data,20,7,242));
+  data[2]=0x82;data[3]=12;data[8]=length-12;memcpy(data+9,artist+12,length-12);assert(!peer.accept(data,20,7,243));
+  assert(!peer.snapshot(243).artist[0]);
+  // Full periodic retransmission repairs the field, including split UTF-8.
+  cp_header(data,CP_TEXT,0,7);data[2]=2;data[8]=11;memcpy(data+9,artist,11);assert(peer.accept(data,20,7,244));
+  data[2]=0x82;data[3]=11;data[8]=length-11;memcpy(data+9,artist+11,length-11);assert(peer.accept(data,20,7,245));
+  assert(!strcmp(peer.snapshot(245).artist,artist)&&!strcmp(peer.snapshot(245).title,"Title"));
+  cp_header(data,CP_TRACK,0,7);cp_put32(data+8,123);assert(peer.accept(data,20,7,246));
+  assert(!strcmp(peer.snapshot(246).artist,artist)&&!strcmp(peer.snapshot(246).title,"Title"));
+
   cp_header(data,CP_NAVIGATION,1,7);data[8]=1;data[9]=CP_NAV_FOCUS;cp_put16(data+18,5);
   assert(peer.accept(data,20,7,250));cp_header(data,CP_NAV_TEXT,1,7);data[9]=5;memcpy(data+10,"Focus",5);
   assert(peer.accept(data,20,7,250));assert(!strcmp(peer.snapshot(260).navigation.ui.focus,"Focus"));

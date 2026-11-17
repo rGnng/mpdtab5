@@ -745,6 +745,20 @@ static unsigned uri_count,uri_used;
         self.assertNotEqual(self.lib.test_track_key(0),self.lib.test_track_key(1))
         self.assertEqual(self.lib.test_track_key(0),self.lib.test_insert(b'Various/a.flac'))
 
+    def test_artist_falls_back_to_album_artist_when_artist_missing_or_blank(self):
+        for artist in (b'',b'Artist: \n',b'Artist:  \t \n'):
+            self.assertEqual(self.metadata(b'file: fallback.flac\nAlbumArtist: Album Singer\n'+artist),1)
+            self.assertEqual(self.lib.test_artist(self.lib.test_item_count()-1),b'Album Singer')
+
+    def test_artist_wins_over_album_artist_in_either_tag_order(self):
+        for fields in (b'Artist: Track Singer\nAlbumArtist: Album Singer\n',b'AlbumArtist: Album Singer\nArtist: Track Singer\n'):
+            self.assertEqual(self.metadata(b'file: priority.flac\n'+fields),1)
+            self.assertEqual(self.lib.test_artist(self.lib.test_item_count()-1),b'Track Singer')
+
+    def test_empty_repeated_artist_tags_do_not_erase_a_real_artist(self):
+        self.assertEqual(self.metadata(b'file: repeat.flac\nArtist: Track Singer\nArtist: \nAlbumArtist: Album Singer\nAlbumArtist:  \t\n'),1)
+        self.assertEqual(self.lib.test_artist(0),b'Track Singer')
+
     def test_missing_tags_have_useful_fallbacks_and_final_record_is_flushed(self):
         self.assertEqual(self.metadata(b'file: folder/untagged.flac\n'),1)
         self.assertEqual(self.lib.test_title(0),b'untagged.flac')

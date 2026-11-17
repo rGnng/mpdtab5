@@ -20,7 +20,9 @@ class Stream {
  virtual size_t write(const uint8_t *,size_t)=0;
 };
 struct FakeSerial:Stream {
- bool connected=true;size_t space=16;std::deque<uint8_t> rx;std::vector<uint8_t> tx;
+ bool connected=true,rxAllocationFailure=false;size_t rxCapacity=0;
+ size_t setRxBufferSize(size_t n){rxCapacity=rxAllocationFailure?0:n;return rxCapacity;}
+ size_t space=16;std::deque<uint8_t> rx;std::vector<uint8_t> tx;
  int available()override{return rx.size();}
  int read()override{if(rx.empty())return -1;const int c=rx.front();rx.pop_front();return c;}
  int peek()override{return rx.empty()?-1:rx.front();}

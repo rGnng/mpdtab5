@@ -423,7 +423,7 @@ static bool song_finish(song_parser_t *p) {
         const char *base=strrchr(p->uri,'/'); text_copy(p->item.title,sizeof(p->item.title),base ? base+1 : p->uri);
     }
     if(!p->item.album[0]) snprintf(p->item.album,sizeof(p->item.album),"%s","Singles / Streams");
-    if(!p->item.artist[0]) snprintf(p->item.artist,sizeof(p->item.artist),"%s","Unknown artist");
+    if(!p->item.artist[0]) text_copy(p->item.artist,sizeof(p->item.artist),p->item.album_artist[0]?p->item.album_artist:"Unknown artist");
     if(!p->item.album_artist[0]) snprintf(p->item.album_artist,sizeof(p->item.album_artist),"%s",p->item.artist);
     char album[256]; snprintf(album,sizeof(album),"%s\037%s",p->item.album_artist,p->item.album);
     p->item.pid=mpd_id(p->uri); p->item.album_pid=mpd_id(album);
@@ -491,8 +491,8 @@ static bool song_field(const char *key,const char *value,void *ctx) {
     else if(!strcmp(key,"Last-Modified")) p->modified=mpd_timestamp(value);
     else if(!strcmp(key,"Id")) p->song_id=(uint32_t)strtoul(value,NULL,10);
     else if(!strcasecmp(key,"Title")) text_copy(p->item.title,sizeof(p->item.title),value);
-    else if(!strcasecmp(key,"Artist")) text_copy(p->item.artist,sizeof(p->item.artist),value);
-    else if(!strcasecmp(key,"AlbumArtist")) text_copy(p->item.album_artist,sizeof(p->item.album_artist),value);
+    else if(!strcasecmp(key,"Artist")) {if(value[strspn(value," \t\r\n")])text_copy(p->item.artist,sizeof(p->item.artist),value);}
+    else if(!strcasecmp(key,"AlbumArtist")) {if(value[strspn(value," \t\r\n")])text_copy(p->item.album_artist,sizeof(p->item.album_artist),value);}
     else if(!strcasecmp(key,"Album")) text_copy(p->item.album,sizeof(p->item.album),value);
     else if(!strcmp(key,"duration")) p->item.duration_ms=(uint32_t)(strtod(value,NULL)*1000);
     else if(!strcmp(key,"Time") && !p->item.duration_ms) p->item.duration_ms=(uint32_t)strtoul(value,NULL,10)*1000;

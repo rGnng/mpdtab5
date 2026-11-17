@@ -203,7 +203,33 @@ brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
 
-**0.8.4-connection-status** is the current ColoPlay release, application-only
+**0.8.5-artist-feedback** is the current ColoPlay release, application-only
+OTA-verified in `ota_app0`, paired with the updated Tab5 artist/metadata sender.
+Its application is **3,269,376 bytes** (MD5 `ab5f6223685ca8f5c5d4304797f5682e`,
+SHA-256 `103707fcc269b0d2f77bdd9fdccfa93b543b29f876021d3f097cf2af401cdfd8`); ELF SHA-256
+`c85455f5b49bdbee96e945be4bcf4e98a37f32f335c3cbbddb8030fe60712b64`. It leaves **1,449,216 bytes**
+in either application slot. The paired Tab5 application is **2,937,776 bytes**,
+ELF SHA-256 `d635287f48bf1e58238e595cebbe51b11bb625c335d0bd36d439433e5598fd6b`.
+
+Artist takes priority when Artist and AlbumArtist both exist; missing/blank
+Artist falls back to AlbumArtist, then Unknown artist. USB and BLE send complete
+UTF-8 prefixes within the existing 63-byte limit and refresh text about every
+five seconds. Only actual track changes send `CP_TRACK`; refreshes preserve the
+current display and clock. ColoPlay requires contiguous complete fields before
+publication, and both serial modes allocate 2 KiB RX buffers to accommodate
+combined metadata/navigation bursts. There is no protocol or NVS format change.
+
+The full ColoPlay regression script, 85 MPD client tests, six production
+controller/ownership fixtures, 24 native UI CTests and both production builds
+pass. Tests cover tag precedence, missing/blank/repeated tags, Japanese text,
+UTF-8 clipping, missing fragments and text-only repair without a track reset.
+Both OTA image identities, boot confirmation, live USB metadata and preserved
+settings were checked. BLE sender/receiver behavior is host-tested; this live
+check left USB connected with secure BLE standby. The compatible local recovery
+image remains 0.8.3. See the [validation record](../../docs/mpd-validation.md#artist-fallback-and-metadata-recovery--2026-11-17).
+Private images, previous firmware and evidence are in `backups/artist-fallback-release/`.
+
+The preceding **0.8.4-connection-status** release was application-only
 OTA-verified in `ota_app1`. The application is **3,269,072 bytes**
 (MD5 `288031d7bd9fa4fcdd1d267fb21a6249`, SHA-256
 `4e706338f20a9f0d5c894dbb34e90f5a418cbe6e6483c16992bc5a9404e3da75`); ELF SHA-256
@@ -221,12 +247,12 @@ transport. The JSON exposes matching `controller.connections` booleans. The
 full ColoPlay regression script and three production USB/router/I/O fixtures
 pass, including stale MPD feedback, stopped playback and wireless fallback.
 Host renders cover all eight connection combinations. Boot confirmation,
-live USB/BLE/MPD status and preservation of saved settings passed. Tab5's image
-remains the Fast Scroll correction below. The compatible local recovery image
+live USB/BLE/MPD status and preservation of saved settings passed. At that
+verification, Tab5's image remained the Fast Scroll correction below. The compatible local recovery image
 remains 0.8.3. See the [validation record](../../docs/mpd-validation.md#coloplay-connection-status-ota--2026-11-17).
 Private images, snapshots and evidence are in `backups/connection-status-release/`.
 
-The latest Tab5-only **Fast Scroll sleep-activity correction** is OTA-verified,
+The preceding Tab5-only **Fast Scroll sleep-activity correction** is OTA-verified,
 application **2,935,984 bytes**, ELF SHA-256
 `ded18373c1922bad4328d6a702abd6bec9859f60ba4a71e2fa9dd915a2e70e6c`. Linked sleep activity now preserves
 rotary velocity while awake; an actual wake still resets it. Fast Scroll works

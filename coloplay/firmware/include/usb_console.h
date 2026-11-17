@@ -1,7 +1,9 @@
 #pragma once
 #include <Arduino.h>
 namespace UsbConsole {
+constexpr size_t kRxBufferSize=2048;
 Stream &stream();
+bool prepareSerial();
 bool prepareNetwork();
 void useNetwork(bool enabled);
 void tick();

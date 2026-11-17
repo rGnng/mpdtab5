@@ -41,6 +41,19 @@ retain kind 21 with the original uint16 focus length and no heading fragments.
 Empty headings restore the generic view title. Stale/partial revisions do not
 mix an old heading with a new focus label.
 
+## Playback metadata
+
+`CP_TRACK` identifies a new track; repeating its existing key does not clear
+text or reset playback timing. `CP_TEXT` carries title (field 1) and artist
+(field 2), a byte offset, up to 11 data bytes and a final-fragment flag. Each
+field is a complete UTF-8 prefix of at most 63 bytes. Fragments may split a
+code point, but the receiver publishes only a contiguous completed field.
+Tab5 sends text on change and refreshes it about every five seconds over USB
+and BLE without another `CP_TRACK`. This repairs a lost fragment while keeping
+the current display and clock. These are existing messages, with no wire-version
+or capability change. Artist takes precedence over AlbumArtist; missing/blank
+Artist falls back to AlbumArtist, then Unknown artist.
+
 ## Shared sleep and wake
 
 `CP_FEATURE_SLEEP` is bit 2 of feature byte 17 in capabilities/USB OFFER and

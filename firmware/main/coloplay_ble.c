@@ -5,6 +5,7 @@
 #include "ui.h"
 #include "player.h"
 #include "volume_grid.h"
+#include "text_util.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -33,7 +34,7 @@ static const ble_uuid128_t s_service=BLE_UUID128_INIT(0xb5,0x17,0x1d,0x62,0x1d,0
 static uint16_t s_start,s_end,s_conn=0xffff,s_caps,s_command,s_command_end,s_state,s_cccd;
 static uint32_t s_generation,s_session;
 static bool s_ready,s_writing,s_float_volume,s_prediction,s_star_feedback;
-static int64_t s_write_deadline,s_next_state;
+static int64_t s_write_deadline,s_next_state,s_next_metadata;
 static uint16_t s_last_id;static uint8_t s_last_result;
 static uint16_t s_recent[16];static uint8_t s_recent_result[16];static unsigned s_recent_next;
 static struct ble_npl_event s_result_event;
@@ -231,9 +232,16 @@ void coloplay_ble_tick(int64_t now){
         s_next_state=now+400000;uint8_t data[CP_BLE_BYTES];queue_state(0,0);
         const int steps=player_volume_steps();if(steps!=s_native_steps){s_native_steps=steps;hello_packet(data);queue(data);}
         mpd_state_t state={0};mpd_client_get_remote_state(&state);
-        if(state.track_key!=s_track||strncmp(s_title,state.title,63)||strncmp(s_artist,state.artist,63)){
-            s_track=state.track_key;cp_header(data,CP_TRACK,0,s_session);cp_put32(data+8,(uint32_t)s_track);cp_put32(data+12,(uint32_t)(s_track>>32));cp_put32(data+16,state.revision);queue(data);
-            snprintf(s_title,sizeof(s_title),"%.63s",state.title);snprintf(s_artist,sizeof(s_artist),"%.63s",state.artist);s_text_field=1;s_text_offset=0;
+        char title[64]={0},artist[64]={0};text_copy(title,sizeof(title),state.title);text_copy(artist,sizeof(artist),state.artist);
+        const bool track_changed=state.track_key!=s_track;
+        if(track_changed||strcmp(s_title,title)||strcmp(s_artist,artist)||(now>=s_next_metadata&&s_text_field>2)){
+            if(track_changed){
+                cp_header(data,CP_TRACK,0,s_session);cp_put32(data+8,(uint32_t)state.track_key);
+                cp_put32(data+12,(uint32_t)(state.track_key>>32));cp_put32(data+16,state.revision);
+                if(!queue(data))return;
+            }
+            s_track=state.track_key;memcpy(s_title,title,sizeof(s_title));memcpy(s_artist,artist,sizeof(s_artist));
+            s_text_field=1;s_text_offset=0;s_next_metadata=now+5000000;
         }
     }
     for(int n=0;n<3&&s_text_field<=2&&s_count<8;++n){

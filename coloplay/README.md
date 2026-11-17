@@ -22,7 +22,10 @@ or a direct [USB CDC-ACM link](../docs/coloplay-usb.md). See the
 
 ## Current baseline
 
-Current verified release: **`0.8.4-connection-status`**, OTA-tested on 2026-11-17.
+Current verified release: **`0.8.5-artist-feedback`**, OTA-tested on 2026-11-17.
+Playback names prefer Artist, then Album Artist, then Unknown artist. Text
+feedback refreshes periodically over USB and BLE to recover an incomplete
+transfer without clearing the current song or resetting its progress.
 The waiting/disconnected screen shows separate USB serial, Bluetooth and MPD
 icons, white when connected and gray otherwise. Normal Clock, playback, volume
 and navigation layouts retain their existing appearance.
@@ -60,7 +63,7 @@ lighting and searchable HID keys remain available.
 Both devices use application-only OTA. Source/build identity, validation results
 and image fingerprints are in the
 [release record](docs/development.md#current-verified-release).
-The deployed 0.8.1 production image occupies **3.11 MiB**, leaving **1.39 MiB** of
+The current production image occupies **3.12 MiB**, leaving **1.38 MiB** of
 headroom in either 4.5 MiB OTA slot. The embedded playback font uses **1.41 MiB**
 of that image; see the [application storage budget](docs/flash.md#application-slots-and-storage-budget).
 The working firmware provides:

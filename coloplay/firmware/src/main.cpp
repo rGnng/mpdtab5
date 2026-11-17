@@ -32,7 +32,7 @@
 namespace {
 
 constexpr const char *kHostname = "coloplay";
-constexpr const char *kFirmwareVersion = "0.8.4-connection-status";
+constexpr const char *kFirmwareVersion = "0.8.5-artist-feedback";
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
 
@@ -426,6 +426,7 @@ void setup() {
   PanicCapture::begin();
   HardwareDemo::captureBootStage();
   UsbNetwork::prepareSerial();
+  const bool serialRxReady=UsbConsole::prepareSerial();
   Serial.begin(115200);
   const uint32_t serialWaitStart = millis();
   while (!Serial && millis() - serialWaitStart < 3000) {
@@ -434,6 +435,7 @@ void setup() {
 
   DeviceLog::println();
   DeviceLog::printf("ColoPLAY bring-up firmware %s\n", kFirmwareVersion);
+  if(!serialRxReady)DeviceLog::println("[serial] RX allocation failed; using framework default");
   DeviceLog::println("[serial] commands: status | wifi <ssid> <password> | wifi-reset");
   DeviceLog::printf("[chip] %s rev %d, flash %u MB, psram %u MB\n",
                 ESP.getChipModel(), ESP.getChipRevision(),

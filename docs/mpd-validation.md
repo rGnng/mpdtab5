@@ -1,5 +1,49 @@
 # MPD controller validation
 
+## Artist fallback and metadata recovery — 2026-11-17
+
+Displayed artist names prefer Artist, then AlbumArtist when Artist is absent
+or blank, then Unknown artist. Artist wins when both tags exist, regardless of
+response order. Empty repeated tags do not erase a nonblank value. AlbumArtist
+continues to group compilation albums; the change applies to display text.
+
+The initial live snapshot showed a real artist on Tab5 but an empty artist on
+ColoPlay for the same current title. A subsequent track arrived correctly, so
+fallback alone would not address incomplete text delivery. The native serial
+receive default is 256 bytes; a combined metadata/navigation burst can exceed
+it. Both ColoPlay serial modes now request a 2 KiB buffer before initialization.
+This addresses a plausible overflow cause; no ISR drop was directly captured.
+
+Tab5 clips title/artist at complete UTF-8 boundaries within the existing 63-byte
+limit. It sends text on change and refreshes it about every five seconds on USB
+and BLE. `CP_TRACK` is sent only for actual track changes, so repair does not
+clear displayed names or reset progress. The receiver requires contiguous
+fragments before publishing a field, preserving complete prior text during a
+same-track refresh. No wire format, capability, settings or partition changes
+are involved.
+
+All **85 MPD client tests**, **six production controller/ownership fixtures**,
+**24 native UI CTests**, the full ColoPlay host regression script and both
+production builds pass. Regressions cover Artist priority in both tag orders,
+missing/blank tags, repeated empty tags, Japanese text split inside UTF-8 code
+points, safe clipping, missing/orphan fragments and periodic repair without a
+track marker or reset.
+
+Application-only OTA verified ColoPlay **0.8.5-artist-feedback**, **3,269,376
+bytes**, MD5 `ab5f6223685ca8f5c5d4304797f5682e`, ELF SHA-256
+`c85455f5b49bdbee96e945be4bcf4e98a37f32f335c3cbbddb8030fe60712b64` in `ota_app0`.
+The paired Tab5 image is **2,937,776 bytes**, ELF SHA-256
+`d635287f48bf1e58238e595cebbe51b11bb625c335d0bd36d439433e5598fd6b`. Both passed boot and
+readiness checks. Sixteen live samples over more than two refresh intervals
+returned matching nonempty artist text for the current track. USB stayed active
+with zero invalid frames, drops or lease timeouts and one session connection;
+secure Bluetooth remained in standby. MPD, SD and the existing USB-C network
+remained available. Saved scene/Global bindings, General/Playback/clock preferences
+and Tab5 settings matched fresh pre-OTA snapshots. The cable remained connected;
+wireless delivery is covered by the production BLE fixture. Physical pixel
+appearance was not captured. Exact images and private metadata snapshots are
+retained in `coloplay/backups/artist-fallback-release/`.
+
 ## ColoPlay connection-status OTA — 2026-11-17
 
 ColoPlay **0.8.4-connection-status** replaces the single waiting Bluetooth icon

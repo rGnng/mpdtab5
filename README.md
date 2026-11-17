@@ -310,9 +310,11 @@ metadata updates are applied on the UI thread using the inherited catalog.
 Database queries use batches of 256 songs where supported. Tracks uses its
 supported `listallinfo` response instead. URI strings are stored on SD instead
 of reserving a fixed PSRAM pool. URI-derived IDs stay
-stable across imports, and AlbumArtist groups compilation albums. Connections
-retry automatically after network/server failures. Server switches use separate
-SD cache namespaces.
+stable across imports, and AlbumArtist groups compilation albums. Displayed
+artist names prefer Artist, fall back to AlbumArtist when Artist is missing or
+blank, and use Unknown artist only when both are absent. This also applies to
+ColoPlay playback feedback over USB and BLE. Connections retry automatically
+after network/server failures. Server switches use separate SD cache namespaces.
 
 ```bash
 python3 tools/gen_web_ui.py  # after editing assets/web/

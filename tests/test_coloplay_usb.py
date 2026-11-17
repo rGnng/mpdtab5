@@ -41,6 +41,16 @@ typedef int cJSON;
 #define cJSON_AddNumberToObject(...) ((void)0)
 '''
 SUFFIX=r'''
+static void check_metadata(unsigned from,const char *title,const char *artist,bool track){
+ char text[2][64]={{0}};unsigned used[2]={0},done=0,tracks=0;
+ for(unsigned i=from;i<tx_count;i++){
+  const uint8_t *p=tx_data[i];if(p[1]==CP_TRACK){tracks++;continue;}
+  assert(p[1]==CP_TEXT);const unsigned field=(p[2]&0x7f)-1;
+  assert(field<2&&p[3]==used[field]&&used[field]+p[8]<=63);
+  memcpy(text[field]+used[field],p+9,p[8]);used[field]+=p[8];if(p[2]&0x80)done++;
+ }
+ assert(tracks==(unsigned)track&&done==2&&!strcmp(text[0],title)&&!strcmp(text[1],artist));
+}
 int main(void){
  coloplay_usb_start();s_device=(void*)1;atomic_store(&s_open,true);s_challenge=99;
  frame_t offer={.kind=CP_USB_OFFER};cp_header(offer.bytes,CP_HELLO,0,123);offer.bytes[8]=255;cp_put32(offer.bytes+9,98);
@@ -55,7 +65,15 @@ int main(void){
  cp_put32(input.bytes+4,124);consume(&input,130);assert(commands==1);assert(!coloplay_usb_result(input.bytes,CP_APPLIED));
  cp_header(input.bytes,CP_KEY,2,123);cp_put16(input.bytes+8,0x4b);cp_put16(input.bytes+10,1);consume(&input,140);assert(key_events==1&&last_key==UI_KEY_PAGE_UP);
  consume(&input,141);assert(key_events==1);cp_put16(input.bytes+2,3);cp_put16(input.bytes+12,1);consume(&input,142);assert(key_events==1&&tx_data[tx_count-1][12]==CP_UNSUPPORTED);
- unsigned before=tx_count;metadata();assert(tx_count>before&&tx_data[before][1]==CP_TRACK);before=tx_count;metadata();assert(tx_count==before);
+ remote_title="曲名";remote_artist="歌手の名前";
+ unsigned before=tx_count;metadata();check_metadata(before,remote_title,remote_artist,true);
+ before=tx_count;metadata();assert(tx_count==before);
+ clock_us+=4999999;metadata();assert(tx_count==before);
+ clock_us++;metadata();check_metadata(before,remote_title,remote_artist,false); // Repair resend does not clear the track.
+ remote_artist="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa日本語";
+ before=tx_count;metadata();check_metadata(before,remote_title,"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",false);
+ before=tx_count;metadata();assert(tx_count==before); // UTF-8 clipping remains cache-stable.
+ remote_title="A real title";remote_artist="Artist";metadata();
  ui_navigation_t nav={.view=1,.flags=CP_NAV_FOCUS,.index=2,.count=4};memset(nav.focus,'x',95);nav.focus[95]=0;
  coloplay_usb_publish_navigation(&nav);before=tx_count;navigation(1000);assert(tx_count==before+11&&cp_u16(tx_data[before]+18)==95);
  unsigned used=0;for(unsigned i=before+1;i<tx_count;++i){assert(tx_data[i][1]==CP_NAV_TEXT&&tx_data[i][8]==used);used+=tx_data[i][9];}assert(used==95);

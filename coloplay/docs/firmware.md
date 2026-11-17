@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current verified release: **0.8.4-connection-status**, OTA-tested on 2026-11-17.
+Current verified release: **0.8.5-artist-feedback**, OTA-tested on 2026-11-17.
 The gadget is configured
 through the **Connection**, **Controls**, **Playback**, **Lighting** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
@@ -197,6 +197,8 @@ missing-track feedback hides it. The former star icon is removed. The marker
 keeps its footer position when time is hidden; Status icon controls only the
 playback-state icon. This works in Playback and Navigation's Now Playing view
 over USB or Bluetooth.
+The artist line prefers Artist when both tags exist; Album Artist is used only
+when Artist is missing or blank. If neither exists, it shows Unknown artist.
 Time can show Elapsed / Total, Remaining, or Off. Long titles/artists use
 Ellipsis or Scrolling (24 pixels/second, with a one-second pause at each end).
 Japanese, common Chinese and Korean text use the embedded 16 px font and stay

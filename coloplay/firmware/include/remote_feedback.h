@@ -32,7 +32,7 @@ class RemoteFeedback {
   void clear(){
     const bool enabled=state.enabled,ready=state.ready;
     state=Snapshot();state.enabled=enabled;state.ready=ready;
-    prediction.reset();clock.reset();navigation.reset();sleep.reset();memset(text_,0,sizeof(text_));
+    prediction.reset();clock.reset();navigation.reset();sleep.reset();memset(text_,0,sizeof(text_));memset(textUsed_,0,sizeof(textUsed_));memset(textStarted_,0,sizeof(textStarted_));
   }
   bool accept(const uint8_t *p,size_t size,uint32_t session,uint32_t now){
     if(!session||!cp_packet(p,size)||cp_u32(p+4)!=session)return false;
@@ -42,14 +42,20 @@ class RemoteFeedback {
     if(p[1]==CP_TEXT){
       const unsigned field=p[2]&0x7f,offset=p[3],n=p[8];
       if((field!=1&&field!=2)||offset>=63||n>11||offset+n>63)return false;
-      char *target=text_[field-1];if(!offset)memset(target,0,64);
-      memcpy(target+offset,p+9,n);target[offset+n]=0;
-      if(p[2]&0x80)memcpy(field==1?state.title:state.artist,target,64);
+      char *target=text_[field-1];auto &used=textUsed_[field-1];auto &started=textStarted_[field-1];
+      if(!offset){memset(target,0,64);used=0;started=true;}
+      if(!started||offset!=used)return false;
+      memcpy(target+offset,p+9,n);used+=n;target[used]=0;
+      if(p[2]&0x80){memcpy(field==1?state.title:state.artist,target,64);started=false;}
       return true;
     }
     if(p[1]==CP_TRACK){
-      state.track=uint64_t(cp_u32(p+8))|(uint64_t(cp_u32(p+12))<<32);clock.track(state.track);
-      state.title[0]=state.artist[0]=0;memset(text_,0,sizeof(text_));return true;
+      const uint64_t track=uint64_t(cp_u32(p+8))|(uint64_t(cp_u32(p+12))<<32);
+      if(track!=state.track){
+        state.title[0]=state.artist[0]=0;memset(text_,0,sizeof(text_));
+        memset(textUsed_,0,sizeof(textUsed_));memset(textStarted_,0,sizeof(textStarted_));
+      }
+      state.track=track;clock.track(track);return true;
     }
     if(!cp_state_valid(p,size))return false;
     state.extension=true;
@@ -95,6 +101,6 @@ class RemoteFeedback {
     return out;
   }
  private:
-  char text_[2][64]={};
+  char text_[2][64]={};uint8_t textUsed_[2]={};bool textStarted_[2]={};
   void result(uint16_t request,uint8_t value){if(request&&request==state.request){state.result=value;state.pending=value==CP_PENDING||value==CP_ACCEPTED;}}
 };

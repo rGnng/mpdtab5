@@ -4,6 +4,7 @@
 #include "usb_hid_input.h"
 #include "player.h"
 #include "volume_grid.h"
+#include "text_util.h"
 #include "usb/cdc_acm_host.h"
 #include "usb/usb_host.h"
 #include "esp_log.h"
@@ -37,7 +38,7 @@ static atomic_bool s_gone,s_open,s_ready;
 static cp_usb_parser_t s_parser;
 static cdc_acm_dev_hdl_t s_device;
 static uint32_t s_nonce,s_challenge;
-static int64_t s_last_rx,s_probe_at,s_next_state,s_next_nav;
+static int64_t s_last_rx,s_probe_at,s_next_state,s_next_nav,s_next_metadata;
 static uint16_t s_recent[32],s_nav_revision;
 static uint8_t s_recent_result[32];static unsigned s_recent_at;
 static ui_navigation_t s_navigation;
@@ -153,12 +154,19 @@ static void consume(const frame_t *frame,int64_t now){
 }
 static void metadata(void){
     mpd_state_t remote={0};mpd_client_get_remote_state(&remote);
-    if(remote.track_key==s_track&&!strncmp(s_title,remote.title,63)&&!strncmp(s_artist,remote.artist,63))return;
-    s_track=remote.track_key;snprintf(s_title,sizeof(s_title),"%.63s",remote.title);snprintf(s_artist,sizeof(s_artist),"%.63s",remote.artist);
-    uint8_t data[CP_BLE_BYTES];cp_header(data,CP_TRACK,0,s_nonce);
-    cp_put32(data+8,(uint32_t)s_track);cp_put32(data+12,(uint32_t)(s_track>>32));cp_put32(data+16,remote.revision);send_frame(CP_USB_DATA,data);
+    char title[64]={0},artist[64]={0};text_copy(title,sizeof(title),remote.title);text_copy(artist,sizeof(artist),remote.artist);
+    const int64_t now=esp_timer_get_time();const bool changed=remote.track_key!=s_track;
+    if(!changed&&!strcmp(s_title,title)&&!strcmp(s_artist,artist)&&now<s_next_metadata)return;
+    uint8_t data[CP_BLE_BYTES];
+    if(changed){
+        cp_header(data,CP_TRACK,0,s_nonce);cp_put32(data+8,(uint32_t)remote.track_key);
+        cp_put32(data+12,(uint32_t)(remote.track_key>>32));cp_put32(data+16,remote.revision);
+        if(!send_frame(CP_USB_DATA,data))return;
+    }
+    /* Refresh text alone every five seconds so a lost fragment cannot leave
+     * an artist blank until the next song. Keep the current display/clock. */
     for(unsigned field=1;field<=2;++field){
-        const char *text=field==1?s_title:s_artist;const unsigned length=strlen(text);
+        const char *text=field==1?title:artist;const unsigned length=strlen(text);
         unsigned offset=0;do{
             unsigned n=length-offset;if(n>11)n=11;
             cp_header(data,CP_TEXT,0,s_nonce);data[2]=field|(offset+n==length?0x80:0);data[3]=offset;data[8]=n;
@@ -166,6 +174,8 @@ static void metadata(void){
         offset+=n;
         }while(offset<length);
     }
+    s_track=remote.track_key;memcpy(s_title,title,sizeof(s_title));memcpy(s_artist,artist,sizeof(s_artist));
+    s_next_metadata=now+5000000;
 }
 static void navigation(int64_t now){
     const QueueHandle_t mailbox=atomic_load(&s_nav);ui_navigation_t latest;

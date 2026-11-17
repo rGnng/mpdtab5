@@ -5,10 +5,12 @@
 FakeSerial Serial;
 namespace FakeUsb {
 bool connected=true,reboot=true,allocationFailure=false,began=false;
-uint32_t timeout=250;size_t space=11;
+uint32_t timeout=250;size_t space=11,rxCapacity=0;
 std::deque<uint8_t> rx;std::vector<uint8_t> tx;
 }
 int main(){
+ Serial.rxAllocationFailure=true;assert(!UsbConsole::prepareSerial());
+ Serial.rxAllocationFailure=false;assert(UsbConsole::prepareSerial()&&Serial.rxCapacity==2048);
  auto &port=UsbConsole::stream();std::vector<uint8_t> payload(7000);for(size_t i=0;i<payload.size();++i)payload[i]=i%256;
  assert(port.write(payload.data(),payload.size())==payload.size());
  for(int i=0;i<1000&&UsbConsole::queued();++i)UsbConsole::tick();
@@ -16,6 +18,7 @@ int main(){
  Serial.rx={1,2};assert(port.available()==2&&port.peek()==1&&port.read()==1&&port.read()==2&&port.read()==-1);
  FakeUsb::allocationFailure=true;assert(!UsbConsole::prepareNetwork()&&!FakeUsb::began);
  FakeUsb::allocationFailure=false;assert(UsbConsole::prepareNetwork()&&FakeUsb::began&&!FakeUsb::reboot&&FakeUsb::timeout==0);
+ assert(FakeUsb::rxCapacity==2048);
  UsbConsole::useNetwork(true);FakeUsb::rx={3,4};assert(port.available()==2&&port.peek()==3&&port.read()==3&&port.read()==4);
  assert(port.write(payload.data(),payload.size())==payload.size());
  for(int i=0;i<1000&&UsbConsole::queued();++i)UsbConsole::tick();

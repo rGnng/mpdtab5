@@ -22,6 +22,13 @@ transport. Both links return playback, track/artist text, selected volume
 scale, raw volume, completion watermark and current focused item. ColoPlay
 uses the same prediction, playback clock and rendering code for either link.
 Tab5 remains authoritative for MPD state and volume scale.
+Displayed artist prefers Artist, then Album Artist, then Unknown artist.
+Title/artist use complete UTF-8 prefixes of at most 63 bytes, fragmented into
+11-byte payloads. Both transports refresh text about every five seconds; only
+an actual track change sends a track marker. The receiver publishes contiguous,
+complete fields, retaining existing text during a same-track refresh. Both
+ColoPlay USB serial modes allocate a 2 KiB receive buffer before initialization
+to accommodate combined metadata/navigation bursts. Wire formats are unchanged.
 
 ColoPlay's page header and Connection → USB & Network panel show the active
 connection: **USB CDC-ACM**, **Bluetooth** or **Disconnected**. Its Bluetooth

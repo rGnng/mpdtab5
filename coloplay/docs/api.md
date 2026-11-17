@@ -8,7 +8,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.8.4-connection-status** (OTA-tested on 2026-11-17), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.8.5-artist-feedback** (OTA-tested on 2026-11-17), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
@@ -553,6 +553,9 @@ GET and POST return `enabled`, `ready`, `stored`, `connected`, `secured`,
 `volume`, `volume_fraction`, `float_volume`,
 `playback`, `seek`, `request`, `result`, `pending`, `title`,
 `artist`, `track`, `elapsed_ms`, `duration_ms`, and bounded traffic counters.
+Tab5 prefers Artist, then Album Artist, then Unknown artist for the `artist`
+field. Title/artist are complete UTF-8 prefixes of at most 63 bytes; periodic
+text-only refreshes repair incomplete transfers on USB and BLE.
 `volume` is a percentage with up to four decimal places; `volume_fraction` is
 the normalized 0..1 value. `float_volume` indicates negotiated fractional
 feedback support. Unavailable volume is -1; unknown playback is 255. Freshness
