@@ -84,12 +84,17 @@ uint32_t mpd_client_star_revision(void);
  * starts at the first entry of the shuffled queue rather than start_index. */
 esp_err_t mpd_client_play_track_keys(const uint64_t *keys, int count, int start_index, bool shuffle);
 esp_err_t mpd_client_play_all_songs(uint64_t start_key);
+/* Server-side whole-library shuffle; no per-track request allocation. */
+esp_err_t mpd_client_shuffle_all(void);
 esp_err_t mpd_client_play_current_key(void);
 esp_err_t mpd_client_queue_jump(int index);
 int mpd_client_queue_list_count(void);
 int mpd_client_queue_list_base(void);
 uint32_t mpd_client_queue_list_revision(void);
 bool mpd_client_queue_list_get(int index, uint64_t *key);
+/* A cache miss schedules one bounded 64-entry page; getters never do I/O. */
+bool mpd_client_queue_loading(int index);
+void mpd_client_queue_stats(int *total,int *cached,int *pending);
 /* Stable entry handles include a connection epoch; raw MPD ID zero is valid. */
 uint64_t mpd_client_queue_entry(int index);
 esp_err_t mpd_client_queue_add(const uint64_t *keys, int count, bool next);

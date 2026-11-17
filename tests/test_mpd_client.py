@@ -74,6 +74,10 @@ static uint32_t parsed_queue_ids[QUEUE_LIMIT];
 static uint64_t queue_keys[QUEUE_LIMIT];
 static uint32_t queue_ids[QUEUE_LIMIT], queue_revision;
 static int queue_size;
+#define QUEUE_PAGE_SIZE 64
+static uint8_t queue_pages[(QUEUE_LIMIT+QUEUE_PAGE_SIZE-1)/QUEUE_PAGE_SIZE];
+static int queue_requests,queue_cached,queue_cache_version=-1;
+static uint32_t queue_current_id;
 static uint32_t queue_epoch=1;
 static int queue_priority_support=-1;
 static uint32_t *queue_next_ids;
@@ -116,7 +120,9 @@ void test_init(int fd) {
     allocation_limit=SIZE_MAX;largest_allocation=0;queue_size=0;queue_refresh_pending=false;
     free(star_keys);star_keys=NULL;star_count=0;star_revision=0;stars_refresh_pending=false;
     coloplay_volume_completed=0;volume_steps=16;memset(&volume_cursor,0,sizeof(volume_cursor));server_volume=-1;volume_integer_only=false;muted_volume=0.5f;
-    complete_count=0;
+    complete_count=0;mpd_playlist_version=1;queue_cache_version=-1;queue_requests=queue_cached=0;
+    queue_current_id=0;state.queue_index=-1;reported_queue_size=0;
+    memset(queue_keys,0,sizeof(queue_keys));memset(queue_pages,0,sizeof(queue_pages));
     free(queue_next_ids);queue_next_ids=NULL;queue_next_count=0;queue_next_head_valid=false;queue_priority_support=-1;queue_epoch=1;
     free(playlist_destinations);playlist_destinations=NULL;playlist_destination_generation=0;playlists_refresh_pending=false;playlist_connection_generation=config_revision=1;
     diagnostic[0]=0; mpd_wire_init(&wire); mpd_wire_attach(&wire,fd,1000);
@@ -125,6 +131,13 @@ int test_sync_queue(unsigned size,unsigned budget) {
     reported_queue_size=size; allocation_limit=budget; largest_allocation=0;
     return sync_queue();
 }
+int test_page(void){return load_queue_page();}
+int test_cached(void){return queue_cached;}
+unsigned test_queue_revision(void){return queue_revision;}
+int test_requests(void){return queue_requests;}
+int test_version(void){return mpd_playlist_version;}
+void test_seed(int index,uint64_t key,unsigned id){state.queue_index=index;state.track_key=key;queue_current_id=id;}
+unsigned test_published_queue_id(int i){return queue_ids[i];}
 unsigned test_allocation(void) { return largest_allocation; }
 int test_queue_count(void) { return queue_size; }
 int test_completions(void) { return complete_count; }
@@ -139,6 +152,7 @@ int test_playlist_remove(const char *name,uint64_t *keys,int count,int position,
     command_t c={.kind=CMD_PLAYLIST_REMOVE,.keys=keys,.count=count,.start=position,.playlist=(char*)name,.playlist_generation=captured,.generation=queued};
     return run_command(&c);
 }
+int test_shuffle_all(void){command_t c={.kind=CMD_ALL,.shuffle=true};return run_command(&c);}
 int test_playlists_pending(void){return playlists_refresh_pending;}
 int test_destination_count(unsigned revision,int connected){config_revision=revision;state.connected=connected;return mpd_client_playlist_destination_count();}
 const char *test_destination_name(int index){static char name[256];uint32_t generation=0;return mpd_client_playlist_destination(index,name,sizeof(name),&generation)?name:NULL;}
@@ -242,20 +256,23 @@ static char uri_pool[URI_BYTES];
 static unsigned uri_count,uri_used;
 '''
         queue_types=re.search(r'typedef struct \{ int position; uint32_t id; bool have_id; \} queue_entry_info_t;',SOURCE).group()+'\n'+re.search(r'typedef struct \{ uint32_t \*ids;int count,capacity; \} queue_added_t;',SOURCE).group()+'\n'
-        public_source=re.sub(r'^((?:int|bool) mpd_client_playlist_[^(]+\()',r'static \1',SOURCE,flags=re.M)
+        public_source=re.sub(r'^((?:int|bool|uint64_t) mpd_client_[^(]+\()',r'static \1',SOURCE,flags=re.M)
         def production(name):
-            if name.startswith('mpd_client_playlist_'):return function(public_source,name).removeprefix('static ')
+            if name.startswith('mpd_client_'):return function(public_source,name).removeprefix('static ')
             return function(SOURCE,name)
         functions='\n'.join(production(name) for name in [
-            'publish','uri_lookup','uri_insert','song_reset','song_finish','song_field',
-            'status_field','stat_field','simple','sync_library','sync_queue','star_position',
-            'sync_stars','change_star','playlist_field','sync_playlists','mpd_client_playlist_destination_count','mpd_client_playlist_destination','playlist_search_field','playlist_add_track','playlist_check_field','playlist_remove_track','play_selection','poll_state','set_volume','queue_next_queue_changed','queue_priority_field','queue_priority_capability','queue_next_tick','queue_next_install','queue_added_field','queue_entry_field','queue_add_selection','queue_edit_entry','run_command','coloplay_volume_complete'])
+            'publish','uri_contains','uri_lookup','uri_insert','song_reset','song_finish','song_field',
+            'status_field','stat_field','simple','sync_library','queue_request_locked','queue_page_pending','queue_reset_locked','sync_queue','star_position',
+            'sync_stars','change_star','playlist_field','sync_playlists','mpd_client_playlist_destination_count','mpd_client_playlist_destination','playlist_search_field','playlist_add_track','playlist_check_field','playlist_remove_track','play_selection','poll_state','queue_page_field','load_queue_page','mpd_client_queue_list_get','mpd_client_queue_entry','mpd_client_queue_loading','set_volume','queue_next_queue_changed','queue_priority_field','queue_priority_capability','queue_next_tick','queue_next_install','queue_added_field','queue_entry_field','queue_add_selection','queue_edit_entry','run_command','coloplay_volume_complete'])
         (directory/'client.c').write_text(PREFIX+globals_+command_type+song_type+queue_types+functions+SUFFIX)
         subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Wno-unused-function','-shared','-fPIC',
                         '-I'+str(directory),'-I'+str(ROOT/'app/mpd'),'-I'+str(ROOT/'app/backend'),
                         '-I'+str(ROOT/'firmware/main'),str(directory/'client.c'),
                         str(ROOT/'app/mpd/mpd_wire.c'),'-o',str(directory/'client.so')],check=True)
         cls.lib=C.CDLL(str(directory/'client.so'))
+        cls.lib.mpd_client_queue_list_get.argtypes=[C.c_int,C.POINTER(C.c_uint64)]
+        cls.lib.mpd_client_queue_entry.restype=C.c_uint64
+        cls.lib.test_seed.argtypes=[C.c_int,C.c_uint64,C.c_uint]
         cls.lib.test_playlist_remove.argtypes=[C.c_char_p,C.POINTER(C.c_uint64),C.c_int,C.c_int,C.c_uint,C.c_uint]
         cls.lib.test_playlist_add.argtypes=[C.c_char_p,C.c_uint64,C.c_uint,C.c_uint]
         cls.lib.test_destination_name.argtypes=[C.c_int];cls.lib.test_destination_name.restype=C.c_char_p
@@ -502,55 +519,116 @@ static unsigned uri_count,uri_used;
         self.assertEqual(self.lib.test_star_count(),1)
         self.assertEqual(self.lib.test_completions(),0)
 
-    def test_known_album_queue_changes_do_not_republish_library(self):
-        self.assertTrue(self.lib.test_insert(b'album/a.flac'))
-        self.assertTrue(self.lib.test_insert(b'album/b.flac'))
-        self.server([(b'playlistinfo\n',b'file: album/a.flac\nId: 1\nOK\n'),
-                     (b'playlistinfo\n',b'file: album/b.flac\nId: 2\nOK\n')])
-        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
-        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
+    def queue_page_reply(self,start,end,total,version=1,paths=None):
+        paths=paths or [f'album/{i}.flac'.encode() for i in range(start,end)]
+        data=b''.join(b'file: '+path+b'\nId: '+str(i).encode()+b'\n' for i,path in zip(range(start,end),paths))
+        return [(f'playlistinfo {start}:{end}\n'.encode(),data+b'OK\n'),
+                (b'status\n',f'state: pause\nplaylist: {version}\nplaylistlength: {total}\nOK\n'.encode()),
+                (b'currentsong\n',b'OK\n')]
+
+    def queue_get(self,index):
+        key=C.c_uint64()
+        return bool(self.lib.mpd_client_queue_list_get(index,C.byref(key))),key.value
+
+    def test_large_queue_startup_only_publishes_count_without_network_or_allocation(self):
+        self.assertEqual(self.lib.test_sync_queue(20916,0),1)
+        self.assertEqual(self.lib.test_queue_count(),20916)
+        self.assertEqual(self.lib.test_cached(),0)
+        self.assertEqual(self.lib.test_requests(),0)
+        self.assertEqual(self.lib.test_allocation(),0)
+        self.peer.settimeout(.05)
+        with self.assertRaises(socket.timeout):self.peer.recv(1)
+
+    def test_current_song_seed_is_available_without_fetching_its_page(self):
+        key=self.lib.test_insert(b'album/current.flac')
+        self.lib.test_seed(12000,key,0)
+        self.assertEqual(self.lib.test_sync_queue(20916,0),1)
+        self.assertEqual(self.queue_get(12000),(True,key))
+        self.assertEqual(self.lib.test_cached(),1)
+        self.assertEqual(self.lib.test_requests(),0)
+        self.assertEqual(self.lib.mpd_client_queue_entry(12000),1<<32) # ID zero is valid
+        self.assertEqual(self.lib.mpd_client_queue_entry(11999),0)
+
+    def test_requested_page_is_bounded_and_cache_hits_do_not_request_again(self):
+        self.lib.test_sync_queue(20916,0)
+        for i in range(64):self.lib.test_insert(f'album/{i}.flac'.encode())
+        self.assertFalse(self.queue_get(0)[0]);self.assertFalse(self.queue_get(63)[0])
+        self.assertEqual(self.lib.test_requests(),1)
+        revision=self.lib.test_queue_revision()
+        self.server(self.queue_page_reply(0,64,20916))
+        self.assertEqual(self.lib.test_page(),1)
+        self.assertEqual(self.lib.test_queue_revision(),revision)
+        self.assertEqual(self.lib.test_cached(),64)
+        self.assertEqual(self.lib.test_requests(),0)
+        for i in range(64):self.assertTrue(self.queue_get(i)[0])
+        self.assertEqual(self.lib.test_requests(),0)
         self.assertEqual(self.lib.test_completions(),0)
-        self.assertEqual(self.lib.test_item_count(),0)
+        self.assertEqual(self.lib.test_allocation(),0)
+        self.assertEqual(self.lib.test_queue_count(),20916)
+
+    def test_far_page_and_short_last_page_load_without_intermediate_rows(self):
+        self.lib.test_sync_queue(20916,0)
+        self.assertFalse(self.queue_get(20915)[0])
+        self.server(self.queue_page_reply(20864,20916,20916))
+        self.assertEqual(self.lib.test_page(),1)
+        self.assertEqual(self.lib.test_cached(),52)
+        self.assertTrue(self.queue_get(20915)[0])
+        self.assertEqual(self.lib.test_published_queue_id(20915),20915)
+        self.assertEqual(self.lib.mpd_client_queue_entry(0),0)
 
     def test_new_queue_only_tracks_publish_catalog_once(self):
-        self.server([(b'playlistinfo\n',b'file: stream/new\nTitle: New stream\nId: 3\nOK\n'),
-                     (b'playlistinfo\n',b'file: stream/new\nTitle: New stream\nId: 3\nOK\n')])
-        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
+        self.lib.test_sync_queue(1,1024);self.queue_get(0)
+        self.server(self.queue_page_reply(0,1,1,paths=[b'stream/new']))
+        self.assertEqual(self.lib.test_page(),1)
         self.assertEqual(self.lib.test_completions(),1)
         self.assertEqual(self.lib.test_item_count(),1)
-        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
+        self.lib.test_sync_queue(1,1024);self.queue_get(0)
+        self.server(self.queue_page_reply(0,1,1,paths=[b'stream/new']))
+        self.assertEqual(self.lib.test_page(),1)
         self.assertEqual(self.lib.test_completions(),1)
 
-    def test_album_queue_refresh_uses_actual_queue_size(self):
-        data=b''.join(f'file: album/{i}.flac\nId: {i+1}\n'.encode() for i in range(12))
-        self.server([(b'playlistinfo\n',data+b'OK\n')])
-        self.assertEqual(self.lib.test_sync_queue(12,1024),1)
-        self.assertEqual(self.lib.test_queue_count(),12)
-        self.assertEqual(self.lib.test_queue_pending(),0)
-        self.assertLessEqual(self.lib.test_allocation(),256)
-
-    def test_low_memory_queue_refresh_preserves_connection_and_retries(self):
-        self.server([(b'playlistinfo\n',b'file: old/a.flac\nId: 1\nfile: old/b.flac\nId: 2\nOK\n')])
-        self.assertEqual(self.lib.test_sync_queue(2,1024),1)
-        self.assertEqual(self.lib.test_queue_count(),2)
-        self.assertEqual(self.lib.test_sync_queue(200,16),1)
-        self.assertEqual(self.lib.test_queue_count(),2)
+    def test_changed_queue_version_discards_inflight_page_then_retries(self):
+        self.lib.test_sync_queue(64,1024);self.queue_get(0)
+        self.server(self.queue_page_reply(0,64,64,version=2))
+        self.assertEqual(self.lib.test_page(),1)
+        self.assertEqual(self.lib.test_cached(),0)
         self.assertEqual(self.lib.test_queue_pending(),1)
-        self.assertIn(b'not enough memory',self.lib.test_message())
-        self.server([(b'playlistinfo\n',b'file: album/a.flac\nId: 7\nOK\n')])
-        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
-        self.assertEqual(self.lib.test_queue_count(),1)
-        self.assertEqual(self.lib.test_queue_pending(),0)
+        self.lib.test_sync_queue(64,1024);self.queue_get(0)
+        self.server(self.queue_page_reply(0,64,64,version=2))
+        self.assertEqual(self.lib.test_page(),1)
+        self.assertEqual(self.lib.test_cached(),64)
 
-    def test_queue_growth_between_status_and_reply_is_drained_then_retried(self):
-        data=b''.join(f'file: album/{i}.flac\nId: {i+1}\n'.encode() for i in range(40))
-        self.server([(b'playlistinfo\n',data+b'OK\n'),(b'playlistinfo\n',data+b'OK\n')])
-        self.assertEqual(self.lib.test_sync_queue(1,1024),1)
-        self.assertEqual(self.lib.test_queue_count(),0)
+    def test_queue_growth_without_version_change_discards_old_page(self):
+        self.lib.test_sync_queue(10,1024);self.queue_get(0)
+        self.server(self.queue_page_reply(0,10,11))
+        self.assertEqual(self.lib.test_page(),1)
+        self.assertEqual(self.lib.test_cached(),0)
         self.assertEqual(self.lib.test_queue_pending(),1)
-        self.assertEqual(self.lib.test_sync_queue(40,1024),1)
-        self.assertEqual(self.lib.test_queue_count(),40)
-        self.assertEqual(self.lib.test_queue_pending(),0)
+
+    def test_range_failure_does_not_fall_back_to_full_queue(self):
+        self.lib.test_sync_queue(20916,0);self.queue_get(12345)
+        self.server([(b'playlistinfo 12288:12352\n',b'ACK [2@0] {playlistinfo} unsupported range\n')])
+        self.assertEqual(self.lib.test_page(),1)
+        self.assertEqual(self.lib.test_cached(),0)
+        self.assertFalse(self.lib.mpd_client_queue_loading(12345))
+        self.assertFalse(self.queue_get(12345)[0])
+        self.assertEqual(self.lib.test_requests(),0)
+        self.peer.settimeout(.05)
+        with self.assertRaises(socket.timeout):self.peer.recv(1)
+
+    def test_server_ignoring_range_is_stopped_without_reading_full_queue(self):
+        self.lib.test_sync_queue(20916,0);self.queue_get(0)
+        data=b''.join(f'file: album/{i}.flac\nId: {i}\n'.encode() for i in range(70))
+        self.server([(b'playlistinfo 0:64\n',data+b'OK\n')])
+        self.assertEqual(self.lib.test_page(),0) # malformed range closes the wire
+        self.assertEqual(self.lib.test_cached(),0)
+        self.assertEqual(self.lib.test_allocation(),0)
+        self.assertLessEqual(self.lib.test_item_count(),65)
+
+    def test_out_of_range_rows_never_request_pages(self):
+        self.lib.test_sync_queue(64,0)
+        self.assertFalse(self.queue_get(-1)[0]);self.assertFalse(self.queue_get(64)[0])
+        self.assertEqual(self.lib.test_requests(),0)
 
     def test_database_import_is_paginated_and_flushes_each_page(self):
         first=b''.join(f'file: music/{i}.flac\nTitle: Song {i}\n'.encode() for i in range(256))
@@ -598,6 +676,41 @@ static unsigned uri_count,uri_used;
             exchanges.append((commands,b'OK\n'))
         exchanges.append((b'play 0\n',b'OK\n'));self.server(exchanges)
         self.assertEqual(self.lib.test_run(1,keys,len(paths),0),1)
+
+    def test_whole_library_shuffle_uses_one_server_request_without_key_allocations(self):
+        for i in range(20916):self.lib.test_insert(f'library/song-{i}.flac'.encode())
+        self.server([(b'command_list_begin\nclear\nrandom 0\nsingle 0\nadd "/"\nshuffle\nrandom 1\nplay 0\ncommand_list_end\n',b'OK\n')])
+        self.assertEqual(self.lib.test_shuffle_all(),1)
+        self.assertEqual(self.lib.test_allocation(),0)
+
+    def test_shuffle_invalidates_old_entries_without_fetching_large_queue(self):
+        key=self.lib.test_insert(b'library/song.flac')
+        self.lib.test_seed(0,key,0);self.lib.test_sync_queue(1,0)
+        entry=self.lib.mpd_client_queue_entry(0)
+        self.server([(b'command_list_begin\nclear\nrandom 0\nsingle 0\nadd "/"\nshuffle\nrandom 1\nplay 0\ncommand_list_end\n',b'OK\n')])
+        self.assertEqual(self.lib.test_shuffle_all(),1)
+        self.assertEqual(self.lib.test_queue_count(),0)
+        self.assertEqual(self.lib.mpd_client_queue_entry(0),0)
+        self.lib.test_seed(-1,0,0)
+        self.assertEqual(self.lib.test_sync_queue(20916,0),1)
+        self.assertEqual(self.lib.test_queue_count(),20916)
+        self.assertEqual(self.lib.test_allocation(),0)
+        self.assertEqual(self.lib.test_cached(),0)
+        self.assertEqual(self.lib.test_requests(),0)
+        self.assertEqual(self.lib.test_queue_edit(entry&0xffffffff,1,entry>>32),1)
+        self.assertIn(b'Queue connection changed',self.lib.test_message())
+
+    def test_whole_library_shuffle_does_not_clear_for_empty_catalog(self):
+        self.assertEqual(self.lib.test_shuffle_all(),1)
+        self.assertIn(b'Library is empty',self.lib.test_message())
+        self.peer.settimeout(.05)
+        with self.assertRaises(socket.timeout):self.peer.recv(1)
+
+    def test_whole_library_shuffle_preserves_server_errors_without_fallback_play(self):
+        self.lib.test_insert(b'library/song.flac')
+        self.server([(b'command_list_begin\nclear\nrandom 0\nsingle 0\nadd "/"\nshuffle\nrandom 1\nplay 0\ncommand_list_end\n',b'ACK [4@3] {add} permission denied\n')])
+        self.assertEqual(self.lib.test_shuffle_all(),0)
+        self.assertIn(b'permission denied',self.lib.test_wire_error())
 
     def test_shuffle_play_shuffles_entire_album_before_first_play(self):
         paths=[f'album/{i}.flac'.encode() for i in range(12)]
@@ -731,7 +844,9 @@ static unsigned uri_count,uri_used;
             (b'prioid 255 10\n',b'OK\n'),(b'prioid 255 10\n',b'ACK [50@0] {prioid} No such song\n'),
             (b'prioid 255 12\n',b'OK\n')])
         self.assertEqual(self.lib.test_queue_add(keys,2,1),1)
-        self.lib.test_queue_removed_head()
+        self.assertEqual(self.lib.test_sync_queue(20916,0),1,self.lib.test_wire_error())
+        self.assertEqual(self.lib.test_queue_count(),20916)
+        self.assertEqual(self.lib.test_cached(),1)
         self.assertEqual(self.lib.test_priority_tick(7,1),1,self.lib.test_wire_error())
 
     def test_queue_remove_addresses_duplicate_by_entry_id_including_zero(self):

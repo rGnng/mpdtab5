@@ -152,6 +152,17 @@ if(IAP2TAB5_BUILD_UI_TESTS)
     foreach(theme RANGE 0 2)
         add_test(NAME navigation_theme_${theme} COMMAND navigation_test ${theme})
     endforeach()
+    add_executable(up_next_test tests/up_next_test.c
+        third_party/cjson/cJSON.c ${NP_TEST_SOURCES})
+    target_include_directories(up_next_test PRIVATE
+        $<TARGET_PROPERTY:tab5_sim,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(up_next_test PRIVATE
+        $<TARGET_PROPERTY:tab5_sim,COMPILE_DEFINITIONS>)
+    target_link_libraries(up_next_test PRIVATE lvgl::lvgl ${SDL2_LINK_TARGET} m)
+    target_link_options(up_next_test PRIVATE -Wl,--wrap=player_queue_at -Wl,--wrap=player_queue_loading)
+    foreach(theme RANGE 0 2)
+        add_test(NAME up_next_theme_${theme} COMMAND up_next_test ${theme})
+    endforeach()
     add_executable(mpd_views_test tests/mpd_views_test.c
         third_party/cjson/cJSON.c ${NP_TEST_SOURCES})
     target_include_directories(mpd_views_test PRIVATE

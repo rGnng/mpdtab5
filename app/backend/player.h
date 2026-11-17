@@ -181,6 +181,7 @@ int player_queue_count(void);
 uint32_t player_queue_revision(void);
 int player_queue_index(void);
 bool player_queue_at(int index, player_track_t *out);
+bool player_queue_loading(int index);
 
 /* Commands -------------------------------------------------------------- */
 void player_play_pause(void);
@@ -212,7 +213,7 @@ void player_play_playlist(int index);
 void player_play_playlist_from(int index, int track_index);
 void player_play_playlist_shuffled(int index);
 /* Whole library in random order (Albums "Shuffle All"). */
-void player_play_all_shuffled(void);
+bool player_play_all_shuffled(void);
 void player_queue_jump(int index);
 typedef enum { PLAYER_SELECTION_TRACK, PLAYER_SELECTION_ALBUM, PLAYER_SELECTION_ARTIST } player_selection_t;
 bool player_queue_add(player_selection_t type, uint64_t id, bool next);

@@ -3286,10 +3286,13 @@ void ui_debug_trace(bool enabled)
     UI_PERF_LOG("trace %s", enabled ? "on" : "off");
 }
 
+static void np_queue_debug_scroll(int dy);
+
 void ui_debug_scroll(int dy)
 {
     if(g_page_loading) return;
-    if(g_current_screen == SCR_ALBUMS && albums_left_list != NULL) {
+    if(g_current_screen == SCR_NOW_PLAYING) np_queue_debug_scroll(dy);
+    else if(g_current_screen == SCR_ALBUMS && albums_left_list != NULL) {
         lv_obj_scroll_by(albums_left_list, 0, dy, LV_ANIM_OFF);
     }
     else if(g_current_screen == SCR_SONGS && songs_list != NULL) {
@@ -3883,9 +3886,7 @@ static uint64_t g_np_cover_track_id;
 #define NP_QUEUE_ROW_H        56
 #define NP_QUEUE_VISIBLE_ROWS  11
 #define NP_QUEUE_LIST_H       (NP_QUEUE_VISIBLE_ROWS * NP_QUEUE_ROW_H)
-/* Rows built for the queue after the current item.  The full queue is
- * always played; only this many upcoming entries are listed. */
-#define NP_QUEUE_MAX_ROWS     100
+#define NP_QUEUE_POOL         (NP_QUEUE_VISIBLE_ROWS + 4)
 
 /* Default Now Playing layout: cover on the left; title, artist and album
  * occupy three separate lines, with a secondary star action below. The
@@ -3919,17 +3920,22 @@ static uint64_t g_np_cover_track_id;
 static lv_obj_t * np_queue_list;
 static bool np_queue_visible = false;
 static int np_queue_focus_start;
-#define NP_QUEUE_FILL_MS 16
-#define NP_QUEUE_FILL_BATCH 4
-#define NP_QUEUE_FILL_BUDGET_US 8000
+#define NP_QUEUE_FILL_MS 40
 static lv_timer_t * np_queue_fill_timer;
 static lv_obj_t * np_queue_loading, * np_queue_spacer;
 static bool np_queue_wait_frame;
-static int np_queue_fill_next, np_queue_fill_end, np_queue_fill_current;
+static int np_queue_fill_current;
 static uint32_t np_queue_fill_rev;
-static uint32_t np_queue_fill_start_us;
-static void np_queue_fill_cb(lv_timer_t * timer);
-static uint32_t np_queue_lookup_us, np_queue_widget_us;
+static int np_queue_base,np_queue_total,np_queue_selected;
+static counter_t np_queue_counter;
+static int np_queue_counter_position=-1,np_queue_counter_total=-1;
+static lv_obj_t *np_queue_rows[NP_QUEUE_POOL],*np_queue_titles[NP_QUEUE_POOL],*np_queue_artists[NP_QUEUE_POOL];
+static int np_queue_row_indices[NP_QUEUE_POOL];
+static uint64_t np_queue_row_keys[NP_QUEUE_POOL];
+static bool np_queue_row_selected[NP_QUEUE_POOL];
+static void np_queue_fill_cb(lv_timer_t *timer);
+static void np_queue_select(int index);
+static uint32_t np_queue_lookup_us,np_queue_widget_us;
 static uint32_t np_toggle_start_us;
 static bool np_toggle_frame_pending;
 
@@ -4061,11 +4067,20 @@ static void np_next_action(void * user)
     if(g_pages[SCR_NOW_PLAYING].tick) g_pages[SCR_NOW_PLAYING].tick();
 }
 
+static void np_queue_action(void *user);
+
 static bool np_key(ui_key_t key)
 {
     /* An open queue keeps its normal focus/activation controls. Context menus
      * are dispatched before page keys and retain their own navigation too. */
-    if(np_queue_visible) return false;
+    if(np_queue_visible){
+        switch(key){
+            case UI_KEY_UP:np_queue_select(np_queue_selected-1);return true;
+            case UI_KEY_DOWN:np_queue_select(np_queue_selected+1);return true;
+            case UI_KEY_ENTER:np_queue_action((void*)(intptr_t)np_queue_selected);return true;
+            default:return false;
+        }
+    }
     switch(key) {
         case UI_KEY_UP: np_prev_action(NULL); return true;
         case UI_KEY_DOWN: np_next_action(NULL); return true;
@@ -4132,6 +4147,8 @@ static void np_star_click_cb(lv_event_t * event)
 static void np_queue_action(void * user)
 {
     int index = (int)(intptr_t)user;
+    player_track_t track;
+    if(player_queue_revision()!=np_queue_fill_rev||!player_queue_at(index,&track))return;
     player_queue_jump(index);
     ui_rebuild_page();
     if(g_focus_count > 0) focus_select(np_queue_focus_start);
@@ -4301,9 +4318,7 @@ static void np_tick(void)
 
 static void np_same_key(void)
 {
-    if(g_focus_count > 0 && np_queue_focus_start < g_focus_count) {
-        focus_select(np_queue_focus_start);
-    }
+    if(np_queue_visible)np_queue_select(np_queue_base);
     ui_set_hint(np_queue_visible ? "UP/DOWN Select   ENTER Play/Jump   7 Play/Pause"
                                : "UP Previous/Restart   DOWN Next   ENTER Play/Pause");
 }
@@ -4318,76 +4333,143 @@ static bool np_back(void)
     return true;
 }
 
-static void np_queue_row(lv_obj_t * parent, int queue_index)
+static void np_queue_count_update(void)
 {
-    uint32_t lookup_start = g_ui_trace ? perf_now() : 0;
-    player_track_t track;
-    if(!player_queue_at(queue_index, &track)) return;
-    uint32_t widget_start = g_ui_trace ? perf_now() : 0;
-    if(g_ui_trace) np_queue_lookup_us += widget_start - lookup_start;
-
-    lv_obj_t * row = make_row(parent, NP_QUEUE_ROW_H);
-    lv_obj_set_style_pad_right(row, 16, 0);
-    lv_obj_set_style_pad_column(row, 10, 0);
-
-    lv_obj_t * title = make_label(row, track.title, FONT_H2, COL_TEXT);
-    lv_obj_set_flex_grow(title, 1);
-    lv_obj_set_height(title, 34);
-    ui_text_fade(title);
-
-    lv_obj_t * artist = make_label(row, track.artist, FONT_H2, COL_MUTED);
-    lv_obj_set_width(artist, 200);
-    lv_obj_set_height(artist, 34);
-    ui_text_clip(artist);
-
-    focus_add_clickable(row, np_queue_action, NULL, (void *)(intptr_t)queue_index, true);
-    context_touch_bind(row,CTX_TOUCH_QUEUE,queue_index);
-    if(g_ui_trace) np_queue_widget_us += perf_now() - widget_start;
+    int count=np_queue_total-np_queue_base;
+    int position=count>0?np_queue_selected-np_queue_base+1:0;
+    if(np_queue_counter.group&&(position!=np_queue_counter_position||count!=np_queue_counter_total)){
+        counter_set(&np_queue_counter,position,count);np_queue_counter_position=position;np_queue_counter_total=count;
+    }
 }
 
-static void np_queue_fill_cb(lv_timer_t * timer)
+static void np_queue_focus(void *user)
 {
-    if(g_current_screen != SCR_NOW_PLAYING || !np_queue_visible || np_queue_list == NULL) {
-        lv_timer_pause(timer);
-        return;
-    }
-    if(player_queue_revision() != np_queue_fill_rev ||
-       player_queue_index() != np_queue_fill_current) {
-        lv_timer_pause(timer);
-        ui_rebuild_page();
-        return;
-    }
-    int old_count = g_focus_count;
-    uint32_t batch_start = perf_now();
-    int attempted = 0;
-    while(np_queue_fill_next < np_queue_fill_end) {
-        int before = g_focus_count;
-        np_queue_row(np_queue_list, np_queue_fill_next++);
-        if(g_focus_count > before) {
-            /* Rows precede the tail spacer, including the first row. */
-            lv_obj_move_to_index(g_focus[g_focus_count - 1].obj,
-                                 lv_obj_get_index(np_queue_spacer));
+    int index=(int)(intptr_t)user;
+    if(index>=np_queue_base&&index<np_queue_total){np_queue_selected=index;np_queue_count_update();}
+}
+
+static void np_queue_row_style(int slot,bool selected)
+{
+    if(np_queue_row_selected[slot]==selected)return;
+    np_queue_row_selected[slot]=selected;
+    lv_obj_t *row=np_queue_rows[slot];
+    lv_obj_set_style_bg_opa(row,selected?LV_OPA_COVER:LV_OPA_TRANSP,0);
+    lv_obj_set_style_bg_color(row,lv_color_hex(COL_FOCUS),0);
+    lv_obj_set_style_border_width(row,selected?3:0,0);
+    lv_obj_set_style_border_side(row,LV_BORDER_SIDE_LEFT,0);
+    lv_obj_set_style_border_color(row,lv_color_hex(COL_ACCENT),0);
+    ui_cursor_band_focus(row,selected);theme_mark_selected(row,selected);
+}
+
+/* All positions belong to the full queue. Only this small pool owns widgets;
+ * loaded rows stay bound while they remain inside the viewport's margin. */
+static void np_queue_refresh_rows(void)
+{
+    if(!np_queue_list||np_queue_wait_frame||g_ctx_menu_open)return;
+    uint32_t started=g_ui_trace?perf_now():0;
+    int top=lv_obj_get_scroll_top(np_queue_list);if(top<0)top=0;
+    int start=np_queue_base+top/NP_QUEUE_ROW_H;
+    if(start>np_queue_base)--start;
+    if(start>=np_queue_total)start=np_queue_total>np_queue_base?np_queue_total-1:np_queue_base;
+    int end=start+NP_QUEUE_POOL;if(end>np_queue_total)end=np_queue_total;
+    for(int slot=0;slot<NP_QUEUE_POOL;slot++){
+        int index=np_queue_row_indices[slot];
+        if(index<start||index>=end){
+            np_queue_row_indices[slot]=-1;np_queue_row_keys[slot]=0;
+            np_queue_row_style(slot,false);lv_obj_set_hidden(np_queue_rows[slot],true);
+            g_focus[np_queue_focus_start+slot].user=(void*)(intptr_t)-1;
         }
-        if(++attempted >= NP_QUEUE_FILL_BATCH ||
-           (uint32_t)(perf_now() - batch_start) >= NP_QUEUE_FILL_BUDGET_US) break;
     }
-    lv_obj_set_height(np_queue_spacer,
-        (np_queue_fill_end - np_queue_fill_next) * NP_QUEUE_ROW_H);
-    if(g_focus_count > np_queue_focus_start) lv_obj_set_hidden(np_queue_loading, true);
-    if(old_count == np_queue_focus_start && g_focus_count > old_count) {
-        focus_select(np_queue_focus_start);
-    }
-    perf_log_us("np_queue_batch", batch_start);
-    if(np_queue_fill_next >= np_queue_fill_end) {
-        lv_timer_pause(timer);
-        lv_obj_set_hidden(np_queue_spacer, true);
-        if(g_focus_count == np_queue_focus_start) {
-            lv_label_set_text(np_queue_loading, "Queue details unavailable");
+    bool pending=false;
+    for(int index=start;index<end;index++){
+        int slot=-1;
+        for(int i=0;i<NP_QUEUE_POOL;i++)if(np_queue_row_indices[i]==index){slot=i;break;}
+        if(slot<0){
+            for(int i=0;i<NP_QUEUE_POOL;i++)if(np_queue_row_indices[i]<0){slot=i;break;}
+            if(slot<0)break;
+            np_queue_row_indices[slot]=index;
+            lv_obj_set_pos(np_queue_rows[slot],0,(index-np_queue_base)*NP_QUEUE_ROW_H);
+            lv_obj_set_user_data(np_queue_rows[slot],(void*)(intptr_t)index);
+            g_focus[np_queue_focus_start+slot].user=(void*)(intptr_t)index;
+            lv_obj_set_hidden(np_queue_rows[slot],false);
         }
-        if(g_ui_trace) UI_PERF_LOG("np_queue_filled: rows=%d lookup=%u widgets=%u elapsed=%u us",
-            g_focus_count - np_queue_focus_start, (unsigned)np_queue_lookup_us,
-            (unsigned)np_queue_widget_us, (unsigned)(perf_now() - np_queue_fill_start_us));
+        if(!np_queue_row_keys[slot]){
+            player_track_t track;bool ready=player_queue_at(index,&track);
+            bool loading=!ready&&player_queue_loading(index);pending|=loading;
+            np_set_text(np_queue_titles[slot],ready?track.title:loading?"Loading...":"Unavailable");
+            np_set_text(np_queue_artists[slot],ready?track.artist:"");
+            if(ready)np_queue_row_keys[slot]=track.id;
+        }
+        np_queue_row_style(slot,index==np_queue_selected);
     }
+    /* Touch scrolling may carry selection outside the pool. Do not let an
+     * old focus slot silently become a different queue occurrence. */
+    if(!g_ctx_menu_open){
+        g_focus_index=-1;
+        for(int slot=0;slot<NP_QUEUE_POOL;slot++)if(np_queue_row_indices[slot]==np_queue_selected){g_focus_index=np_queue_focus_start+slot;break;}
+    }
+    np_queue_count_update();
+    if(pending)lv_timer_resume(np_queue_fill_timer);else lv_timer_pause(np_queue_fill_timer);
+    perf_log_us("np_queue_refresh",started);
+}
+
+static void np_queue_select(int index)
+{
+    if(!np_queue_list||np_queue_total<=np_queue_base)return;
+    if(index<np_queue_base)index=np_queue_base;
+    if(index>=np_queue_total)index=np_queue_total-1;
+    np_queue_selected=index;
+    int top=lv_obj_get_scroll_top(np_queue_list),view=lv_obj_get_content_height(np_queue_list);
+    int row_top=(index-np_queue_base)*NP_QUEUE_ROW_H,target=top;
+    if(row_top<top)target=row_top;
+    else if(row_top+NP_QUEUE_ROW_H>top+view)target=row_top+NP_QUEUE_ROW_H-view;
+    if(target!=top)lv_obj_scroll_to_y(np_queue_list,target,LV_ANIM_OFF);
+    np_queue_refresh_rows();
+}
+
+static void np_queue_scroll_cb(lv_event_t *event)
+{
+    LV_UNUSED(event);np_queue_refresh_rows();
+}
+
+static void np_queue_debug_scroll(int dy)
+{
+    if(np_queue_visible&&np_queue_list)lv_obj_scroll_by(np_queue_list,0,dy,LV_ANIM_OFF);
+}
+
+static void np_queue_touch_activate(void *user)
+{
+    np_queue_select((int)(intptr_t)user);np_queue_action(user);
+}
+
+static void np_queue_click_cb(lv_event_t *event)
+{
+    lv_obj_t *row=lv_event_get_current_target(event);
+    ui_call_async(np_queue_touch_activate,lv_obj_get_user_data(row));
+}
+
+static void np_queue_row(lv_obj_t *parent,int slot)
+{
+    lv_obj_t *row=make_row(parent,NP_QUEUE_ROW_H);np_queue_rows[slot]=row;
+    lv_obj_set_style_pad_right(row,16,0);lv_obj_set_style_pad_column(row,10,0);
+    lv_obj_set_clickable(row,true);enable_event_bubble(row);
+    np_queue_titles[slot]=make_label(row,"",FONT_H2,COL_TEXT);
+    lv_obj_set_flex_grow(np_queue_titles[slot],1);lv_obj_set_height(np_queue_titles[slot],34);ui_text_fade(np_queue_titles[slot]);
+    np_queue_artists[slot]=make_label(row,"",FONT_H2,COL_MUTED);
+    lv_obj_set_width(np_queue_artists[slot],200);lv_obj_set_height(np_queue_artists[slot],34);ui_text_clip(np_queue_artists[slot]);
+    int focus=focus_add(row,np_queue_action,NULL,(void*)(intptr_t)-1,true);
+    focus_set_on_focus(focus,np_queue_focus);
+    lv_obj_add_event_cb(row,np_queue_click_cb,LV_EVENT_CLICKED,NULL);
+    context_touch_bind(row,CTX_TOUCH_QUEUE,-1);
+    np_queue_row_indices[slot]=-1;np_queue_row_keys[slot]=0;np_queue_row_selected[slot]=false;
+    lv_obj_set_hidden(row,true);
+}
+
+static void np_queue_fill_cb(lv_timer_t *timer)
+{
+    if(g_current_screen!=SCR_NOW_PLAYING||!np_queue_visible||!np_queue_list){lv_timer_pause(timer);return;}
+    if(player_queue_revision()!=np_queue_fill_rev||player_queue_index()!=np_queue_fill_current){lv_timer_pause(timer);ui_rebuild_page();return;}
+    np_queue_refresh_rows();
 }
 
 static bool find_album(uint64_t album_id, player_album_t * out)
@@ -5047,37 +5129,30 @@ static void np_create(lv_obj_t * parent)
         lv_obj_set_flex_grow(np_queue_list, 0);
         lv_obj_set_height(np_queue_list, NP_QUEUE_LIST_H);
         lv_obj_set_style_pad_row(np_queue_list, 0, 0);
-        int total = player_queue_count();
-        np_queue_fill_current = player_queue_index();
-        int start = np_queue_fill_current >= 0 ? np_queue_fill_current + 1 : 0;
-        np_queue_fill_next = start;
-        np_queue_fill_end = total < start + NP_QUEUE_MAX_ROWS ? total : start + NP_QUEUE_MAX_ROWS;
-        np_queue_fill_rev = player_queue_revision();
-        np_queue_fill_start_us = perf_now();
-        np_queue_loading = make_label(np_queue_list,
-            start < total ? "Loading queue..." : "Queue empty", FONT_CAPTION, COL_MUTED);
-        if(start < total) {
-            /* Floating status doesn't add height to the reserved row extent. */
-            lv_obj_set_ignore_layout(np_queue_loading, true);
-            np_queue_spacer = lv_obj_create(np_queue_list);
-            lv_obj_set_size(np_queue_spacer, LV_PCT(100), (np_queue_fill_end - start) * NP_QUEUE_ROW_H);
-            lv_obj_set_style_bg_opa(np_queue_spacer, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(np_queue_spacer, 0, 0);
-            lv_obj_set_style_pad_all(np_queue_spacer, 0, 0);
-            lv_obj_set_scrollable(np_queue_spacer, false);
-            lv_obj_set_clickable(np_queue_spacer, false);
-            if(np_queue_fill_timer == NULL) {
-                np_queue_fill_timer = lv_timer_create(np_queue_fill_cb, NP_QUEUE_FILL_MS, NULL);
-            }
-            if(np_queue_fill_timer != NULL) {
-                lv_timer_pause(np_queue_fill_timer);
-                np_queue_wait_frame = true;
-            }
-            else lv_label_set_text(np_queue_loading, "Queue details unavailable");
-        }
+        /* Absolute row positions reserve the full extent without a flex
+         * layout or thousands of offscreen objects. */
+        lv_obj_set_layout(np_queue_list,LV_LAYOUT_NONE);
+        np_queue_total=player_queue_count();np_queue_fill_current=player_queue_index();
+        np_queue_base=np_queue_fill_current>=0?np_queue_fill_current+1:0;
+        if(np_queue_base>np_queue_total)np_queue_base=np_queue_total;
+        np_queue_selected=np_queue_base;np_queue_fill_rev=player_queue_revision();
+        np_queue_counter_position=np_queue_counter_total=-1;
+        counter_create(queue_head,&np_queue_counter);np_queue_count_update();
+        np_queue_loading=make_label(np_queue_list,np_queue_base<np_queue_total?"":"Queue empty",FONT_CAPTION,COL_MUTED);
+        lv_obj_set_ignore_layout(np_queue_loading,true);
+        np_queue_spacer=lv_obj_create(np_queue_list);
+        lv_obj_set_size(np_queue_spacer,LV_PCT(100),(np_queue_total-np_queue_base)*NP_QUEUE_ROW_H);
+        lv_obj_set_style_bg_opa(np_queue_spacer,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(np_queue_spacer,0,0);
+        lv_obj_set_style_pad_all(np_queue_spacer,0,0);lv_obj_set_scrollable(np_queue_spacer,false);lv_obj_set_clickable(np_queue_spacer,false);
+        np_queue_wait_frame=true;
+        for(int slot=0;slot<NP_QUEUE_POOL;slot++)np_queue_row(np_queue_list,slot);
+        lv_obj_add_event_cb(np_queue_list,np_queue_scroll_cb,LV_EVENT_SCROLL,NULL);
+        if(!np_queue_fill_timer)np_queue_fill_timer=lv_timer_create(np_queue_fill_cb,NP_QUEUE_FILL_MS,NULL);
+        if(np_queue_fill_timer)lv_timer_pause(np_queue_fill_timer);
+
     }
 
-    if(np_queue_visible && g_focus_count > 0) focus_select(np_queue_focus_start);
+
     g_np_cover_rev = now_cover_revision;
     g_np_cover_track_id = snapshot.track.id;
     np_gradient_source(now_cover);
@@ -5663,8 +5738,7 @@ static void albums_open(void * user)
 
 static void albums_shuffle_all(void)
 {
-    player_play_all_shuffled();
-    ui_set_hint("Shuffle All");
+    ui_set_hint(player_play_all_shuffled()?"Shuffle All requested":"Shuffle All unavailable");
 }
 
 static void albums_shuffle_all_touch_cb(lv_event_t * event)
@@ -7016,8 +7090,7 @@ static bool context_capture(context_target_t *out)
     if(g_current_screen==SCR_PLAYLISTS && focus && focus->activate==playlists_track_action)
         return context_resolve(out,CTX_TOUCH_PLAYLIST_TRACK,index);
     if(g_current_screen==SCR_NOW_PLAYING) {
-        if(np_queue_visible && focus && focus->activate==np_queue_action)
-            return context_resolve(out,CTX_TOUCH_QUEUE,index);
+        if(np_queue_visible)return context_resolve(out,CTX_TOUCH_QUEUE,np_queue_selected);
         player_snapshot_t snapshot;player_get_snapshot(&snapshot);
         context_track(out,&snapshot.track,SCR_NOW_PLAYING,0);
         out->kind=CTX_NOW;return true;
@@ -7732,14 +7805,8 @@ static bool ui_list_page(int direction)
     if(g_page_loading) return true;
     if(g_current_screen == SCR_NOW_PLAYING) {
         if(!np_queue_visible || !np_queue_list) return false;
-        if(g_focus_count > np_queue_focus_start) {
-            int rows = lv_obj_get_content_height(np_queue_list) / NP_QUEUE_ROW_H;
-            int current = g_focus_index < np_queue_focus_start ? np_queue_focus_start : g_focus_index;
-            int target = current + direction * (rows > 1 ? rows - 1 : 1);
-            if(target < np_queue_focus_start) target = np_queue_focus_start;
-            if(target >= g_focus_count) target = g_focus_count - 1;
-            focus_select(target);
-        }
+        int rows=lv_obj_get_content_height(np_queue_list)/NP_QUEUE_ROW_H;
+        np_queue_select(np_queue_selected+direction*(rows>1?rows-1:1));
         return true;
     }
     if(g_current_screen == SCR_ALBUMS) {
@@ -11318,6 +11385,7 @@ static void ui_handle_key_repeat_raw(ui_key_t key, int count)
             artists_select(artists_selected + delta);
             return;
         }
+        if(g_current_screen==SCR_NOW_PLAYING&&np_queue_visible){np_queue_select(np_queue_selected+delta);return;}
         /* Settings and other focus pages: one move to the final position. */
         focus_move(delta);
         return;
@@ -11367,6 +11435,7 @@ static int ui_fast_scroll_rows(lv_obj_t **context)
     else if(g_current_screen == SCR_SONGS) {
         *context = songs_list; height = SONGS_ROW_H;
     }
+    else if(g_current_screen==SCR_NOW_PLAYING&&np_queue_visible){*context=np_queue_list;height=NP_QUEUE_ROW_H;}
     else if(g_focus_index >= 0 && g_focus_index < g_focus_count) {
         lv_obj_t * row = g_focus[g_focus_index].obj;
         height = lv_obj_get_height(row);
@@ -11861,8 +11930,16 @@ void ui_navigation_snapshot(ui_navigation_t *out)
         player_track_t track;out->index=songs_selected;out->count=player_song_count();
         if(player_song_get(songs_selected,&track))navigation_copy(out->focus,sizeof(out->focus),track.title);
     }
+    else if(g_current_screen==SCR_NOW_PLAYING&&np_queue_visible){
+        out->flags|=16;
+        if(np_queue_selected>=np_queue_base&&np_queue_selected<np_queue_total){
+            out->index=np_queue_selected-np_queue_base;out->count=np_queue_total-np_queue_base;
+            player_track_t track;
+            if(player_queue_at(np_queue_selected,&track))navigation_copy(out->focus,sizeof(out->focus),track.title);
+            else {text=player_queue_loading(np_queue_selected)?"Loading...":"Unavailable";}
+        }
+    }
     else {
-        if(g_current_screen==SCR_NOW_PLAYING && np_queue_visible)out->flags|=16;
         if(g_current_screen==SCR_ALBUMS && albums_detail_open) {
             player_album_t album;
             if(player_album_get(albums_selected,&album))navigation_copy(out->heading,sizeof(out->heading),album.title);

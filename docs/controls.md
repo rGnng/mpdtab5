@@ -198,3 +198,25 @@ press remains Back. New Navigation presets include the same mapping. Sleep
 leaves playback running and turns off the screens plus ColoPlay LEDs; continuing
 to hold or releasing that button does not wake it or execute Back. While linked,
 a new input wakes both and is consumed before ordinary actions resume.
+
+## Shuffle All and queue loading
+
+From the Albums list, move above the first album to **Shuffle All**, then select
+it, or tap the row. Tab5 submits one server-side MPD command list: clear, disable
+random/single, add the root library (`add "/"`), shuffle, enable random and play.
+The hint reports request acceptance or an unavailable submission; server errors
+remain in MPD diagnostics. Tracks already supports these commands and needs no
+new endpoint. Old occurrence handles are invalidated after successful queue
+replacement.
+
+Queue count and current song come from playback status. Full queue metadata is
+not downloaded at startup or after a queue change. Opening Up Next requests
+only pages covering the visible rows and a small margin. All remaining queue
+entries are accessible with knob, Page Up/Down or touch scrolling; the previous
+100-row cap is removed. A fixed pool of 15 row widgets keeps scrolling work
+bounded. The counter and ColoPlay feedback use the logical position and full
+remaining count, including while metadata is loading. Cached page arrivals
+do not reset selection; queue revision changes discard stale positions. Pages hold
+at most 64 entries and are checked against the server revision after retrieval.
+The existing 24,000-entry local queue bound still applies. Library catalog sync
+remains separate from this queue loading.

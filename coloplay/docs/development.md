@@ -203,10 +203,24 @@ brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
 
+The latest Tab5-only **Shuffle All and demand queue loading** correction is
+OTA-verified, application **2,935,856 bytes**, ELF SHA-256
+`f20e0a5ae778f79e755fdffc3c4bb33c4552cf07067270577f67341c95762941`. ColoPlay remains on **0.8.3-sleep-key**.
+Shuffle All uses existing MPD root-add/shuffle commands. Queue count/current
+song are available without a full queue transfer; rows load in 64-entry pages
+when requested. Up Next reuses 15 widgets over the full remaining queue, with
+no 100-item cap and no metadata wait for logical navigation. Two live Shuffle
+All runs against **20,916 entries**
+passed in **6.14 / 5.93 seconds** with only 64 queue rows cached. See the
+[validation record](../../docs/mpd-validation.md#shuffle-all-and-demand-queue-loading-ota--2026-11-17).
+Private firmware, previous images, settings and evidence are retained in
+`backups/shuffle-all-release/`.
+
 **0.8.3-sleep-key** is the current ColoPlay release, OTA-verified in `ota_app1`.
 Its application is **3,267,424 bytes** (MD5 `90a6cc61316fe838898552ded8723d76`, SHA-256
 `085c66d392340e32cbd6d5eaf8687c9766a57c7ad1c852f56880dbaa48f364c0`); ELF SHA-256 is
-`726fc9fc493588af74d4314b2ba2fc45e9d102a5211e4f37c4161a7572d7d5a5`. Tab5 remains on the 0.8.2 paired image recorded below.
+`726fc9fc493588af74d4314b2ba2fc45e9d102a5211e4f37c4161a7572d7d5a5`. Its original paired Tab5 image is recorded below;
+the current Tab5 update is documented above.
 The Sleep key adapter uses the existing sleep wire command, adds a qualified
 key-picker value and requires a 0.8.3-capable recovery image for profiles that
 save that value. The default recovery bundle now contains this boot-verified

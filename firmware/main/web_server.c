@@ -1360,6 +1360,7 @@ static esp_err_t library_get(httpd_req_t *req)
                 kind==5 ? player_album_track_get(parent,i,&track) : kind==6 ? player_artist_song_get(parent,i,&track) :
                 player_playlist_track_get(index,i,&track);
             if(ok) library_track_json(item,&track);
+            else if(kind==4)cJSON_AddBoolToObject(item,"loading",player_queue_loading(i));
         }
     }
     bsp_display_unlock();
@@ -1450,6 +1451,9 @@ static esp_err_t status_get(httpd_req_t * req)
     cJSON_AddStringToObject(root,"product","MPD Tab5");
     cJSON_AddStringToObject(root,"mpd_status",mpd_client_status());
     cJSON_AddBoolToObject(root,"mpd_connected",mpd_client_is_connected());
+    int queue_total,queue_cached,queue_pending;mpd_client_queue_stats(&queue_total,&queue_cached,&queue_pending);
+    cJSON *queue=cJSON_AddObjectToObject(root,"mpd_queue");cJSON_AddNumberToObject(queue,"total",queue_total);
+    cJSON_AddNumberToObject(queue,"cached",queue_cached);cJSON_AddNumberToObject(queue,"pending_pages",queue_pending);
     mpd_config_t mpd_cfg; mpd_client_config(&mpd_cfg);
     cJSON_AddStringToObject(root,"mpd_host",mpd_cfg.host);
     cJSON_AddNumberToObject(root,"mpd_port",mpd_cfg.port);

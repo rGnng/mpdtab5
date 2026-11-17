@@ -192,10 +192,10 @@ static void now_playing_keys(void)
     check(np_queue_visible && g_focus_index==np_queue_focus_start,
           "Page Up at the queue start must keep Up Next open and retain queue focus");
     int page_rows=lv_obj_get_content_height(np_queue_list)/NP_QUEUE_ROW_H;
-    int page_target=np_queue_focus_start+(page_rows>1 ? page_rows-1 : 1);
-    if(page_target>=g_focus_count)page_target=g_focus_count-1;
+    int page_target=np_queue_base+(page_rows>1?page_rows-1:1);
+    if(page_target>=np_queue_total)page_target=np_queue_total-1;
     ui_handle_key(UI_KEY_PAGE_DOWN);pump(100);player_get_snapshot(&snap);
-    check(np_queue_visible && g_focus_index==page_target && snap.track.id==second.id,
+    check(np_queue_visible && np_queue_selected==page_target && snap.track.id==second.id,
           "Page Down must page open queue rows without changing playback");
     ui_handle_key(UI_KEY_PAGE_UP);pump(100);
     check(np_queue_visible && g_focus_index==np_queue_focus_start,
@@ -1212,6 +1212,15 @@ static void remote_navigation_snapshot(void)
     check(!strcmp(clipped,"日"),"Navigation truncation preserves UTF-8 boundaries");
 }
 
+static void albums_shuffle_all_action(void)
+{
+    ui_select_screen(SCR_ALBUMS);pump(300);albums_select(0);ui_handle_key(UI_KEY_UP);
+    ui_navigation_t nav;ui_navigation_snapshot(&nav);
+    check(!strcmp(nav.focus,"Shuffle")&&!nav.count,"Shuffle All has a focused action without a song count");
+    ui_handle_key(UI_KEY_ENTER);player_snapshot_t snapshot;player_get_snapshot(&snapshot);
+    check(snapshot.status==PLAYER_PLAYING&&snapshot.shuffle&&player_queue_count()==player_song_count(),"Shuffle All Enter starts a shuffled queue covering the library");
+}
+
 static void playlist_context_picker(void)
 {
     player_track_t selected,current,added;player_snapshot_t before,after;player_playlist_t list;
@@ -1337,6 +1346,7 @@ int main(int argc,char **argv)
     remote_navigation_snapshot();
     playlist_context_picker();
     playlist_context_remove();
+    albums_shuffle_all_action();
     puts("PASS: transparent text fade, Artists viewport restoration, column scrollbar geometry, page scrolling and theme cursor feedback");
     return 0;
 }

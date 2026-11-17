@@ -1,5 +1,84 @@
 # MPD controller validation
 
+## Shuffle All and demand queue loading OTA — 2026-11-17
+
+The previous Shuffle All path copied every local song ID into an asynchronous
+request, then allocated a second full queue snapshot. For the **20,916-song**
+library, the request alone required **167,328 bytes**. Submission failures were
+ignored by the UI, allowing a silent no-op under allocation pressure. The new
+fixed-size request makes the server execute this MPD command list:
+
+```text
+clear
+random 0
+single 0
+add "/"
+shuffle
+random 1
+play 0
+```
+
+Standard MPD's [root-add compatibility](https://github.com/MusicPlayerDaemon/MPD/blob/master/src/command/QueueCommands.cxx)
+and the [Tracks implementation](https://github.com/rGnng/tracks/blob/628ee5b/Sources/Audia/MPDServer.swift)
+support this path; Tracks needs no new endpoint. The UI now reports accepted
+or unavailable submissions. Successful replacement invalidates old occurrence
+handles, including raw MPD ID zero with a retired epoch.
+
+The old queue refresh downloaded full metadata for every entry and performed
+SD URI-cache reads even when it only needed a membership check. Early live
+runs of the server-side shuffle fix still took **28.67 / 56.41 seconds** to
+publish the full snapshot. Queue count/current song now come from status, with
+no eager metadata request or temporary full-size staging allocation. Only row
+access requests `playlistinfo start:end`, in pages of **64**. RAM URI membership
+avoids per-song SD reads. A post-fetch status check discards stale queue
+versions/counts, and connection changes cannot publish an old page. Unsupported
+ranges do not fall back to a full queue download. Up Next uses 15 recycled row
+widgets over the entire remaining queue, removing the 100-item cap and its
+per-row widget growth. The scrollbar spans the full
+remaining count; knob bursts, page keys and touch scrolling select logical
+positions without waiting for metadata. Cached page arrivals preserve selection
+and context menus retain exact occurrence IDs. The 24,000-entry bound remains;
+library catalog sync is still separate. Standard MPD Play Next priority IDs are
+revalidated after structural changes without scanning or loading uncached rows.
+
+Host checks passed: **82** production MPD/socket tests, **2** full-library PID lookup
+tests, **2** playback boundary tests, the request ownership fixture, all
+**24** native UI tests (including Shuffle All Enter and the 20,916-entry virtual
+Up Next fixture in all three themes), and the Tab5 ESP-IDF build. Coverage includes a 20,916-entry count with allocation
+disabled and no wire request, current-row seeding, bounded/cache-hit/far/last
+pages, stale revisions/counts, range errors/ignored ranges, pending row
+navigation, bounded widget reuse, final-occurrence jumps, modal focus isolation, empty libraries, server errors and retired queue handles.
+
+Tab5 accepted OTA and booted application **2,935,856 bytes**,
+ELF SHA-256 `f20e0a5ae778f79e755fdffc3c4bb33c4552cf07067270577f67341c95762941`. ColoPlay stayed on
+**0.8.3-sleep-key**, with its image and all saved scenes/Global bindings unchanged.
+The completed catalog sync was observed at uptime **29 seconds** with
+**20,916 queue entries, one cached current row and zero pending pages**. No
+queue read was issued before that observation. Playback metadata was already
+available during the separate catalog sync. Near and distant API page reads
+loaded independently; repeated reads did not increase cache size. Actual Up
+Next acquired a selectable row. Two consecutive selections of the Albums
+Shuffle All row then started random playback with different queue heads in
+**6.14 / 5.93 seconds**, with **64 cached queue rows** each.
+
+A further live check reached logical row **171 / 20,914** through Down/Page Down,
+with only **192 cached queue rows**, then scrolled the touch viewport farther.
+A screenshot confirms the populated viewport and full-length counter. Across
+**41 device row-refresh samples**, median work was **964 us**, maximum
+**2,311 us**. These measure row updates, not complete display refresh or physical
+USB/BLE input latency. The remaining count excludes the current/already-played
+entries. Host tests additionally reach the final occurrence of the full queue
+with a constant 15-widget pool. The final image recheck reached
+**131 / 20,915** with **192 cached queue rows** and confirmed MPD and saved
+settings again before returning to Now Playing.
+
+Now Playing was restored; the full-library queue was intentionally left
+playing. Volume, repeat, playlists, saved Tab5 settings and ColoPlay scenes and
+Global bindings matched the snapshots. MPD, SD, USB-C CDC-NCM networking,
+ColoPlay USB control transport and shared sleep feedback remained healthy.
+Exact images, previous known-good firmware, settings and test snapshots are in
+the ignored `coloplay/backups/shuffle-all-release/` bundle.
+
 ## Sleep key OTA — 2026-11-16
 
 ColoPlay **0.8.3-sleep-key** was OTA-verified in `ota_app1`, MD5

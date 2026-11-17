@@ -1797,6 +1797,15 @@ int player_queue_index(void)
 #endif
 }
 
+bool player_queue_loading(int index)
+{
+#if defined(ESP_PLATFORM)
+    return mpd_client_is_enabled()&&mpd_client_queue_loading(index);
+#else
+    (void)index;return false;
+#endif
+}
+
 bool player_queue_at(int index, player_track_t * out)
 {
 #if defined(ESP_PLATFORM)
@@ -2059,11 +2068,21 @@ void player_play_song(uint64_t track_id)
     play_ids_start(n, false);
 }
 
-void player_play_all_shuffled(void)
+bool player_play_all_shuffled(void)
 {
+    if(track_count<=0)return false;
+#if defined(ESP_PLATFORM)
+    if(mpd_client_is_enabled()){
+        bool accepted=mpd_client_shuffle_all()==ESP_OK;
+        if(accepted)queue_rev++;
+        return accepted;
+    }
+    return false;
+#endif
     int n = track_count < PLAY_IDS_MAX ? track_count : PLAY_IDS_MAX;
     for(int k = 0; k < n; k++) play_ids[k] = tracks[k].id;
     play_ids_start(n, true);
+    return true;
 }
 
 bool player_track_starred(uint64_t id)

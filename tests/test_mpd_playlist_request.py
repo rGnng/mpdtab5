@@ -83,6 +83,10 @@ int main(void){
  keys[0]=0;assert(mpd_client_playlist_remove("Mix",7,keys,3,2)==ESP_ERR_INVALID_ARG&&!live&&!allocations);
  for(int i=0;i<1024;i++)keys[i]=123;
  assert(mpd_client_playlist_remove(name,7,keys,1024,1023)==ESP_OK);release(captured.keys);release(captured.playlist);
+ reset();assert(mpd_client_shuffle_all()==ESP_OK&&!live&&!allocations);
+ assert(captured.kind==CMD_ALL&&captured.shuffle&&!captured.keys&&!captured.playlist);
+ reset();accept=0;assert(mpd_client_shuffle_all()==ESP_ERR_NO_MEM&&!live&&!allocations);
+ reset();state.connected=0;assert(mpd_client_shuffle_all()==ESP_ERR_INVALID_STATE&&!live&&!allocations);
  assert(!live);return 0;
 }
 '''
@@ -91,7 +95,8 @@ int main(void){
             (path / 'request.c').write_text(prefix + types + boundary +
                 production(source, 'enqueue') + '\n' +
                 production(source, 'mpd_client_playlist_add') + '\n' +
-                production(source, 'mpd_client_playlist_remove') + main)
+                production(source, 'mpd_client_playlist_remove') + '\n' +
+                production(source, 'mpd_client_shuffle_all') + main)
             subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
                             '-I' + str(ROOT / 'app/mpd'), '-I' + str(ROOT / 'shared'),
                             str(path / 'request.c'), str(ROOT / 'app/mpd/mpd_wire.c'),

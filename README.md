@@ -146,6 +146,11 @@ song context menus. It removes that occurrence without changing playback or
 the queue; Stared continues to use **Unstar**. This update is OTA-verified,
 including a user-confirmed removal of the final entry from a regular playlist.
 
+**Shuffle All** queues and shuffles the library on the MPD server, without a
+full-library request allocation on Tab5. Queue rows load on demand in pages of
+64; startup and queue changes read the count and current song without fetching
+the whole queue.
+
 ColoPlay's HID key picker includes **Sleep (Screen off)**. Its Button 1 Hold
 binding fires once at 600 ms, while a short press remains Back.
 
@@ -325,9 +330,15 @@ when Playwright is unavailable. Existing source assets and their notices are
 retained. MPD framing and command semantics follow the
 [official protocol documentation](https://mpd.readthedocs.io/en/stable/protocol.html).
 
-Queue refreshes allocate for the reported queue size. If memory is temporarily
-unavailable, the previous queue remains visible and the refresh retries without
-disconnecting MPD. Protocol errors in the device log include the command verb
+Queue status supplies the count and current song. Opening Up Next or reading
+queue rows requests only the relevant 64-entry pages; repeated reads use the
+cache. A queue revision invalidates cached positions, and each page is checked
+against the server revision before publication. Up Next exposes every remaining
+queue entry through a fixed pool of 15 row widgets, with a full-length scrollbar and logical knob/page navigation. Missing
+metadata stays as a loading row without blocking navigation.
+No full queue metadata transfer or second full-size staging allocation blocks
+startup. Library catalog synchronization remains a separate startup operation.
+Protocol errors in the device log include the command verb
 and receive errors include the socket error number.
 If Tracks accepts TCP connections but closes them before the MPD greeting,
 check its 32-client connection limit. Fully quit and reopen Tracks to reset
@@ -348,6 +359,10 @@ For a read-only hardware view snapshot, use
 `/api/library?view=albums&offset=0&limit=128`. Other views are `artists`, `songs`,
 `playlists`, `queue`, `album_tracks`, `artist_tracks`, and `playlist_tracks`;
 track detail requests accept a hexadecimal `parent` ID or playlist `index`.
+Queue reads schedule missing pages and return `loading: true` until the rows
+arrive; poll the same offset again. `loading: false` without metadata means the
+page could not be loaded. `/api/status` exposes `mpd_queue` with the total,
+cached row count and pending page count for diagnostics.
 Run `python3 tools/audit_mpd_views.py --screenshots` to check live sort controls,
 view metadata and detail membership. It restores sort settings and writes its
 report/screenshots under `/tmp/mpd-view-audit/`. It issues no playback commands.
