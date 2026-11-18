@@ -5,6 +5,11 @@
 #include <iostream>
 
 int main() {
+  ColorTransition defaultFade;
+  defaultFade.update(0xff0000,0,true,LightingSettings::kTransitionMs);
+  assert(defaultFade.update(0x0000ff,0,true,LightingSettings::kTransitionMs)==0xff0000);
+  assert(defaultFade.update(0x0000ff,50,true,LightingSettings::kTransitionMs)==0x800080);
+  assert(defaultFade.update(0x0000ff,100,true,LightingSettings::kTransitionMs)==0x0000ff);
   ColorTransition ring,button;
   assert(ring.update(0xff0000,100,true,300)==0xff0000);
   assert(ring.update(0x0000ff,100,true,300)==0xff0000);

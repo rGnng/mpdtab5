@@ -75,7 +75,7 @@ class GlobalWebTests(unittest.TestCase):
         self.lighting = dict(ring_brightness=70, keys_brightness=70,
                              ring_effective=70, keys_effective=70,
                              mode="rainbow", color="#ffffff", errors=0,
-                             ring_smooth=True, keys_smooth=False, transition_ms=300)
+                             ring_smooth=True, keys_smooth=False, transition_ms=100)
         self.posts, self.errors, self.external = [], [], []
         self.page = self.browser.new_page(viewport={"width": 1280, "height": 1000})
         self.addCleanup(self.page.close)
@@ -114,7 +114,7 @@ class GlobalWebTests(unittest.TestCase):
         self.page.locator("#tab-lighting").click()
         self.assertTrue(self.page.locator("#ring-smooth").is_checked())
         self.assertFalse(self.page.locator("#keys-smooth").is_checked())
-        self.assertEqual(self.page.locator("#transition-ms").input_value(), "300")
+        self.assertEqual(self.page.locator("#transition-ms").input_value(), "100")
         self.page.locator("#ring-smooth").uncheck()
         self.page.wait_for_function("document.getElementById('lighting-message').textContent==='Saved'")
         self.assertEqual(self.posts[-1], {"ring_smooth": "0"})

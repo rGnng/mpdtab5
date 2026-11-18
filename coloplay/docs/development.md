@@ -203,7 +203,22 @@ brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
 
-**0.8.6-color-transitions** is the current ColoPlay release, application-only
+**0.8.7-transitions-100ms** is the current ColoPlay release. The default color
+transition duration is **100 ms**, including untagged legacy settings and web
+fallbacks. Ring smoothing remains on and button smoothing off by default. Saved
+custom durations retain their value; this device was explicitly saved to 100 ms
+before application-only OTA and verified at 100 ms after reboot.
+
+The application is **3,271,392 bytes**, MD5
+`a52d9af8b7620797b172717dee2f817a`, SHA-256
+`bb96b51b77249190d3214372cfc4aab4b1a220ebfb8cb79b4b4ceed6e3bd3927`; ELF SHA-256
+`bab56d3c6a97d3fb73d26ad20d7d216c392eafeff3e574ff2a2903b53207564a`. Storage layout and
+slot headroom are unchanged from 0.8.6. The full ColoPlay regression script and
+five Chromium tests pass, including 100 ms midpoint/completion and the web
+default. Boot confirmation, saved settings and fresh USB/MPD feedback were
+checked. Private images and evidence are in `backups/transitions-100ms-release/`.
+
+The preceding **0.8.6-color-transitions** release was application-only
 OTA-verified in `ota_app0`. The application is **3,271,392 bytes**, MD5
 `493028528596c396ac1556dc5078dfd5`, SHA-256
 `9ab523cd553388c251f4b8ecebb4fc384a74d36f14ee079eec1ff0d724cfe5ed`; ELF SHA-256

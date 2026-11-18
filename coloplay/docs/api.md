@@ -8,7 +8,7 @@ This reference describes the current implementation in
 [scene_service.cpp](../firmware/src/scene_service.cpp),
 [clock_service.cpp](../firmware/src/clock_service.cpp) and
 [usb_network.cpp](../firmware/src/usb_network.cpp).
-The current source is **0.8.6-color-transitions** (OTA-tested on 2026-11-18), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
+The current source is **0.8.7-transitions-100ms** (OTA-tested on 2026-11-18), including `/api/playback`, composite CDC-ACM + CDC-ECM USB and independent
 filled/unfilled ring colors.
 Deployment fingerprints for the last verified OTA are in the
 [release record](development.md#current-verified-release). Bluetooth's BLE wire
@@ -380,7 +380,7 @@ persistent lighting settings must be saved successfully first.
 | `keys_brightness` | Integer 0–100 | Saved key LED selection; initial 70 |
 | `ring_smooth` | 0 or 1 | Saved; initially 1; smooth ring palette changes |
 | `keys_smooth` | 0 or 1 | Saved; initially 0; smooth button palette changes independently |
-| `transition_ms` | Integer 0–5000 | Saved; initially 300; shared color transition duration; 0 is immediate |
+| `transition_ms` | Integer 0–5000 | Saved; initially 100; shared color transition duration; 0 is immediate |
 | `led_mode` | `rainbow` or `static` | Saved; initial `rainbow` |
 | `led_color` | `#RRGGBB`, six hexadecimal digits | Saved; initial `#ffffff`; used in static mode |
 | `volume` | Integer 0–100 | Runtime speaker amplitude; initial 75; 0 mutes, 100 is 0 dB gain |
@@ -395,7 +395,7 @@ The retired `auto_screen`, `auto_ring`, `auto_keys`, `auto_dark_raw` and
 Scene create/update likewise reject the three retired `auto_<channel>` flags.
 Lighting stays version 1 / 44 bytes. Two retired sensor endpoint words now
 hold tagged transition flags and duration. Untagged legacy records use Ring on,
-Buttons off and 300 ms without interpreting old sensor values or replacing saved
+Buttons off and 100 ms without interpreting old sensor values or replacing saved
 brightness/color. Old firmware ignores these tagged words. Status reports the
 resolved settings in `hardware.leds.ring_smooth`, `.keys_smooth` and `.transition_ms`.
 Current scenes use schema 9 / 3364 logical bytes, preserving manual levels

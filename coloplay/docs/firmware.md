@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current verified release: **0.8.6-color-transitions**, OTA-tested on 2026-11-18.
+Current verified release: **0.8.7-transitions-100ms**, OTA-tested on 2026-11-18.
 The gadget is configured
 through the **Connection**, **Controls**, **Playback**, **Lighting** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
@@ -159,7 +159,7 @@ idle screen is Blank still keeps its display off after waking; its LEDs resume.
 ## Smooth LED colors
 
 Lighting offers **Smooth ring colors** (on by default), **Smooth button colors**
-(off by default), and **Transition time (ms)** (300 by default, range 0–5000).
+(off by default), and **Transition time (ms)** (100 by default, range 0–5000).
 Zero duration is immediate. These General controls apply to scene lighting,
 playback state palettes and temporary action feedback. Each pixel keeps its own
 color transition; the ring's filled and unfilled colors transition independently.

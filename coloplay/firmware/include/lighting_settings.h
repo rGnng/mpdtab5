@@ -4,7 +4,7 @@
 namespace LightingSettings {
 enum Mode : uint32_t { kRainbow, kStatic };
 constexpr uint32_t kTransitionTag = 0x534D5400;
-constexpr uint32_t kTransitionMs = 300, kMaxTransitionMs = 5000;
+constexpr uint32_t kTransitionMs = 100, kMaxTransitionMs = 5000;
 
 // One NVS blob commits all lighting settings together. Brightness is percent.
 struct Stored {

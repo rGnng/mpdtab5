@@ -9,7 +9,7 @@ int main() {
   assert(valid(settings));
   assert(settings.screen == 70 && settings.ring == 70 && settings.keys == 70);
   assert(sizeof(settings)==44);
-  assert(ringSmooth(settings)&&!keysSmooth(settings)&&transitionMs(settings)==300);
+  assert(ringSmooth(settings)&&!keysSmooth(settings)&&transitionMs(settings)==100);
   assert(pwm(0) == 0 && pwm(70) == 179 && pwm(100) == 255);
 
   // Actual v1 word offsets, including previously enabled Auto and captured
@@ -18,12 +18,12 @@ int main() {
   std::memcpy(&settings,legacy,sizeof(settings));
   assert(valid(settings)&&settings.screen==21&&settings.ring==46&&settings.keys==83);
   assert(settings.mode==kStatic&&settings.color==0x123456);
-  assert(ringSmooth(settings)&&!keysSmooth(settings)&&transitionMs(settings)==300);
+  assert(ringSmooth(settings)&&!keysSmooth(settings)&&transitionMs(settings)==100);
   assert(!std::memcmp(&settings,legacy,sizeof(settings)));
   for(auto &word:settings.reservedBeforeMode)word=0xFFFFFFFF;
   for(auto &word:settings.reservedTail)word=0xFFFFFFFF;
   assert(valid(settings)&&settings.screen==21&&settings.ring==46&&settings.keys==83);
-  assert(ringSmooth(settings)&&!keysSmooth(settings)&&transitionMs(settings)==300);
+  assert(ringSmooth(settings)&&!keysSmooth(settings)&&transitionMs(settings)==100);
   setTransitions(settings,false,true,1200);
   assert(valid(settings)&&!ringSmooth(settings)&&keysSmooth(settings)&&transitionMs(settings)==1200);
   assert(settings.screen==21&&settings.ring==46&&settings.keys==83&&settings.color==0x123456);

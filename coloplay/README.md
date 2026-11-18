@@ -22,9 +22,9 @@ or a direct [USB CDC-ACM link](../docs/coloplay-usb.md). See the
 
 ## Current baseline
 
-Current verified release: **`0.8.6-color-transitions`**, OTA-tested on 2026-11-18.
+Current verified release: **`0.8.7-transitions-100ms`**, OTA-tested on 2026-11-18.
 Lighting has independent smooth color switches: Ring on and Buttons off by
-default, with a shared **300 ms** transition time. Colors fade across scenes,
+default, with a shared **100 ms** transition time. Colors fade across scenes,
 playback states and action feedback; volume/progress coverage remains immediate.
 Playback names prefer Artist, then Album Artist, then Unknown artist. Text
 feedback refreshes periodically over USB and BLE to recover an incomplete

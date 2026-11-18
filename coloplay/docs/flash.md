@@ -116,7 +116,7 @@ OTA writes a complete application to the inactive slot, so either slot must fit
 the full firmware. The inactive slot retains its previous application until the
 next update writes it; it is not a dedicated minimal recovery image.
 
-The verified **0.8.6-color-transitions** production image has this budget:
+The verified **0.8.7-transitions-100ms** production image has this budget:
 
 | Item | Bytes | MiB |
 |---|---:|---:|
