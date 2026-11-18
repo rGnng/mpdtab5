@@ -203,7 +203,34 @@ brightness, General, clock, USB and Playback settings.
 
 ## Current verified release
 
-**0.8.5-artist-feedback** is the current ColoPlay release, application-only
+**0.8.6-color-transitions** is the current ColoPlay release, application-only
+OTA-verified in `ota_app0`. The application is **3,271,392 bytes**, MD5
+`493028528596c396ac1556dc5078dfd5`, SHA-256
+`9ab523cd553388c251f4b8ecebb4fc384a74d36f14ee079eec1ff0d724cfe5ed`; ELF SHA-256
+`6d71315cec02627fce2bd41d33f9799ddee04a81d0b5c8e7ca95711df46c9835`. It leaves **1,447,200 bytes**
+in either slot. Tab5 remains on the artist-feedback image recorded below.
+
+Lighting adds Smooth ring colors (default on), Smooth button colors (default
+off), and a shared Transition time (default 300 ms, range 0–5000; zero is
+immediate). Per-pixel integer RGB tweens run at the existing LED cadence, with
+separate filled/unfilled ring palettes. Volume/progress coverage and brightness
+apply afterward, so those responses do not inherit a color-transition delay.
+Off gates, sleep and diagnostic colors remain immediate. Tagged flags/duration
+reuse the retired endpoint words in the existing 44-byte lighting v1 record;
+untagged records get the defaults without resetting brightness or color.
+Compatible older firmware ignores these words, including local recovery 0.8.3.
+
+The full ColoPlay regression script and five Chromium configuration tests pass,
+including 300 ms midpoint/completion, disabled channels, retargeting, timer wrap,
+legacy records, persistence, independent controls and responsive mobile layout.
+The production build and application-only OTA passed. Live checks covered the
+new defaults, invalid input rejection, independent switches and duration saved
+across reboot, final restoration to Ring on / Buttons off / 300 ms, boot
+confirmation, USB/MPD feedback and preservation of existing settings. Physical
+transition appearance was not captured. Private images, prior firmware and
+verification evidence are in `backups/color-transitions-release/`.
+
+The preceding **0.8.5-artist-feedback** release was application-only
 OTA-verified in `ota_app0`, paired with the updated Tab5 artist/metadata sender.
 Its application is **3,269,376 bytes** (MD5 `ab5f6223685ca8f5c5d4304797f5682e`,
 SHA-256 `103707fcc269b0d2f77bdd9fdccfa93b543b29f876021d3f097cf2af401cdfd8`); ELF SHA-256
@@ -939,7 +966,7 @@ recovery guard described in [Flashing](flash.md#recovery).
 |---|---|---|
 | `wifi` | `ssid`, `pass` | Seeded from `secrets.h` only when no stored SSID exists; web/serial changes restart |
 | `clock` | Versioned `settings` blob, 804 bytes (v2; migrates 296-byte v1) | Three NTP servers and supported zone committed together; apply and sync immediately |
-| `lighting` | Versioned `settings` blob, 44 bytes | Manual levels and mode/color; retired fields reserved; web saves before apply; knob writes debounced 1.5 s |
+| `lighting` | Versioned `settings` blob, 44 bytes | Manual levels, mode/color and tagged transition flags/duration; web saves before apply; knob writes debounced 1.5 s |
 | `usbnet` | Versioned `settings` blob, 12 bytes | Mode, prefix, device/host addresses saved together; restart to apply |
 | `general` | Version-3 `settings` blob, 16 bytes | Scene-change sound, sound gain and sleep timeout in minutes (default 60); save before apply |
 | `scenes` | Schema-9 `settings`, 3364 logical bytes, normally CSR1; version-2 `order`, 16 bytes | Protected Global plus 8 selectable scenes, 64 bindings across all scopes, 3 actions each; active selection and stable IDs preserved |
@@ -951,8 +978,9 @@ Invalid/missing settings blobs use their declared defaults. Normal OTA preserves
 NVS. A full factory-image restore overwrites it. Awake state, speaker volume,
 last event and temporary feedback are runtime state. The active scene and all action definitions/effects are saved settings.
 Ambient-light sampling and automatic dimming are removed as of 0.6.17. The
-lighting record retains its old 44-byte layout, reserving the retired fields;
-scene levels similarly reserve the old Auto byte. Neither byte affects output.
+lighting record retains its old 44-byte layout; tagged transition settings now
+reuse the endpoint words, while the old Auto words stay reserved. Scene levels
+similarly reserve the old Auto byte. No retired Auto field affects output.
 Manual percentages and scene/General inheritance directly determine brightness.
 GPIO16 is no longer configured or sampled. Supply ADC1 telemetry remains; its
 voltage conversion and physical scaling are custom implementation choices,

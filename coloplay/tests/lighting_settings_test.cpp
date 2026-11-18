@@ -9,6 +9,7 @@ int main() {
   assert(valid(settings));
   assert(settings.screen == 70 && settings.ring == 70 && settings.keys == 70);
   assert(sizeof(settings)==44);
+  assert(ringSmooth(settings)&&!keysSmooth(settings)&&transitionMs(settings)==300);
   assert(pwm(0) == 0 && pwm(70) == 179 && pwm(100) == 255);
 
   // Actual v1 word offsets, including previously enabled Auto and captured
@@ -17,10 +18,20 @@ int main() {
   std::memcpy(&settings,legacy,sizeof(settings));
   assert(valid(settings)&&settings.screen==21&&settings.ring==46&&settings.keys==83);
   assert(settings.mode==kStatic&&settings.color==0x123456);
+  assert(ringSmooth(settings)&&!keysSmooth(settings)&&transitionMs(settings)==300);
   assert(!std::memcmp(&settings,legacy,sizeof(settings)));
   for(auto &word:settings.reservedBeforeMode)word=0xFFFFFFFF;
   for(auto &word:settings.reservedTail)word=0xFFFFFFFF;
   assert(valid(settings)&&settings.screen==21&&settings.ring==46&&settings.keys==83);
+  assert(ringSmooth(settings)&&!keysSmooth(settings)&&transitionMs(settings)==300);
+  setTransitions(settings,false,true,1200);
+  assert(valid(settings)&&!ringSmooth(settings)&&keysSmooth(settings)&&transitionMs(settings)==1200);
+  assert(settings.screen==21&&settings.ring==46&&settings.keys==83&&settings.color==0x123456);
+  Stored restored;std::memcpy(&restored,&settings,sizeof(settings));
+  assert(!ringSmooth(restored)&&keysSmooth(restored)&&transitionMs(restored)==1200);
+  setTransitions(settings,true,false,5001);assert(!valid(settings));
+  setTransitions(settings,true,false,0);assert(valid(settings)&&transitionMs(settings)==0);
+  setTransitions(settings,true,false,5000);assert(valid(settings));
   for(int p=0;p<=100;++p){settings.screen=p;settings.ring=100-p;settings.keys=42;assert(valid(settings));}
   settings=Stored{};settings.screen=101;assert(!valid(settings));
   settings=Stored{};settings.ring=101;assert(!valid(settings));
@@ -28,5 +39,5 @@ int main() {
   settings=Stored{};settings.version=2;assert(!valid(settings));
   settings=Stored{};settings.mode=2;assert(!valid(settings));
   settings=Stored{};settings.color=0x1000000;assert(!valid(settings));
-  std::cout << "PASS manual brightness defaults/bounds and byte-compatible legacy settings with retired fields ignored\n";
+  std::cout << "PASS lighting defaults/bounds, tagged transition persistence, legacy defaults and unchanged brightness/color\n";
 }

@@ -11,6 +11,7 @@
 #include "clock_service.h"
 #include "inter_clock_fonts.h"
 #include "lighting_settings.h"
+#include "color_transition.h"
 #include "scene_service.h"
 #include "scene_icons.h"
 #include "general_service.h"
@@ -73,6 +74,7 @@ Preferences gLightingPrefs;
 bool gLightingPrefsOpen = false, gLightingStored = false;
 bool gLightingDirty = false;
 uint32_t gLightingChangedAt = 0;
+ColorTransition gLedColors[Board::kPixelCount], gUnfilledColors[Board::kRingPixels];
 uint8_t gSceneShown=0;
 uint32_t gSceneOverlayUntil=0;
 int gScreenLevel = 70, gRingLevel = 70, gKeysLevel = 70;
@@ -430,25 +432,45 @@ void animateLeds(uint32_t now) {
       }
       const ActionFeedback::Light empty;
       const auto &cue=isRing?feedback.ring:key>=0&&key<Board::kKeyPixels?feedback.keys[key]:empty;
+      const bool smooth=isRing?LightingSettings::ringSmooth(gLighting):LightingSettings::keysSmooth(gLighting);
+      const uint32_t transitionMs=LightingSettings::transitionMs(gLighting);
+      uint32_t unfilled=0;
+      if(isRing){
+        const uint32_t target=prefs.plan(state,PlaybackSettings::UnfilledColorMode)==0?color:Adafruit_NeoPixel::gamma32(prefs.plan(state,PlaybackSettings::UnfilledColor));
+        unfilled=gUnfilledColors[i].update(target,now,smooth,transitionMs);
+      }
+      // Fade the palette before applying volume/progress coverage, so input
+      // and bar position remain immediate. Each key keeps its own tween.
+      const bool cueActive=cue.led!=SceneSettings::kInherit&&
+        !(cue.led==SceneSettings::kProportional&&cue.remote&&!(remote.fresh&&remote.available&&remotePercent>=0&&remotePercent<=100));
+      const bool hardOff=cueActive?cue.led==SceneSettings::kOff:
+        isRing?ringMode==PlaybackSettings::Off:customKeys&&prefs.plan(state,PlaybackSettings::KeysMode)==2;
+      if(cueActive){
+        if(cue.led==SceneSettings::kOff)color=0;
+        else if(cue.led==SceneSettings::kFeedbackStatic||cue.led==SceneSettings::kProportional)color=Adafruit_NeoPixel::gamma32(cue.color);
+        else if(cue.led==SceneSettings::kFeedbackRainbow)color=Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue,220,255));
+      }else if(hardOff)color=0;
+      // Off is a gate, not a palette: never expose formerly unfilled pixels
+      // while fading away from a partial progress/volume ring.
+      color=gLedColors[i].update(color,now,smooth&&!hardOff,transitionMs);
       ActionLighting::Result effect{color,level,false};
-      if(cue.led!=SceneSettings::kInherit)effect=ActionLighting::resolve(cue,color,Adafruit_NeoPixel::gamma32(cue.color),
-        cue.led==SceneSettings::kFeedbackRainbow?Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue,220,255)):0,
+      if(cue.led!=SceneSettings::kInherit)effect=ActionLighting::resolve(cue,color,color,color,
         level,isRing,i,Board::kRingPixels,remote.fresh&&remote.available,remotePercent,cue.remote?PlaybackSettings::style(prefs,state,true):ringStyle,Board::kRingTopPixel);
       color=effect.color;level=effect.brightness;
       if(!effect.applied){
-        if(!isRing&&customKeys&&prefs.plan(state,PlaybackSettings::KeysMode)==2)color=0;
         if(isRing){
-          if(ringMode==PlaybackSettings::Off)color=0;
-          else if(ringMode==PlaybackSettings::Progress||ringMode==PlaybackSettings::Volume){
+          if(ringMode==PlaybackSettings::Progress||ringMode==PlaybackSettings::Volume){
             const int value=ringMode==PlaybackSettings::Progress?progress:remoteVolume<0?-1:int(remoteVolume*1000+.5f);
             int coverage=value<0?0:PlaybackRing::coverage(value,i,Board::kRingPixels,ringStyle,Board::kRingTopPixel);
             if(playback&&value>=0){
-              const uint32_t unfilled=prefs.plan(state,PlaybackSettings::UnfilledColorMode)==0?color:Adafruit_NeoPixel::gamma32(prefs.plan(state,PlaybackSettings::UnfilledColor));
               color=PlaybackSettings::ringColor(color,unfilled,coverage,prefs.plan(state,PlaybackSettings::UnfilledBrightness));
             }else color=DemoLevels::scaleRgb(color,(coverage*255+500)/1000);
           }
         }
       }
+    }else{
+      gLedColors[i].update(color,now,false,0);
+      if(i<Board::kRingPixels)gUnfilledColors[i].update(color,now,false,0);
     }
     if(i>=Board::kKeyPixelStart+Board::kKeyPixels)color=0;
     if(!gAwake)level=0;
@@ -689,6 +711,9 @@ String statusJson() {
   json += ",\"brightness\":" + String(LightingSettings::pwm(gLighting.ring));
   json += ",\"ring_brightness\":" + String(gLighting.ring);
   json += ",\"keys_brightness\":" + String(gLighting.keys);
+  json += ",\"ring_smooth\":" + String(LightingSettings::ringSmooth(gLighting)?"true":"false");
+  json += ",\"keys_smooth\":" + String(LightingSettings::keysSmooth(gLighting)?"true":"false");
+  json += ",\"transition_ms\":" + String(LightingSettings::transitionMs(gLighting));
   const auto remote=ControllerService::snapshot();
   json += ",\"progress_permille\":"+String(PlaybackRing::progress(remote.fresh&&remote.available,remote.playback,remote.positionMs,remote.durationMs,remote.positionValid));
   json += ",\"ring_effective\":" + String(gAwake ? gRingLevel : 0);
@@ -742,6 +767,13 @@ bool configure(WebServer &server, String &error) {
   if (!setting("brightness", candidate.screen, 100) ||
       !setting("ring_brightness", candidate.ring, 100) ||
       !setting("keys_brightness", candidate.keys, 100)) return false;
+  if(server.hasArg("ring_smooth")||server.hasArg("keys_smooth")||server.hasArg("transition_ms")){
+    int ring=LightingSettings::ringSmooth(candidate),keys=LightingSettings::keysSmooth(candidate);
+    int ms=LightingSettings::transitionMs(candidate);
+    if(!argument(server,"ring_smooth",0,1,ring,error)||!argument(server,"keys_smooth",0,1,keys,error)||
+       !argument(server,"transition_ms",0,LightingSettings::kMaxTransitionMs,ms,error))return false;
+    LightingSettings::setTransitions(candidate,ring,keys,ms);
+  }
   for(const char *retired:{"auto_screen","auto_ring","auto_keys","auto_dark_raw","auto_bright_raw"})
     if(server.hasArg(retired)){error="automatic brightness is no longer supported";return false;}
   if (server.hasArg("led_mode")) {

@@ -32,7 +32,7 @@
 namespace {
 
 constexpr const char *kHostname = "coloplay";
-constexpr const char *kFirmwareVersion = "0.8.5-artist-feedback";
+constexpr const char *kFirmwareVersion = "0.8.6-color-transitions";
 constexpr const char *kPrefsNamespace = "wifi";
 constexpr uint32_t kWifiRetryMs = 10000;
 

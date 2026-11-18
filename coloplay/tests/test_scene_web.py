@@ -72,6 +72,10 @@ class GlobalWebTests(unittest.TestCase):
 
     def open(self, case="legacy"):
         self.cfg = json.loads(json.dumps(self.configs[case]))
+        self.lighting = dict(ring_brightness=70, keys_brightness=70,
+                             ring_effective=70, keys_effective=70,
+                             mode="rainbow", color="#ffffff", errors=0,
+                             ring_smooth=True, keys_smooth=False, transition_ms=300)
         self.posts, self.errors, self.external = [], [], []
         self.page = self.browser.new_page(viewport={"width": 1280, "height": 1000})
         self.addCleanup(self.page.close)
@@ -87,22 +91,48 @@ class GlobalWebTests(unittest.TestCase):
         if route.request.method == "POST":
             values = {k: v[0] for k, v in parse_qs(route.request.post_data).items()}
             self.posts.append(values)
-            self.assertEqual(path, "scenes")
+            self.assertIn(path, ("scenes", "lighting"))
+            if path == "lighting":
+                for key, value in values.items():
+                    self.lighting[key] = bool(int(value)) if key.endswith("_smooth") else int(value)
         if path == "scenes":
             data = self.cfg
         elif path == "status":
             data = dict(firmware="test", wifi={"ip": "192.0.2.1"},
                         scene=self.cfg["state"], controller={"transport": "usb_cdc_acm"},
                         hardware=dict(ready=True, display=dict(brightness=70, effective_brightness=70),
-                                      leds=dict(ring_brightness=70, keys_brightness=70,
-                                                ring_effective=70, keys_effective=70,
-                                                mode="rainbow", color="#ffffff", errors=0),
+                                      leds=self.lighting,
                                       psram={"test_passed": True}, audio={"io_errors": 0}))
         elif path == "clock":
             data = dict(ntp_servers=["pool.ntp.org", "", ""], timezone="Etc/UTC", zones=[])
         else:
             data = {}
         route.fulfill(json=data)
+
+    def test_lighting_transition_defaults_and_save(self):
+        self.open()
+        self.page.locator("#tab-lighting").click()
+        self.assertTrue(self.page.locator("#ring-smooth").is_checked())
+        self.assertFalse(self.page.locator("#keys-smooth").is_checked())
+        self.assertEqual(self.page.locator("#transition-ms").input_value(), "300")
+        self.page.locator("#ring-smooth").uncheck()
+        self.page.wait_for_function("document.getElementById('lighting-message').textContent==='Saved'")
+        self.assertEqual(self.posts[-1], {"ring_smooth": "0"})
+        self.page.locator("#keys-smooth").check()
+        self.page.wait_for_function("document.getElementById('lighting-message').textContent==='Saved'")
+        self.page.locator("#transition-ms").fill("600")
+        self.page.locator("#transition-ms").press("Tab")
+        self.page.wait_for_function("document.getElementById('transition-ms').value==='600'")
+        self.page.wait_for_timeout(250)
+        self.assertEqual(self.posts[-1], {"transition_ms": "600"})
+        self.page.locator("#transition-ms").fill("5001")
+        self.page.locator("#transition-ms").press("Tab")
+        self.assertEqual(self.posts[-1], {"transition_ms": "600"})
+        for width in (375, 768, 1280):
+            self.page.set_viewport_size({"width": width, "height": 1000})
+            self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth<=innerWidth+1"))
+        self.assertEqual(self.errors, [])
+        self.assertEqual(self.external, [])
 
     def test_global_has_only_bindings_and_never_activates(self):
         self.open()

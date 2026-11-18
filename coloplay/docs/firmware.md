@@ -1,6 +1,6 @@
 # Desktop gadget guide
 
-Current verified release: **0.8.5-artist-feedback**, OTA-tested on 2026-11-17.
+Current verified release: **0.8.6-color-transitions**, OTA-tested on 2026-11-18.
 The gadget is configured
 through the **Connection**, **Controls**, **Playback**, **Lighting** and **Device** pages. Desktop uses a navigation rail; mobile uses
 compact navigation tabs. Form inputs and table text are 16 px; labels and
@@ -155,6 +155,22 @@ Sleep turns off the display backlight, ring and button LEDs, preserving the
 saved brightness selections. WiFi, USB, OTA and input handling remain
 available. **Toggle screen / LEDs** in Device can also wake it. A scene whose
 idle screen is Blank still keeps its display off after waking; its LEDs resume.
+
+## Smooth LED colors
+
+Lighting offers **Smooth ring colors** (on by default), **Smooth button colors**
+(off by default), and **Transition time (ms)** (300 by default, range 0–5000).
+Zero duration is immediate. These General controls apply to scene lighting,
+playback state palettes and temporary action feedback. Each pixel keeps its own
+color transition; the ring's filled and unfilled colors transition independently.
+Volume/progress coverage and brightness are applied afterward, so changing
+volume or playback position stays responsive. Off plans/actions and sleep turn LEDs off immediately, and diagnostic LED
+tests show their requested colors directly.
+
+Settings save in the existing lighting NVS record. Older records receive these
+transition defaults while keeping their saved brightness, mode and color.
+There is no extra render task, delay or heap allocation: integer RGB interpolation
+runs at the existing LED cadence.
 
 ## Playback
 
