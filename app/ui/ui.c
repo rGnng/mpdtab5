@@ -3932,6 +3932,7 @@ static int np_queue_counter_position=-1,np_queue_counter_total=-1;
 static lv_obj_t *np_queue_rows[NP_QUEUE_POOL],*np_queue_titles[NP_QUEUE_POOL],*np_queue_artists[NP_QUEUE_POOL];
 static int np_queue_row_indices[NP_QUEUE_POOL];
 static uint64_t np_queue_row_keys[NP_QUEUE_POOL];
+static bool np_queue_row_pending[NP_QUEUE_POOL];
 static bool np_queue_row_selected[NP_QUEUE_POOL];
 static void np_queue_fill_cb(lv_timer_t *timer);
 static void np_queue_select(int index);
@@ -4376,6 +4377,7 @@ static void np_queue_refresh_rows(void)
         int index=np_queue_row_indices[slot];
         if(index<start||index>=end){
             np_queue_row_indices[slot]=-1;np_queue_row_keys[slot]=0;
+            np_queue_row_pending[slot] = false;
             np_queue_row_style(slot,false);lv_obj_set_hidden(np_queue_rows[slot],true);
             g_focus[np_queue_focus_start+slot].user=(void*)(intptr_t)-1;
         }
@@ -4396,7 +4398,11 @@ static void np_queue_refresh_rows(void)
         if(!np_queue_row_keys[slot]){
             player_track_t track;bool ready=player_queue_at(index,&track);
             bool loading=!ready&&player_queue_loading(index);pending|=loading;
-            np_set_text(np_queue_titles[slot],ready?track.title:loading?"Loading...":"Unavailable");
+            if(np_queue_row_pending[slot] != loading) {
+                np_queue_row_pending[slot] = loading;
+                lv_obj_invalidate(np_queue_rows[slot]);
+            }
+            np_set_text(np_queue_titles[slot],ready?track.title:loading?"":"Unavailable");
             np_set_text(np_queue_artists[slot],ready?track.artist:"");
             if(ready)np_queue_row_keys[slot]=track.id;
         }
@@ -4448,6 +4454,33 @@ static void np_queue_click_cb(lv_event_t *event)
     ui_call_async(np_queue_touch_activate,lv_obj_get_user_data(row));
 }
 
+static void np_queue_placeholder_bar(lv_layer_t *layer, lv_obj_t *label, int height)
+{
+    const int width = 128;
+    lv_area_t area;
+    lv_obj_get_coords(label, &area);
+    area.x2 = LV_MIN(area.x2, area.x1 + width - 1);
+    area.y1 += (lv_area_get_height(&area) - height) / 2;
+    area.y2 = area.y1 + height - 1;
+
+    lv_draw_rect_dsc_t bar;
+    lv_draw_rect_dsc_init(&bar);
+    bar.radius = LV_RADIUS_CIRCLE;
+    bar.bg_color = lv_obj_get_style_text_color(label, LV_PART_MAIN);
+    bar.bg_opa = LV_OPA_20;
+    lv_draw_rect(layer, &bar, &area);
+}
+
+static void np_queue_placeholder_draw(lv_event_t *event)
+{
+    int slot = (int)(intptr_t)lv_event_get_user_data(event);
+    if(!np_queue_row_pending[slot]) return;
+
+    lv_layer_t *layer = lv_event_get_layer(event);
+    np_queue_placeholder_bar(layer, np_queue_titles[slot], 9);
+    np_queue_placeholder_bar(layer, np_queue_artists[slot], 7);
+}
+
 static void np_queue_row(lv_obj_t *parent,int slot)
 {
     lv_obj_t *row=make_row(parent,NP_QUEUE_ROW_H);np_queue_rows[slot]=row;
@@ -4460,8 +4493,10 @@ static void np_queue_row(lv_obj_t *parent,int slot)
     int focus=focus_add(row,np_queue_action,NULL,(void*)(intptr_t)-1,true);
     focus_set_on_focus(focus,np_queue_focus);
     lv_obj_add_event_cb(row,np_queue_click_cb,LV_EVENT_CLICKED,NULL);
+    lv_obj_add_event_cb(row, np_queue_placeholder_draw, LV_EVENT_DRAW_MAIN, (void *)(intptr_t)slot);
     context_touch_bind(row,CTX_TOUCH_QUEUE,-1);
     np_queue_row_indices[slot]=-1;np_queue_row_keys[slot]=0;np_queue_row_selected[slot]=false;
+    np_queue_row_pending[slot] = false;
     lv_obj_set_hidden(row,true);
 }
 

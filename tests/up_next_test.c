@@ -75,13 +75,20 @@ int main(int argc,char **argv)
     pool_unchanged(pool);
     ui_handle_key_repeat(UI_KEY_DOWN,30000);pump(100);
     check(np_queue_selected==total-1,"Knob can reach the final entry of a 20,916-item queue");
+    int end_slot=g_focus_index-np_queue_focus_start;
+    check(end_slot>=0&&end_slot<NP_QUEUE_POOL&&np_queue_row_pending[end_slot]&&
+          !lv_label_get_text(np_queue_titles[end_slot])[0]&&!lv_label_get_text(np_queue_artists[end_slot])[0],
+          "Pending row uses placeholders with empty title and artist labels");
     ui_navigation_t nav;ui_navigation_snapshot(&nav);
     check(nav.count==(uint32_t)(total-base)&&nav.index==nav.count-1&&!strcmp(nav.focus,"Loading..."),"Navigation reports the full count and logical position during loading");
     int prior_reads=reads;deferred=false;pump(200);
     check(reads-prior_reads<=NP_QUEUE_POOL+1,"Page arrival only binds the visible pool");
     check(context_capture(&context)&&context.entry==player_queue_entry(total-1),"Recycled row targets the exact final occurrence, including duplicate songs");
-    int end_slot=g_focus_index-np_queue_focus_start;
-    check(end_slot>=0&&np_queue_row_keys[end_slot]&&np_queue_row_indices[end_slot]==total-1,"Last selected row receives its own metadata");
+    end_slot=g_focus_index-np_queue_focus_start;
+    check(end_slot>=0&&np_queue_row_keys[end_slot]&&np_queue_row_indices[end_slot]==total-1&&
+          !np_queue_row_pending[end_slot]&&!strcmp(lv_label_get_text(np_queue_titles[end_slot]),track.title)&&
+          !strcmp(lv_label_get_text(np_queue_artists[end_slot]),track.artist),
+          "Last selected row replaces placeholders with its own title and artist");
     ui_navigation_snapshot(&nav);check(nav.index==nav.count-1&&nav.count>20000&&strcmp(nav.focus,"Loading..."),"Confirmed metadata preserves logical navigation");
     pool_unchanged(pool);
     ui_handle_key(UI_KEY_PAGE_UP);check(np_queue_selected<total-1&&np_queue_selected>100,"Page Up moves within the full queue");
